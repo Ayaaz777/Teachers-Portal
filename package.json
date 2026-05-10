@@ -1,0 +1,61 @@
+{
+  "name": "recruit-my-english",
+  "version": "1.0.0",
+  "description": "Recruit My English — simple desktop app",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win",
+    "dist:seq": "electron-builder --win nsis && electron-builder --win portable",
+    "dist:dir": "electron-builder --win --dir"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.105.1",
+    "dotenv": "^16.4.7",
+    "jspdf": "^2.5.2"
+  },
+  "devDependencies": {
+    "electron": "^34.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.recruitmyenglish.app",
+    "productName": "Recruit My English",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "package.json",
+      "*.js",
+      "*.html",
+      "assets/**/*",
+      "node_modules/dotenv/**/*",
+      "node_modules/@supabase/**/*",
+      "node_modules/ws/**/*",
+      "node_modules/tslib/**/*",
+      "node_modules/jspdf/**/*",
+      "node_modules/fflate/**/*",
+      "node_modules/@babel/runtime/**/*",
+      "node_modules/atob/**/*",
+      "node_modules/btoa/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": ".env.example",
+        "to": ".env.example"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

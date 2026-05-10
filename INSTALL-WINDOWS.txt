@@ -1,0 +1,38 @@
+Recruit My English — Windows install notes
+==========================================
+
+Why the setup can be blocked
+----------------------------
+Windows 11 "Smart App Control" often blocks installers that are not signed with a
+code-signing certificate from a trusted certificate authority (or that have no
+publisher reputation yet). This is normal for apps built on your PC until you
+publish with a trusted signature.
+
+Run the installer on your own PC (quick fix)
+---------------------------------------------
+1. Open: Settings > Privacy & security > Windows Security
+2. Click: Open Windows Security
+3. Go to: App & browser control
+4. Under Smart App Control, choose:
+   - "Off" — stops blocking while you develop (you can turn it back on later on
+     recent Windows 11 versions), OR
+   - "Evaluation" — logs issues but may be less strict (depends on your build)
+
+Then double-click the setup again.
+
+If you downloaded the .exe from the web, also try (PowerShell):
+
+  Unblock-File -LiteralPath 'C:\path\to\Recruit My English Setup 1.0.0.exe'
+
+Share the app with others
+-------------------------
+Unsigned builds from `npm run dist` may still trigger Smart App Control or
+"unknown publisher" prompts for recipients. Broader distribution usually
+requires a code signing certificate from a CA and wiring it into your build
+tooling outside this repo.
+
+Alternative for testing only
+----------------------------
+You can run the unpacked app from dist\win-unpacked\Recruit My English.exe
+(without the NSIS setup). Smart App Control may still apply the same rules to
+that .exe if enforcement is strict.

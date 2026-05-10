@@ -1,0 +1,5610 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self'; connect-src 'self' https://*.supabase.co wss://*.supabase.co; img-src 'self' data: blob: https://*.supabase.co https://*.googleusercontent.com https://lh3.googleusercontent.com"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RME</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      :root {
+        --bg: #f6f6f6;
+        --text: #111;
+        --text-muted: #444;
+        --surface: #fff;
+        --border: #e2e2e2;
+        --border-subtle: #ececec;
+        --summary-bg: #fafafa;
+        --summary-text: #111;
+        --btn-bg: #fff;
+        --btn-border: #ccc;
+        --btn-hover: #f0f0f0;
+        --status-border: #eee;
+        --table-border: #e8e8e8;
+        --th-bg: #f9f9f9;
+        --tr-alt: #fcfcfc;
+        --chevron: #555;
+        --error-text: #b00020;
+        --error-bg: #fff5f5;
+        --toggle-bg: #fff;
+        --toggle-border: #d0d0d0;
+        --toggle-hover: #f3f3f5;
+        --tr-hover: #efefef;
+        --peek-btn-bg: #f5f5f5;
+        --peek-btn-border: rgba(0, 0, 0, 0.12);
+        --peek-btn-hover: #ebebeb;
+        --th-label: rgba(0, 0, 0, 0.45);
+        --pill-bg: rgba(46, 117, 255, 0.08);
+        --pill-text: #2563eb;
+        --pill-dot: #3b82f6;
+        --overlay-scrim: rgba(17, 17, 17, 0.38);
+        --overlay-panel-shadow: 0 22px 55px rgba(0, 0, 0, 0.16);
+        --scrollbar-track: #e8e8e8;
+        --scrollbar-thumb: #b0b0b0;
+        --scrollbar-thumb-hover: #909090;
+        --admin-badge: #2563eb;
+        --teacher-profile-border: rgba(17, 17, 17, 0.1);
+        --teacher-profile-shadow:
+          0 1px 2px rgba(0, 0, 0, 0.04),
+          0 4px 14px rgba(0, 0, 0, 0.06),
+          0 14px 36px rgba(0, 0, 0, 0.06);
+        --notion-editor-sidebar-shadow:
+          0 1px 0 rgba(255, 255, 255, 0.75) inset,
+          0 2px 6px rgba(0, 0, 0, 0.04),
+          0 10px 28px rgba(0, 0, 0, 0.07),
+          0 24px 48px rgba(0, 0, 0, 0.05);
+        --money-cell-selection: #1f8cf9;
+        /* Compact top bar: logo + nav cluster */
+        --app-logo-block-height: 4.25rem;
+        --top-chrome-pad-x: 0.65rem;
+        /** Extra left shift for fixed logo + pages toggle vs main content gutter */
+        --app-logo-wrap-nudge-x: -0.72rem;
+        --top-chrome-pad-y: 0.28rem;
+        --top-chrome-below-logo: 0.22rem;
+        --app-logo-stack-below-gap: 0.06rem;
+        --editor-sidebar-toggle-h: 1.74rem;
+        --editor-sidebar-toggle-pad: 0.1rem;
+        --editor-sidebar-toggle-pull-up: 0.38rem;
+        --editor-sidebar-toggle-outer: calc(
+          var(--editor-sidebar-toggle-h) + 2 *
+            var(--editor-sidebar-toggle-pad)
+        );
+        --notion-editor-sidebar-margin-start: 0;
+        /** Nudge pages toggle left from logo right edge (still right-aligned in column) */
+        --app-editor-sidebar-toggle-inset-from-logo-end: 0.42rem;
+
+        --nav-burger-size: 2.4rem;
+        color-scheme: light;
+      }
+      html[data-theme="dark"] {
+        /* Reference: Notion-style database table (dark) */
+        --bg: #191919;
+        --text: #e6e6e6;
+        --text-muted: #9b9b9b;
+        --surface: #202020;
+        --border: #2f2f2f;
+        --border-subtle: #2a2a2a;
+        --summary-bg: #252525;
+        --summary-text: #e6e6e6;
+        --btn-bg: #2c2c2c;
+        --btn-border: #474747;
+        --btn-hover: #363636;
+        --status-border: #333;
+        --table-border: #2c2c2c;
+        --th-bg: #202020;
+        --tr-alt: #232323;
+        --tr-hover: #2a2a2a;
+        --chevron: #a0a0b0;
+        --error-text: #ff9494;
+        --error-bg: #2c1818;
+        --toggle-bg: #2c2c2c;
+        --toggle-border: #505050;
+        --toggle-hover: #383838;
+        --peek-btn-bg: #363636;
+        --peek-btn-border: rgba(255, 255, 255, 0.22);
+        --peek-btn-hover: #404040;
+        --th-label: rgba(255, 255, 255, 0.45);
+        --pill-bg: rgba(77, 144, 254, 0.15);
+        --pill-text: #6db0ff;
+        --pill-dot: #4d90fe;
+        --overlay-scrim: rgba(0, 0, 0, 0.52);
+        --overlay-panel-shadow: 0 28px 70px rgba(0, 0, 0, 0.55);
+        --scrollbar-track: #2a2a2a;
+        --scrollbar-thumb: #5a5a5a;
+        --scrollbar-thumb-hover: #707070;
+        --admin-badge: #60a5fa;
+        --teacher-profile-border: rgba(255, 255, 255, 0.11);
+        --teacher-profile-shadow:
+          0 1px 0 rgba(255, 255, 255, 0.06) inset,
+          0 8px 28px rgba(0, 0, 0, 0.42),
+          0 20px 48px rgba(0, 0, 0, 0.35);
+        --notion-editor-sidebar-shadow:
+          0 1px 0 rgba(255, 255, 255, 0.05) inset,
+          0 4px 16px rgba(0, 0, 0, 0.35),
+          0 16px 40px rgba(0, 0, 0, 0.28);
+        --money-cell-selection: #1f8cf9;
+        color-scheme: dark;
+      }
+      html,
+      body {
+        height: 100%;
+        min-height: 100%;
+        background: var(--bg);
+        font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+        font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+        color: var(--text);
+        scrollbar-width: thin;
+        scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+        margin: 0;
+      }
+      /* Admin Home: editor sidebar + pages (Notion-ish) */
+      .notion-workspace.notion-workspace--sidebar-collapsed .notion-editor-sidebar {
+        display: none;
+      }
+      .notion-workspace.notion-workspace--sidebar-collapsed {
+        gap: 0;
+      }
+      .notion-workspace {
+        position: relative;
+        display: flex;
+        flex-direction: row;
+        align-items: stretch;
+        flex: 1;
+        min-height: 0;
+        gap: 0;
+        font-family:
+          ui-sans-serif,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          Helvetica,
+          "Apple Color Emoji",
+          Arial,
+          sans-serif,
+          "Segoe UI Emoji",
+          "Segoe UI Symbol";
+        font-size: 14px;
+      }
+      .app-page-notion-home {
+        min-height: 0;
+      }
+      /* Floats above home / editor pane; panes stay full-width underneath */
+      .notion-editor-sidebar {
+        position: absolute;
+        z-index: 1180;
+        left: var(--notion-editor-sidebar-margin-start);
+        top: 0.1rem;
+        bottom: 0.45rem;
+        width: 16.75rem;
+        max-width: 42vw;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        margin: 0;
+        border-radius: 18px;
+        border: 1px solid var(--border);
+        background: var(--surface);
+        box-shadow: var(--notion-editor-sidebar-shadow);
+        overflow: hidden;
+      }
+      .notion-editor-sidebar-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+        padding: 0.95rem 1rem 0.85rem;
+        border-bottom: 1px solid var(--border-subtle);
+        flex-shrink: 0;
+        background: linear-gradient(
+          180deg,
+          color-mix(in srgb, var(--surface) 88%, var(--bg)) 0%,
+          var(--surface) 100%
+        );
+      }
+      .notion-editor-sidebar-title {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--text-muted);
+      }
+      #notionWorkspaceNewPage.notion-editor-sidebar-add {
+        width: 1.7rem;
+        height: 1.7rem;
+        margin: 0;
+        padding: 0;
+        border-radius: 8px;
+        border: 1px solid var(--btn-border);
+        background: linear-gradient(
+          180deg,
+          color-mix(in srgb, var(--btn-bg) 70%, var(--surface)) 0%,
+          var(--btn-bg) 100%
+        );
+        color: var(--pill-text);
+        font-size: 1.05rem;
+        font-weight: 400;
+        line-height: 1;
+        cursor: pointer;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+        transition:
+          transform 0.14s ease,
+          background 0.14s ease,
+          border-color 0.14s ease,
+          box-shadow 0.14s ease;
+      }
+      #notionWorkspaceNewPage.notion-editor-sidebar-add:hover {
+        background: var(--btn-hover);
+        color: var(--text);
+        border-color: color-mix(in srgb, var(--btn-border) 55%, var(--pill-dot));
+        box-shadow:
+          0 2px 6px rgba(37, 99, 235, 0.12),
+          0 1px 2px rgba(0, 0, 0, 0.06);
+      }
+      #notionWorkspaceNewPage.notion-editor-sidebar-add:active {
+        transform: scale(0.96);
+      }
+      .notion-editor-sidebar-pages {
+        flex: 1;
+        min-height: 0;
+        overflow-x: hidden;
+        overflow-y: auto;
+        padding: 0.55rem 0.6rem 0.85rem;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        scrollbar-width: thin;
+        scrollbar-color: var(--scrollbar-thumb) transparent;
+      }
+      .notion-editor-page-branch {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        width: 100%;
+      }
+      .notion-editor-page-children-wrap {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        padding: 0 0 2px 0.35rem;
+        margin: 0 0 0 0.35rem;
+        border-left: 1px solid var(--border-subtle);
+      }
+      .notion-editor-page-children-wrap[hidden] {
+        display: none !important;
+      }
+      .notion-editor-page-children-toggle {
+        flex-shrink: 0;
+        width: 1.35rem;
+        height: 1.85rem;
+        margin: 0;
+        padding: 0;
+        border: none;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--text-muted);
+        font-size: 0.75rem;
+        line-height: 1;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .notion-editor-page-children-toggle:hover {
+        background: color-mix(in srgb, var(--text) 6%, transparent);
+        color: var(--text);
+      }
+      .notion-editor-page-leading-spacer {
+        flex-shrink: 0;
+        width: 1.35rem;
+      }
+      .notion-editor-page-row--draggable {
+        cursor: grab;
+      }
+      .notion-editor-page-row--draggable:active {
+        cursor: grabbing;
+      }
+      .notion-editor-page-row {
+        display: flex;
+        align-items: center;
+        gap: 3px;
+        border-radius: 11px;
+        transition:
+          background 0.15s ease,
+          box-shadow 0.15s ease;
+      }
+      .notion-editor-page-row--dragging {
+        opacity: 0.55;
+      }
+      .notion-editor-page-row[data-drop-hint="before"] {
+        box-shadow: 0 -2px 0 0 var(--pill-dot);
+      }
+      .notion-editor-page-row[data-drop-hint="after"] {
+        box-shadow: 0 2px 0 0 var(--pill-dot);
+      }
+      .notion-editor-page-row[data-drop-hint="into"] {
+        box-shadow: inset 0 0 0 2px var(--pill-dot);
+      }
+      .notion-editor-page-row:not([data-active="true"]):hover {
+        background: color-mix(in srgb, var(--text) 4%, transparent);
+      }
+      .notion-editor-page-row[data-active="true"] {
+        background: var(--pill-bg);
+        box-shadow: 0 0 0 1px color-mix(in srgb, var(--pill-dot) 22%, transparent);
+      }
+      .notion-editor-sidebar-pages
+        .notion-editor-page-row--trash {
+        align-self: stretch;
+        flex-shrink: 0;
+        width: 100%;
+        margin-top: auto;
+        margin-bottom: 0;
+        padding-top: 0.35rem;
+        border-top: 1px solid var(--border-subtle);
+      }
+      .notion-editor-sidebar-pages
+        .notion-editor-page-row--trash[data-active="true"] {
+        background: transparent;
+        box-shadow: none;
+      }
+      .notion-editor-sidebar-pages
+        .notion-editor-page-row--trash:not([data-active="true"]):hover {
+        background: transparent;
+      }
+      .notion-editor-page-row--trash:not([data-active="true"])
+        .notion-editor-page-btn.notion-editor-page-btn--trash:hover {
+        background: var(--btn-hover);
+        border-color: color-mix(in srgb, var(--btn-border) 55%, var(--pill-dot));
+      }
+      .notion-editor-page-btn {
+        flex: 1;
+        min-width: 0;
+        margin: 0;
+        padding: 0.48rem 0.55rem;
+        border: none;
+        border-radius: 9px;
+        background: transparent;
+        color: var(--text);
+        font: inherit;
+        font-size: 13px;
+        font-weight: 550;
+        cursor: pointer;
+        text-align: left;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .notion-editor-page-row[data-active="true"] .notion-editor-page-btn {
+        color: var(--pill-text);
+      }
+      .notion-editor-page-btn:focus-visible {
+        outline: 2px solid var(--pill-dot);
+        outline-offset: 1px;
+      }
+      .notion-editor-page-btn.notion-editor-page-btn--trash {
+        flex: none;
+        max-width: 100%;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.38rem 0.62rem;
+        border: 1px solid var(--btn-border);
+        border-radius: 10px;
+        background: color-mix(in srgb, var(--text) 3.5%, transparent);
+        box-sizing: border-box;
+        overflow: visible;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+      }
+      .notion-editor-trash-nav-icon {
+        flex-shrink: 0;
+        display: block;
+      }
+      .notion-editor-page-row--trash[data-active="true"]
+        .notion-editor-page-btn.notion-editor-page-btn--trash {
+        background: var(--pill-bg);
+        color: var(--pill-text);
+        border-color: color-mix(in srgb, var(--pill-dot) 42%, var(--btn-border));
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+      }
+      .notion-editor-page-remove {
+        flex-shrink: 0;
+        width: 1.65rem;
+        height: 1.65rem;
+        margin: 0;
+        padding: 0;
+        border: none;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--text-muted);
+        font-size: 0.92rem;
+        line-height: 1;
+        cursor: pointer;
+        opacity: 0;
+        transition: opacity 0.12s ease, background 0.12s ease;
+      }
+      .notion-editor-page-row:hover .notion-editor-page-remove:not([disabled]),
+      .notion-editor-page-row:focus-within .notion-editor-page-remove:not([disabled]) {
+        opacity: 0.9;
+      }
+      .notion-editor-page-remove:hover:not([disabled]) {
+        background: var(--btn-hover);
+        color: var(--text);
+      }
+      .notion-editor-page-remove[hidden] {
+        visibility: hidden;
+        pointer-events: none;
+      }
+      .notion-trash-pane {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        max-width: 42rem;
+        width: 100%;
+        margin: 0 auto;
+        padding: 2rem 1.75rem 2.75rem;
+        box-sizing: border-box;
+      }
+      .notion-trash-pane-header {
+        flex-shrink: 0;
+        margin-bottom: 1.25rem;
+      }
+      .notion-trash-pane-title {
+        margin: 0 0 0.35rem;
+        font-size: 1.85rem;
+        font-weight: 700;
+        letter-spacing: -0.03em;
+        color: var(--text);
+      }
+      .notion-trash-pane-hint {
+        margin: 0;
+        font-size: 0.92rem;
+        line-height: 1.55;
+        color: var(--text-muted);
+      }
+      .notion-trash-list-mount {
+        flex: 1;
+        min-height: 0;
+        overflow-x: hidden;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        scrollbar-width: thin;
+        scrollbar-color: var(--scrollbar-thumb) transparent;
+      }
+      .notion-editor-trash-empty {
+        margin: 0;
+        padding: 0.85rem 0 0;
+        font-size: 0.9rem;
+        font-weight: 500;
+        color: var(--text-muted);
+      }
+      .notion-editor-trash-row {
+        display: flex;
+        align-items: center;
+        gap: 0.3rem;
+        padding: 0.3rem 0.38rem;
+        border-radius: 8px;
+        background: color-mix(in srgb, var(--text) 5%, transparent);
+      }
+      .notion-editor-trash-title {
+        flex: 1;
+        min-width: 0;
+        font-size: 12px;
+        font-weight: 550;
+        color: var(--text);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        opacity: 0.92;
+      }
+      .notion-editor-trash-actions {
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+      button.notion-editor-trash-restore,
+      button.notion-editor-trash-delete {
+        margin: 0;
+        padding: 0.2rem 0.38rem;
+        font-size: 10px;
+        font-weight: 650;
+        line-height: 1.25;
+        border-radius: 6px;
+      }
+      button.notion-editor-trash-restore {
+        border-color: color-mix(in srgb, var(--pill-dot) 28%, var(--btn-border));
+        color: var(--pill-text);
+        background: var(--pill-bg);
+      }
+      button.notion-editor-trash-restore:hover {
+        background: var(--btn-hover);
+        color: var(--text);
+      }
+      button.notion-editor-trash-delete {
+        border-color: color-mix(
+          in srgb,
+          var(--error-text) 35%,
+          var(--btn-border)
+        );
+        color: var(--error-text);
+        background: transparent;
+      }
+      button.notion-editor-trash-delete:hover {
+        background: var(--error-bg);
+      }
+      .notion-ws-panes {
+        position: relative;
+        z-index: 0;
+        flex: 1;
+        width: 100%;
+        min-height: 0;
+        min-width: 0;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        background: var(--bg);
+      }
+      .notion-ws-blank-mount {
+        flex: 0 0 auto;
+        width: 0;
+        height: 0;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        pointer-events: none;
+      }
+      .notion-ws-pane {
+        flex: 1;
+        min-height: 0;
+        overflow: auto;
+        display: none;
+      }
+      .notion-ws-pane--visible {
+        display: flex;
+        flex-direction: column;
+      }
+      .home-content.notion-ws-pane-scroll {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        padding-bottom: 1.75rem;
+        box-sizing: border-box;
+      }
+      /* Payslip workspace: one scroll area for the whole dashboard stack. */
+      #homeContent.home-content.notion-ws-pane-scroll {
+        overflow-x: hidden;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+      /* Dashboard <details> should grow with its content; scroll lives on #homeContent. */
+      #notionDetails.notion-panel[open] {
+        flex: 0 0 auto;
+      }
+      #notionWsPanePaySlips.notion-ws-pane,
+      #notionWsPaneVault.notion-ws-pane,
+      #notionWsPaneTrash.notion-ws-pane {
+        overflow: hidden;
+      }
+      .notion-trash-pane.notion-ws-pane-scroll {
+        overflow-x: hidden;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+      .notion-blank-pane {
+        max-width: 900px;
+        width: 100%;
+        margin: 0 auto;
+        padding: 4.5rem 5rem 4rem;
+        box-sizing: border-box;
+      }
+      @media (max-width: 720px) {
+        .notion-blank-pane {
+          padding: 2.5rem 1.35rem;
+        }
+        .notion-workspace {
+          gap: 0;
+        }
+        .notion-editor-sidebar {
+          width: 13.25rem;
+          max-width: 46vw;
+          top: 0.08rem;
+          bottom: 0.35rem;
+          border-radius: 14px;
+        }
+        .notion-editor-sidebar-head {
+          padding: 0.75rem 0.72rem;
+        }
+        .notion-editor-sidebar-pages {
+          padding: 0.42rem 0.45rem 0.62rem;
+        }
+        .notion-trash-pane {
+          padding: 1.35rem 1.1rem 2rem;
+        }
+        .notion-trash-pane-title {
+          font-size: 1.45rem;
+        }
+      }
+      .notion-blank-title {
+        width: 100%;
+        padding: 0.15rem 0.1rem;
+        margin: 0 0 0.25rem;
+        border: none;
+        background: transparent;
+        font: inherit;
+        font-size: 2.5rem;
+        font-weight: 700;
+        line-height: 1.15;
+        letter-spacing: -0.03em;
+        color: var(--text);
+        outline: none;
+      }
+      .notion-blank-title::placeholder {
+        color: var(--text-muted);
+        opacity: 0.45;
+      }
+      .notion-ws-workspace-subpages-mount {
+        display: flex;
+        flex-direction: column;
+        gap: 0.32rem;
+        margin: 0 0 0.65rem;
+        max-width: 56rem;
+        width: 100%;
+        align-self: center;
+        box-sizing: border-box;
+      }
+      #vaultContent .notion-ws-workspace-subpages-mount {
+        max-width: none;
+        align-self: stretch;
+        margin: 0.5rem 0 0.75rem;
+      }
+      .notion-ws-subpage-link {
+        display: block;
+        width: 100%;
+        text-align: left;
+        margin: 0;
+        padding: 0.42rem 0.55rem;
+        border: 1px solid var(--btn-border);
+        border-radius: 8px;
+        background: var(--surface);
+        color: var(--text);
+        font: inherit;
+        font-size: 0.9rem;
+        font-weight: 550;
+        cursor: pointer;
+        transition: background 0.12s ease, border-color 0.12s ease;
+      }
+      .notion-ws-subpage-link:hover {
+        background: var(--btn-hover);
+        border-color: color-mix(in srgb, var(--btn-border) 55%, var(--pill-dot));
+      }
+      .notion-ws-subpages-details {
+        margin: 0.5rem 0 0.85rem;
+        border-radius: 10px;
+        border: 1px solid var(--border-subtle);
+        background: color-mix(in srgb, var(--text) 3%, transparent);
+        padding: 0.2rem 0.55rem 0.55rem;
+        box-sizing: border-box;
+      }
+      .notion-ws-subpages-details[hidden] {
+        display: none !important;
+      }
+      .notion-ws-subpages-summary {
+        list-style: none;
+        cursor: pointer;
+        font-size: 0.78rem;
+        font-weight: 650;
+        color: var(--text-muted);
+        padding: 0.35rem 0.15rem;
+        user-select: none;
+      }
+      .notion-ws-subpages-summary::-webkit-details-marker {
+        display: none;
+      }
+      .notion-ws-subpages-summary::before {
+        content: "";
+        display: inline-block;
+        width: 0.35rem;
+        height: 0.35rem;
+        margin-right: 0.45rem;
+        border-right: 2px solid currentColor;
+        border-bottom: 2px solid currentColor;
+        transform: rotate(-45deg);
+        vertical-align: 0.08em;
+      }
+      .notion-ws-subpages-details[open] .notion-ws-subpages-summary::before {
+        transform: rotate(45deg);
+        vertical-align: 0.12em;
+      }
+      .notion-ws-subpages-list-mount {
+        display: flex;
+        flex-direction: column;
+        gap: 0.28rem;
+        padding-top: 0.15rem;
+      }
+      .notion-blank-body-wrap {
+        margin-top: 0.85rem;
+        min-height: 12rem;
+        border-radius: 4px;
+        padding: 0.35rem 0.1rem;
+      }
+      .notion-blank-body {
+        min-height: 8rem;
+        font-size: 16px;
+        line-height: 1.65;
+        color: var(--text-muted);
+        outline: none;
+      }
+      .notion-blank-body:empty:before {
+        content: attr(data-placeholder);
+        color: var(--text-muted);
+        opacity: 0.5;
+      }
+      .notion-blank-body-wrap > .floating-draft-datasheets-mount {
+        margin-top: 1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+      }
+      #notionDetails.notion-panel > .notion-panel-body > .floating-draft-datasheets-mount {
+        margin-top: 1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+      }
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+      *::-webkit-scrollbar {
+        width: 10px;
+        height: 10px;
+      }
+      *::-webkit-scrollbar-track {
+        background: var(--scrollbar-track);
+      }
+      *::-webkit-scrollbar-thumb {
+        background: var(--scrollbar-thumb);
+        border-radius: 5px;
+        border: 2px solid var(--scrollbar-track);
+      }
+      *::-webkit-scrollbar-thumb:hover {
+        background: var(--scrollbar-thumb-hover);
+      }
+      *::-webkit-scrollbar-corner {
+        background: var(--scrollbar-track);
+      }
+      .layout {
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        min-height: 0;
+        padding: calc(
+            var(--top-chrome-pad-y) +
+              var(--app-logo-block-height) +
+              var(--app-logo-stack-below-gap) +
+              var(--editor-sidebar-toggle-outer) -
+              var(--editor-sidebar-toggle-pull-up) +
+              var(--top-chrome-below-logo)
+          )
+          var(--top-chrome-pad-x) 1rem;
+        gap: 0.35rem;
+        transition: filter 0.22s ease;
+      }
+      .app-logo-wrap {
+        position: fixed;
+        z-index: 2000;
+        top: var(--top-chrome-pad-y);
+        left: max(
+          0.12rem,
+          calc(
+            var(--top-chrome-pad-x) + var(--app-logo-wrap-nudge-x, 0rem)
+          )
+        );
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--app-logo-stack-below-gap);
+      }
+      .app-editor-sidebar-toggle {
+        box-sizing: border-box;
+        width: var(--editor-sidebar-toggle-outer);
+        min-width: var(--editor-sidebar-toggle-outer);
+        height: var(--editor-sidebar-toggle-outer);
+        min-height: var(--editor-sidebar-toggle-outer);
+        margin-top: calc(-1 * var(--editor-sidebar-toggle-pull-up));
+        margin-bottom: 0;
+        margin-left: 0;
+        margin-right: var(--app-editor-sidebar-toggle-inset-from-logo-end, 0.42rem);
+        align-self: flex-end;
+        padding: var(--editor-sidebar-toggle-pad);
+        flex-shrink: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0;
+        line-height: 0;
+        border-radius: 8px;
+        border: 1px solid var(--toggle-border);
+        background: var(--toggle-bg);
+        color: var(--text-muted);
+        cursor: pointer;
+        transition:
+          background 0.14s ease,
+          border-color 0.14s ease,
+          color 0.14s ease;
+      }
+      .app-editor-sidebar-toggle:hover {
+        background: var(--toggle-hover);
+        color: var(--text);
+      }
+      .app-editor-sidebar-toggle:focus-visible {
+        outline: 2px solid var(--pill-dot);
+        outline-offset: 2px;
+      }
+      .app-editor-sidebar-toggle[aria-pressed="true"] {
+        border-color: color-mix(in srgb, var(--pill-dot) 35%, var(--toggle-border));
+        color: var(--pill-text);
+        background: var(--pill-bg);
+      }
+      .app-editor-sidebar-toggle__triangle {
+        display: block;
+        width: 0;
+        height: 0;
+        border-style: solid;
+        border-width: 0.34rem 0 0.34rem 0.52rem;
+        border-color: transparent transparent transparent currentColor;
+        transition: transform 0.18s ease;
+      }
+      .app-editor-sidebar-toggle[aria-pressed="true"]
+        .app-editor-sidebar-toggle__triangle {
+        transform: scaleX(-1);
+      }
+      .app-logo {
+        display: block;
+        height: var(--app-logo-block-height);
+        width: auto;
+        max-width: min(72vw, 28rem);
+        object-fit: contain;
+      }
+      button {
+        font: inherit;
+        font-weight: 600;
+        padding: 0.4rem 0.9rem;
+        border-radius: 6px;
+        border: 1px solid var(--btn-border);
+        background: var(--btn-bg);
+        color: var(--text);
+        cursor: pointer;
+      }
+      button:hover {
+        background: var(--btn-hover);
+      }
+      button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      .notion-panel {
+        display: flex;
+        flex-direction: column;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        overflow: hidden;
+        flex: 0 0 auto;
+        min-height: 0;
+      }
+      .notion-panel[open] {
+        flex: 1;
+      }
+      .notion-panel-summary {
+        list-style: none;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        padding: 0.7rem 1rem;
+        cursor: pointer;
+        font-size: 0.95rem;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        color: var(--summary-text);
+        background: var(--summary-bg);
+        border-bottom: 1px solid var(--border-subtle);
+        user-select: none;
+      }
+
+      .notion-panel-summary::-webkit-details-marker {
+        display: none;
+      }
+      .notion-panel-summary::after {
+        content: "";
+        flex-shrink: 0;
+        width: 0.45rem;
+        height: 0.45rem;
+        margin-left: auto;
+        border-right: 2px solid var(--chevron);
+        border-bottom: 2px solid var(--chevron);
+        transform: rotate(45deg);
+        transition: transform 0.15s ease;
+      }
+      .notion-panel[open] .notion-panel-summary::after {
+        transform: rotate(-135deg);
+        margin-top: 0.2rem;
+      }
+      .notion-panel:not([open]) .notion-panel-summary {
+        border-bottom: none;
+      }
+      .notion-panel-body {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+      }
+      /* Vault: constrain height in the flex stack so long link tables scroll. */
+      #notionWsPaneVault.notion-ws-pane {
+        min-height: 0;
+      }
+      #notionWsPaneVaultNotionLinks.notion-ws-pane {
+        min-height: 0;
+      }
+      #vaultContent.vault-page-inner,
+      #vaultNotionLinksContent.vault-page-inner {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+        padding: 0.5rem 0 1rem;
+        flex: 1;
+        min-height: 0;
+        overflow-x: hidden;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+      .payslip-notion-links--vault {
+        margin-top: 0;
+        border-top: none;
+      }
+      .status {
+        padding: 0.65rem 1rem;
+        font-size: 0.9rem;
+        border-bottom: 1px solid var(--status-border);
+        color: var(--text-muted);
+      }
+      .status.error {
+        color: var(--error-text);
+        background: var(--error-bg);
+      }
+      .status-actions {
+        padding: 0.5rem 1rem 0.65rem;
+        border-bottom: 1px solid var(--status-border);
+        background: var(--error-bg);
+      }
+      .status-actions[hidden] {
+        display: none !important;
+      }
+      .status-open-folder-btn {
+        font: inherit;
+        font-size: 0.85rem;
+        font-weight: 600;
+        padding: 0.4rem 0.75rem;
+        border-radius: 8px;
+        border: 1px solid var(--btn-border);
+        background: var(--surface);
+        color: var(--text);
+        cursor: pointer;
+      }
+      .status-open-folder-btn:hover {
+        opacity: 0.92;
+      }
+      .table-toolbar {
+        flex-shrink: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        border-bottom: 1px solid var(--table-border);
+        background: var(--summary-bg);
+      }
+      .table-toolbar[hidden] {
+        display: none !important;
+      }
+      .table-toolbar-icons {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        flex-shrink: 0;
+      }
+      .filter-toggle:disabled {
+        opacity: 0.48;
+        cursor: not-allowed;
+      }
+      .filter-toggle {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.85rem;
+        height: 1.85rem;
+        padding: 0;
+        border-radius: 6px;
+        border: 1px solid var(--btn-border);
+        background: var(--btn-bg);
+        color: var(--text-muted);
+        cursor: pointer;
+        flex-shrink: 0;
+        transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+      }
+      .filter-toggle:hover {
+        background: var(--btn-hover);
+        color: var(--text);
+      }
+      .filter-toggle:focus-visible {
+        outline: 2px solid var(--text-muted);
+        outline-offset: 2px;
+      }
+      .filter-toggle[aria-expanded="true"] {
+        background: var(--btn-hover);
+        color: var(--text);
+        border-color: var(--text-muted);
+      }
+      .filter-toggle.filter-toggle--active:not([aria-expanded="true"]) {
+        color: var(--pill-text);
+        border-color: var(--pill-dot);
+      }
+      .filter-toggle--show-hidden-cols.filter-toggle--active:not(
+          [aria-expanded="true"]
+        ) {
+        color: var(--text);
+        border-color: var(--text-muted);
+      }
+      .filter-toggle-icon {
+        width: 0.88rem;
+        height: 0.88rem;
+        flex-shrink: 0;
+      }
+      .table-filters {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-end;
+        gap: 0.65rem 1rem;
+        padding: 0.45rem 0.75rem 0.6rem;
+        border-top: 1px solid var(--border-subtle);
+        background: var(--surface);
+      }
+      .table-filters[hidden] {
+        display: none !important;
+      }
+      .filter-group {
+        display: flex;
+        flex-direction: column;
+        gap: 0.28rem;
+        min-width: 0;
+      }
+      .filter-group[hidden] {
+        display: none !important;
+      }
+      .filter-group label {
+        font-size: 0.68rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.055em;
+        color: var(--th-label);
+      }
+      .filter-group select,
+      .filter-group input[type="date"] {
+        font: inherit;
+        font-size: 0.875rem;
+        font-weight: 500;
+        min-width: 11rem;
+        max-width: 100%;
+        padding: 0.35rem 0.5rem;
+        border-radius: 6px;
+        border: 1px solid var(--btn-border);
+        background: var(--btn-bg);
+        color: var(--text);
+      }
+      .filter-group select:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+      .filter-clear {
+        font: inherit;
+        font-size: 0.82rem;
+        font-weight: 600;
+        padding: 0.38rem 0.75rem;
+        margin-left: auto;
+        align-self: center;
+      }
+      .table-wrap {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        background: var(--surface);
+      }
+      .school-tabs {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-end;
+        gap: 0.2rem;
+        padding: 0.35rem 0.45rem 0.4rem;
+        flex-shrink: 0;
+        background: var(--summary-bg);
+        border-bottom: 1px solid var(--table-border);
+      }
+      .school-tabs[hidden] {
+        display: none !important;
+      }
+      .school-tab {
+        font: inherit;
+        font-size: 0.78rem;
+        font-weight: 600;
+        padding: 0.35rem 0.7rem;
+        margin: 0;
+        border: 1px solid var(--table-border);
+        border-bottom-color: var(--summary-bg);
+        border-radius: 8px 8px 0 0;
+        background: var(--btn-bg);
+        color: var(--text-muted);
+        cursor: pointer;
+        line-height: 1.2;
+        position: relative;
+        bottom: -1px;
+        transition:
+          background 0.12s ease,
+          color 0.12s ease,
+          border-color 0.12s ease;
+      }
+      .school-tab:hover {
+        color: var(--text);
+        background: var(--btn-hover);
+      }
+      .school-tab:focus-visible {
+        outline: 2px solid var(--text-muted);
+        outline-offset: 1px;
+      }
+      .school-tab[aria-selected="true"] {
+        color: var(--text);
+        background: var(--surface);
+        border-bottom-color: var(--surface);
+        z-index: 1;
+        box-shadow: 0 -1px 0 var(--surface);
+      }
+      .teacher-view-tabs {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.5rem 0.45rem 0.35rem;
+        flex-shrink: 0;
+        background: var(--surface);
+        border-bottom: 1px solid var(--table-border);
+      }
+      .teacher-view-tabs[hidden] {
+        display: none !important;
+      }
+      .teacher-view-tab {
+        font: inherit;
+        font-size: 0.82rem;
+        font-weight: 600;
+        padding: 0.4rem 0.75rem;
+        margin: 0;
+        border: 1px solid var(--table-border);
+        border-radius: 8px;
+        background: var(--btn-bg);
+        color: var(--text-muted);
+        cursor: pointer;
+        line-height: 1.2;
+        transition:
+          background 0.12s ease,
+          color 0.12s ease,
+          border-color 0.12s ease;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.28rem;
+      }
+      .teacher-view-tab:hover {
+        color: var(--text);
+        background: var(--btn-hover);
+      }
+      .teacher-view-tab-label {
+        display: inline-block;
+        max-width: 100%;
+      }
+      .db-linked-check {
+        flex-shrink: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 0.95rem;
+        height: 0.95rem;
+        line-height: 0;
+      }
+      .db-linked-check svg {
+        width: 0.88rem;
+        height: 0.88rem;
+        color: var(--text-muted);
+        opacity: 0.38;
+        display: block;
+      }
+      .db-linked-check.db-linked-check--notion-linked svg {
+        color: #059669;
+        opacity: 1;
+      }
+      .teacher-view-tab:focus-visible {
+        outline: 2px solid var(--text-muted);
+        outline-offset: 1px;
+      }
+      .teacher-view-tab[aria-selected="true"] {
+        color: var(--text);
+        background: var(--summary-bg);
+        border-color: var(--text-muted);
+      }
+      .table-scroll {
+        flex: 1;
+        min-height: 0;
+        overflow: auto;
+        background: var(--surface);
+      }
+      .table-scroll.table-scroll--with-tabs {
+        border-top: 1px solid var(--table-border);
+      }
+      table.data-sheet {
+        width: max-content;
+        min-width: 100%;
+        border-collapse: collapse;
+        font-size: 0.875rem;
+      }
+      .data-sheet th,
+      .data-sheet td {
+        border: 1px solid var(--table-border);
+        padding: 0.5rem 0.75rem;
+        text-align: left;
+        vertical-align: middle;
+        max-width: 320px;
+        min-width: 0;
+        color: var(--text);
+      }
+      .data-sheet tbody td {
+        text-align: right;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: clip;
+      }
+      /* Single-line clip: next column visually “lays over” truncated text */
+      .data-sheet thead th.th-with-menu {
+        overflow: visible;
+        vertical-align: middle;
+        white-space: nowrap;
+        min-width: 0;
+      }
+      .data-sheet th[data-col-width-set="1"],
+      .data-sheet td[data-col-width-set="1"] {
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: clip;
+      }
+      .data-sheet thead th.th-with-menu[data-col-width-set="1"] {
+        overflow: visible;
+      }
+      .data-sheet .cell-date-input {
+        box-sizing: border-box;
+        font: inherit;
+        font-size: 0.82rem;
+        max-width: 100%;
+        width: 10.5rem;
+        min-width: 0;
+        padding: 0.22rem 0.38rem;
+        border-radius: 6px;
+        border: 1px solid var(--btn-border);
+        background: var(--btn-bg);
+        color: var(--text);
+        text-align: right;
+      }
+      .data-sheet .cell-date-input:disabled {
+        opacity: 0.52;
+        cursor: default;
+      }
+      .cell-with-open .cell-date-input.cell-date-input--inline {
+        flex: 1;
+        width: auto;
+        min-width: 6rem;
+      }
+      /* USD number cells: plain text until focused; inset blue chrome when selected */
+      .data-sheet tbody td:has(.cell-money-wrap) {
+        position: relative;
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+      .data-sheet tbody td:focus-within:has(.cell-money-wrap)::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        z-index: 4;
+        box-shadow: inset 0 0 0 2px var(--money-cell-selection);
+      }
+      .data-sheet tbody td:has(.cell-money-wrap) .cell-money-wrap {
+        position: relative;
+        z-index: 5;
+        justify-content: flex-end;
+        width: 100%;
+        gap: 0;
+      }
+      .cell-money-wrap {
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        min-width: 0;
+        max-width: 100%;
+      }
+      .cell-money-atomic {
+        display: inline-flex;
+        align-items: center;
+        justify-content: flex-end;
+        flex-wrap: nowrap;
+        gap: 0;
+        max-width: 100%;
+        flex: 0 1 auto;
+        margin-inline-start: auto;
+      }
+      .cell-money-wrap--inline {
+        flex: 1;
+        width: auto;
+        min-width: 4.5rem;
+      }
+      .cell-money-prefix {
+        flex-shrink: 0;
+        font-weight: 600;
+        font-size: 0.82rem;
+        color: var(--text);
+        opacity: 0.9;
+        user-select: none;
+        padding: 0;
+        margin: 0;
+        margin-right: -0.08em;
+        letter-spacing: -0.02em;
+      }
+      .data-sheet .cell-money-input {
+        box-sizing: content-box;
+        font: inherit;
+        font-size: 0.875rem;
+        font-weight: 500;
+        flex: 0 1 auto;
+        max-width: 100%;
+        width: auto;
+        min-width: 2.75ch;
+        padding: 0.12rem 0.04rem 0.12rem 0;
+        border-radius: 4px;
+        border: 1px solid transparent;
+        background: transparent;
+        color: var(--text);
+        text-align: left;
+        font-variant-numeric: tabular-nums;
+        caret-color: var(--money-cell-selection);
+      }
+      .cell-money-readonly-value {
+        flex: 0 1 auto;
+        max-width: 100%;
+        font-size: 0.875rem;
+        font-weight: 500;
+        padding: 0.12rem 0.04rem 0.12rem 0;
+        color: var(--text);
+        text-align: left;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+        min-height: 1.35em;
+      }
+      .data-sheet tbody td:focus-within:has(.cell-money-wrap) .cell-money-prefix {
+        opacity: 1;
+      }
+      .data-sheet .cell-money-input:not(:disabled):focus {
+        outline: none;
+      }
+      .data-sheet .cell-money-input:not(:disabled):focus-visible {
+        outline: none;
+      }
+      .data-sheet .cell-money-input:disabled {
+        opacity: 0.52;
+        cursor: wait;
+        border-color: transparent;
+      }
+      .cell-with-open .cell-money-input.cell-money-input--inline {
+        flex: 0 1 auto;
+        width: auto;
+        min-width: 2.75ch;
+      }
+      .data-sheet th {
+        background: var(--th-bg);
+        font-weight: 600;
+        font-size: 0.68rem;
+        text-transform: uppercase;
+        letter-spacing: 0.055em;
+        color: var(--th-label);
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        white-space: nowrap;
+      }
+      .th-resize-handle {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        right: 0;
+        width: 12px;
+        transform: translateX(50%);
+        cursor: col-resize;
+        z-index: 4;
+        touch-action: none;
+        user-select: none;
+        box-sizing: border-box;
+      }
+      .th-resize-handle:hover,
+      .th-resize-handle:focus-visible {
+        background: color-mix(in srgb, var(--text-muted) 22%, transparent);
+      }
+      .th-col-resizing {
+        user-select: none;
+      }
+      body.sheet-col-resizing {
+        cursor: col-resize;
+        user-select: none !important;
+      }
+      .sheet-col-resize-guide {
+        position: fixed;
+        left: 0;
+        top: 0;
+        width: 3px;
+        margin-left: -1.5px;
+        height: 0;
+        pointer-events: none;
+        z-index: 10040;
+        background: #1f8cf9;
+        border-radius: 999px;
+        box-shadow:
+          0 0 0 1px rgba(255, 255, 255, 0.25),
+          0 0 14px rgba(31, 140, 249, 0.72);
+      }
+      .sheet-col-resize-guide[hidden] {
+        display: none !important;
+      }
+      .th-inner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: nowrap;
+        gap: 0.35rem;
+        min-width: 0;
+        overflow: hidden;
+        padding-right: 4px;
+      }
+      .th-menu-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        align-self: center;
+        width: 1.1rem;
+        height: 1.1rem;
+        margin: -0.06rem -0.06rem -0.06rem 0;
+        padding: 0;
+        border: none;
+        border-radius: 4px;
+        background: transparent;
+        color: var(--th-label);
+        cursor: pointer;
+        line-height: 0;
+        opacity: 0.72;
+      }
+      .th-menu-tri {
+        display: block;
+        width: 0;
+        height: 0;
+        border-style: solid;
+        border-width: 5px 4px 0 4px;
+        border-color: currentColor transparent transparent transparent;
+      }
+      .th-menu-btn:hover {
+        opacity: 1;
+        background: var(--tr-hover);
+      }
+      .th-menu-btn:focus-visible {
+        outline: 2px solid var(--text-muted);
+        outline-offset: 1px;
+      }
+      .column-menu {
+        position: fixed;
+        z-index: 2500;
+        min-width: 10rem;
+        padding: 0.32rem;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: var(--surface);
+        box-shadow:
+          0 4px 6px rgba(0, 0, 0, 0.08),
+          0 12px 28px rgba(0, 0, 0, 0.18);
+      }
+      .column-menu[hidden] {
+        display: none !important;
+      }
+      .column-menu-item {
+        display: flex;
+        align-items: center;
+        gap: 0.55rem;
+        width: 100%;
+        padding: 0.42rem 0.55rem;
+        border: none;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--text);
+        font: inherit;
+        font-size: 0.84rem;
+        font-weight: 500;
+        text-align: left;
+        cursor: pointer;
+      }
+      .column-menu-item:hover,
+      .column-menu-item:focus-visible {
+        background: var(--btn-hover);
+      }
+      .column-menu-icon {
+        width: 1rem;
+        height: 1rem;
+        flex-shrink: 0;
+        opacity: 0.92;
+      }
+      .th-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+      }
+      .data-sheet thead .th-label.th-label--draggable {
+        flex: 1 1 0%;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        min-width: 0;
+        max-width: 100%;
+        overflow: visible;
+        line-height: 1.35;
+      }
+      .data-sheet thead .th-label-text {
+        flex: 1 1 0%;
+        min-width: 0;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+      }
+      .th-label--draggable {
+        cursor: grab;
+        touch-action: none;
+        user-select: none;
+      }
+      .th-label--draggable:active {
+        cursor: grabbing;
+      }
+      .data-sheet .th-dragging {
+        opacity: 0.45;
+      }
+      .data-sheet .th-drop-target {
+        outline: 2px solid color-mix(in srgb, var(--text-muted) 70%, transparent);
+        outline-offset: -2px;
+        background: var(--btn-hover);
+      }
+      .th-icon {
+        font-size: 0.9rem;
+        line-height: 1;
+        opacity: 0.88;
+        font-weight: 400;
+      }
+      .data-sheet thead .th-icon {
+        flex-shrink: 0;
+      }
+      .data-sheet tbody tr {
+        transition: background 0.08s ease;
+      }
+      .data-sheet tbody tr:hover td {
+        background: var(--tr-hover) !important;
+      }
+      .data-sheet tr:nth-child(even) td {
+        background: var(--tr-alt);
+      }
+      .cell-with-open {
+        display: flex;
+        flex-direction: row-reverse;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: nowrap;
+        gap: 0.6rem;
+        min-width: 0;
+        min-height: 2rem;
+      }
+      .cell-primary {
+        font-weight: 600;
+        flex: 1 1 0%;
+        min-width: 0;
+        line-height: 1.35;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: clip;
+        text-align: right;
+      }
+      .row-open-peek {
+        flex-shrink: 0;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.28rem;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.12s ease;
+        font-size: 0.62rem;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        padding: 0.26rem 0.42rem 0.26rem 0.38rem;
+        border-radius: 4px;
+        border: 1px solid var(--peek-btn-border);
+        background: var(--peek-btn-bg);
+        color: var(--text);
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .row-open-peek:hover:not(:disabled) {
+        background: var(--peek-btn-hover);
+      }
+      .row-open-peek:disabled {
+        display: none;
+      }
+      .tr-with-peek:hover .row-open-peek:not(:disabled),
+      .tr-with-peek:focus-within .row-open-peek:not(:disabled) {
+        opacity: 1;
+        pointer-events: auto;
+      }
+      .row-open-peek-icon {
+        font-size: 0.85rem;
+        line-height: 1;
+        opacity: 0.9;
+      }
+      td.cell-pill-wrap {
+        vertical-align: middle;
+        overflow: hidden;
+      }
+      .cell-pill-wrap .cell-pill {
+        max-width: 100%;
+      }
+      .cell-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.14rem 0.55rem 0.14rem 0.45rem;
+        border-radius: 999px;
+        background: var(--pill-bg);
+        color: var(--pill-text);
+        font-size: 0.82rem;
+        font-weight: 500;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: clip;
+        box-sizing: border-box;
+        max-width: 100%;
+        min-width: 0;
+      }
+      .cell-pill::before {
+        content: "";
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--pill-dot);
+        flex-shrink: 0;
+      }
+      .cell-replica-draft-input {
+        width: 100%;
+        min-width: 0;
+        border: none;
+        background: transparent;
+        font: inherit;
+        color: inherit;
+        padding: 0.12rem 0.35rem;
+        box-sizing: border-box;
+      }
+      .cell-replica-draft-input:focus {
+        outline: 1px solid var(--focus-ring, #4488ff);
+        outline-offset: 1px;
+        border-radius: 2px;
+      }
+      .cell-replica-draft-input--inline {
+        min-width: 4ch;
+        flex: 1 1 auto;
+      }
+      .floating-replica-add-row-strip {
+        flex-shrink: 0;
+        display: flex;
+        justify-content: flex-start;
+        align-items: center;
+        padding: 0.22rem 0 0;
+      }
+      .floating-replica-add-row-fab {
+        width: 1.42rem;
+        height: 1.42rem;
+        padding: 0;
+        margin: 0;
+        border: 1px solid var(--border-subtle);
+        border-radius: 4px;
+        background: var(--surface);
+        box-shadow: none;
+        font-size: 0.92rem;
+        font-weight: 600;
+        line-height: 1;
+        color: var(--text-muted);
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .floating-replica-add-row-fab:hover {
+        background: var(--btn-hover);
+        color: var(--text);
+      }
+      html[data-theme="dark"] .floating-replica-add-row-fab {
+        box-shadow: none;
+      }
+      .floating-replica-add-property-col {
+        vertical-align: middle;
+        padding: 0;
+        width: 2.35rem;
+        min-width: 2.35rem;
+        background: transparent;
+      }
+      .floating-replica-add-property-inner {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100%;
+      }
+      .floating-replica-add-property-btn {
+        width: auto;
+        min-width: 1.62rem;
+        height: 1.62rem;
+        padding: 0 0.08rem;
+        margin: 0;
+        border: none;
+        border-radius: 4px;
+        background: transparent;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 2px;
+        font-size: 1.05rem;
+        font-weight: 600;
+        color: var(--text-muted);
+        line-height: 1;
+      }
+      .floating-replica-add-property-btn:hover {
+        background: rgba(125, 125, 125, 0.1);
+        color: var(--text);
+      }
+      html[data-theme="dark"] .floating-replica-add-property-btn:hover {
+        background: rgba(255, 255, 255, 0.05);
+      }
+      .floating-replica-add-prop-spacer {
+        width: 2.35rem;
+        min-width: 2.35rem;
+      }
+      .floating-replica-prop-popover {
+        z-index: 1300;
+        min-width: 10.75rem;
+        padding: 0.35rem 0;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: var(--surface);
+        box-shadow:
+          0 4px 20px rgba(0, 0, 0, 0.12),
+          0 0 0 1px rgba(0, 0, 0, 0.04);
+      }
+      html[data-theme="dark"] .floating-replica-prop-popover {
+        box-shadow: var(--overlay-panel-shadow);
+      }
+      .floating-replica-prop-popover-item {
+        display: block;
+        width: 100%;
+        padding: 0.45rem 0.95rem;
+        margin: 0;
+        border: none;
+        background: transparent;
+        cursor: pointer;
+        font: inherit;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text);
+        text-align: left;
+      }
+      .floating-replica-prop-popover-item:hover {
+        background: rgba(125, 125, 125, 0.1);
+      }
+      html[data-theme="dark"] .floating-replica-prop-popover-item:hover {
+        background: rgba(255, 255, 255, 0.04);
+      }
+      .floating-replica-multi-tags {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-start;
+        gap: 4px;
+        min-height: 1.55rem;
+      }
+      .floating-replica-multi-add-tag {
+        flex-shrink: 0;
+        align-self: center;
+        font-size: 11px;
+        padding: 0.12rem 0.42rem;
+        border-radius: 4px;
+        border: 1px dashed var(--border-subtle);
+        background: transparent;
+        color: var(--text-muted);
+        cursor: pointer;
+      }
+      .floating-replica-multi-add-tag:hover {
+        color: var(--text);
+      }
+      .floating-replica-cb-native {
+        width: 1.1rem;
+        height: 1.1rem;
+        margin: 0.14rem 0 0;
+        cursor: pointer;
+        accent-color: var(--money-cell-selection, #1f8cf9);
+        flex-shrink: 0;
+      }
+      .floating-replica-cb-native--inline {
+        margin: 0;
+        align-self: center;
+      }
+      .table-sheet-footer {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+        padding: 0.28rem 0.65rem 0.42rem;
+        border-top: 1px solid var(--table-border);
+        background: var(--surface);
+        flex-shrink: 0;
+      }
+      .table-load-hint {
+        margin: 0;
+        font-size: 0.65rem;
+        font-weight: 500;
+        color: var(--text-muted);
+        line-height: 1.35;
+        text-align: right;
+        max-width: 100%;
+      }
+      .main-stage {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+      }
+      .floating-draft-datasheets-mount {
+        flex-shrink: 0;
+        width: 100%;
+        max-width: 100%;
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+        padding: 1rem var(--top-chrome-pad-x) 1.5rem;
+        box-sizing: border-box;
+      }
+      .floating-draft-datasheets-mount:empty {
+        display: none;
+      }
+      .floating-draft-datasheet-card {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface);
+        overflow: hidden;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+      }
+      html[data-theme="dark"] .floating-draft-datasheet-card {
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.38);
+      }
+      .floating-draft-datasheet-bar {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.5rem 0.75rem;
+        padding: 0.48rem 0.65rem;
+        border-bottom: 1px solid var(--border-subtle);
+        background: var(--summary-bg);
+      }
+      .floating-draft-datasheet-title-row {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+        flex: 1;
+        min-width: 0;
+      }
+      .floating-draft-datasheet-title-row .floating-draft-datasheet-title {
+        flex: 1;
+      }
+      .floating-draft-datasheet-title {
+        min-width: 7rem;
+        font-weight: 600;
+        font-size: 0.9rem;
+        padding: 0.2rem 0.35rem;
+        border-radius: 6px;
+        outline: none;
+      }
+      .floating-draft-datasheet-actions {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+      }
+      .floating-draft-datasheet-remove,
+      .floating-draft-add-row {
+        font: inherit;
+        font-size: 0.8rem;
+        font-weight: 600;
+        padding: 0.32rem 0.55rem;
+        border-radius: 8px;
+        border: 1px solid var(--btn-border);
+        background: var(--btn-bg);
+        color: var(--text-muted);
+        cursor: pointer;
+      }
+      .floating-draft-add-row {
+        color: var(--text);
+      }
+      .floating-draft-datasheet-remove:hover,
+      .floating-draft-add-row:hover {
+        background: var(--btn-hover);
+        color: var(--text);
+      }
+      .floating-draft-table-scroll.table-scroll {
+        max-height: min(50vh, 28rem);
+      }
+      /* Toolbar icon SVGs: let the <button> be the click target (reliable + matches stopPropagation on pull). */
+      .floating-replica-table-toolbar .filter-toggle-icon {
+        pointer-events: none;
+      }
+      .floating-replica-save-sql-btn {
+        flex-shrink: 0;
+      }
+      .floating-replica-save-sql-btn.floating-replica-save-sql-btn--saved {
+        color: #15803d;
+      }
+      html[data-theme="dark"]
+        .floating-replica-save-sql-btn.floating-replica-save-sql-btn--saved {
+        color: #4ade80;
+      }
+      .floating-replica-save-sql-btn.floating-replica-save-sql-btn--unsaved {
+        color: var(--error-text);
+      }
+      .floating-draft-data-sheet tbody td.floating-draft-empty-td {
+        min-height: 2rem;
+        outline: none;
+      }
+      .floating-draft-data-sheet thead .th-icon.th-icon--floating-prop-kind {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        line-height: 0;
+        color: var(--th-label);
+      }
+      .floating-draft-data-sheet thead .th-icon.th-icon--floating-prop-kind svg {
+        display: block;
+      }
+      .floating-draft-data-sheet thead th.floating-replica-sys-time-th {
+        vertical-align: bottom;
+      }
+      .floating-draft-data-sheet thead .floating-replica-sys-time-th .floating-replica-sys-time-inner {
+        justify-content: flex-start;
+      }
+      .floating-draft-data-sheet thead .floating-replica-sys-time-th .th-label-text {
+        font-weight: 500;
+        white-space: nowrap;
+      }
+      .floating-draft-data-sheet tbody td.floating-replica-sys-time-td {
+        font-size: 0.78rem;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+        max-width: 11.5rem;
+        color: var(--text-muted);
+        user-select: text;
+      }
+      .floating-replica-add-prop-btn-chip {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        line-height: 0;
+        opacity: 0.88;
+      }
+      .floating-replica-add-prop-btn-plus {
+        font-size: 1rem;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+      }
+      .floating-draft-data-sheet tbody tr.floating-draft-data-row td {
+        vertical-align: middle;
+        position: relative;
+      }
+      .floating-draft-data-sheet tbody tr.floating-draft-data-row .cell-with-open {
+        min-height: 2.1rem;
+      }
+      .floating-draft-data-sheet tbody tr.floating-draft-data-row .cell-replica-draft-input,
+      .floating-draft-data-sheet tbody tr.floating-draft-data-row .cell-date-input {
+        min-height: 1.7rem;
+      }
+      .floating-draft-data-sheet tbody tr.floating-draft-data-row
+        td:focus-within:not(:has(.cell-money-wrap)):not(.floating-replica-sys-time-td) {
+        outline: 1px solid
+          color-mix(in srgb, var(--money-cell-selection, #1f8cf9) 72%, transparent);
+        outline-offset: -2px;
+        border-radius: 2px;
+        z-index: 1;
+      }
+      /* Blur for entire menu-open state only (no :hover); tied to #appMain.nav-menu-open. */
+      #appMain.nav-menu-open > .layout {
+        filter: blur(8px) brightness(0.9);
+        -webkit-filter: blur(8px) brightness(0.9);
+      }
+      .app-page {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+      }
+      .app-page[hidden] {
+        display: none !important;
+      }
+      .teachers-page {
+        flex: 1;
+        min-height: 0;
+        padding: 1rem var(--top-chrome-pad-x);
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+      }
+      .teachers-pay-slips-hub {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+        padding: 0.35rem var(--top-chrome-pad-x) 1rem;
+        background: var(--bg);
+      }
+      .teachers-pay-slips-hub-header {
+        flex-shrink: 0;
+        margin: 0 0 0.5rem;
+        padding: 0.15rem 0 0.35rem;
+      }
+      .teachers-pay-slips-hub-title {
+        margin: 0;
+        font-size: 1.35rem;
+        font-weight: 750;
+        letter-spacing: -0.02em;
+        color: var(--text);
+      }
+      .teachers-pay-slips-hub-scroll {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
+        display: flex;
+        flex-direction: column;
+        gap: 1.25rem;
+        -webkit-overflow-scrolling: touch;
+      }
+      .teachers-pay-slips-hub-section {
+        flex-shrink: 0;
+      }
+      .teachers-page:not(:has(#adminTeachersPanel:not([hidden]))) {
+        min-height: 12rem;
+        background: transparent;
+        border: none;
+        border-radius: 0;
+        padding: 0.5rem var(--top-chrome-pad-x) 1.25rem;
+      }
+      .layout:has(#pageTeachersPaySlipsHub:not([hidden]) #adminTeachersPanel:not([hidden])) {
+        padding-left: 0;
+        padding-right: 0;
+        padding-bottom: 0;
+        gap: 0;
+      }
+      .teachers-page:has(#adminTeachersPanel:not([hidden])) {
+        flex: 1;
+        min-height: 0;
+        width: 100%;
+        align-self: stretch;
+        padding: 0;
+        border: none;
+        border-radius: 0;
+        background: var(--bg);
+      }
+      .admin-teachers-panel {
+        width: 100%;
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+      }
+      .admin-teachers-panel[hidden] {
+        display: none !important;
+      }
+      .admin-teachers-card {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        max-width: none;
+        margin: 0;
+        padding: 0;
+        border: none;
+        border-radius: 0;
+        border-bottom: 1px solid var(--border);
+        background: var(--surface);
+        box-shadow: none;
+      }
+      html[data-theme="dark"] .admin-teachers-card {
+        border-bottom-color: var(--border);
+      }
+      .admin-teachers-lead {
+        flex-shrink: 0;
+        padding: 0 1.25rem 0.75rem;
+        border-bottom: 1px solid var(--border-subtle);
+        margin-bottom: 0.5rem;
+      }
+      .admin-teachers-lead-top {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 1rem;
+        flex-wrap: wrap;
+        margin-bottom: 0.35rem;
+      }
+      .admin-teachers-title {
+        font-size: 1.15rem;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        color: var(--text);
+        margin: 0;
+      }
+      .admin-teachers-title-group {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.55rem;
+        flex-wrap: wrap;
+      }
+      .admin-teachers-refresh-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.32rem;
+        padding: 0.28rem 0.55rem;
+        font: inherit;
+        font-size: 0.78rem;
+        font-weight: 600;
+        color: var(--text-muted);
+        background: var(--summary-bg);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        cursor: pointer;
+        line-height: 1;
+        transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+      }
+      .admin-teachers-refresh-btn:hover {
+        background: var(--btn-hover);
+        color: var(--text);
+      }
+      .admin-teachers-refresh-btn:focus-visible {
+        outline: 2px solid var(--text-muted);
+        outline-offset: 2px;
+      }
+      .admin-teachers-refresh-btn:disabled,
+      .admin-teachers-refresh-btn[aria-busy="true"] {
+        opacity: 0.65;
+        cursor: progress;
+      }
+      .admin-teachers-refresh-btn[aria-busy="true"] .admin-teachers-refresh-icon {
+        animation: admin-teachers-refresh-spin 0.9s linear infinite;
+      }
+      .admin-teachers-refresh-icon {
+        flex-shrink: 0;
+      }
+      @keyframes admin-teachers-refresh-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      .admin-teachers-count {
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: var(--text-muted);
+        margin: 0;
+      }
+      .admin-teachers-count[hidden] {
+        display: none !important;
+      }
+      .admin-teachers-intro {
+        font-size: 0.84rem;
+        color: var(--text-muted);
+        margin: 0;
+        line-height: 1.45;
+        max-width: none;
+      }
+      .admin-teachers-status {
+        flex-shrink: 0;
+        margin: 0.35rem 0;
+        min-height: 1.25rem;
+        padding: 0 1.25rem;
+      }
+      .admin-teachers-status .teacher-profile-error {
+        margin-top: 0;
+      }
+      .admin-teachers-table-shell {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        margin: 0;
+        padding: 0 0 0.75rem;
+        width: 100%;
+      }
+      .admin-teachers-table-shell:has(#adminTeachersTableWrap[hidden]) {
+        display: none;
+      }
+      .admin-teachers-table-wrap {
+        flex: 1;
+        min-height: 0;
+        overflow: auto;
+        border: none;
+        border-radius: 0;
+        border-top: 1px solid var(--border-subtle);
+        background: var(--surface);
+      }
+      .admin-teachers-table-wrap[hidden] {
+        display: none !important;
+      }
+      .admin-teachers-table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0;
+        font-size: 0.9rem;
+      }
+      .admin-teachers-table th,
+      .admin-teachers-table td {
+        padding: 0.65rem 0.85rem;
+        text-align: left;
+        border-bottom: 1px solid var(--border-subtle);
+        vertical-align: middle;
+      }
+      .admin-teachers-table th {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        font-weight: 600;
+        color: var(--th-label);
+        text-transform: uppercase;
+        font-size: 0.68rem;
+        letter-spacing: 0.05em;
+        background: var(--summary-bg);
+        box-shadow: 0 1px 0 var(--border-subtle);
+      }
+      .admin-teachers-table td {
+        background: var(--surface);
+      }
+      .admin-teachers-table tr:last-child td {
+        border-bottom: none;
+      }
+      .admin-teachers-table tbody tr:hover td {
+        background: var(--tr-hover);
+      }
+      .admin-teachers-cell-avatar {
+        width: 2.5rem;
+        height: 2.5rem;
+        border-radius: 50%;
+        object-fit: cover;
+        border: 1px solid var(--border);
+        display: block;
+      }
+      .admin-teachers-th-status {
+        width: 1px;
+        white-space: nowrap;
+      }
+      .admin-teachers-presence-cell {
+        width: 1px;
+        white-space: nowrap;
+      }
+      .admin-teachers-presence-dot {
+        display: inline-block;
+        width: 0.7rem;
+        height: 0.7rem;
+        border-radius: 50%;
+        background: #9e9e9e;
+        box-shadow: 0 0 0 2px var(--border);
+        vertical-align: middle;
+      }
+      .admin-teachers-presence-dot--online {
+        background: #2e7d32;
+        box-shadow: 0 0 0 2px rgba(46, 125, 50, 0.35);
+      }
+      .admin-teachers-presence-dot--offline {
+        background: #c62828;
+        box-shadow: 0 0 0 2px rgba(198, 40, 40, 0.35);
+      }
+      .admin-teachers-presence-dot--unknown {
+        background: #9e9e9e;
+        box-shadow: 0 0 0 2px rgba(158, 158, 158, 0.35);
+      }
+      html[data-theme="dark"] .admin-teachers-presence-dot--online {
+        background: #66bb6a;
+        box-shadow: 0 0 0 2px rgba(102, 187, 106, 0.35);
+      }
+      html[data-theme="dark"] .admin-teachers-presence-dot--offline {
+        background: #ef5350;
+        box-shadow: 0 0 0 2px rgba(239, 83, 80, 0.35);
+      }
+      html[data-theme="dark"] .admin-teachers-presence-dot--unknown {
+        background: #78909c;
+        box-shadow: 0 0 0 2px rgba(120, 144, 156, 0.35);
+      }
+      .admin-teachers-empty {
+        flex-shrink: 0;
+        font-size: 0.88rem;
+        color: var(--text-muted);
+        margin: 0.5rem 0 0;
+        padding: 0 1.25rem 0.75rem;
+      }
+      .admin-teachers-loading {
+        flex-shrink: 0;
+        font-size: 0.88rem;
+        color: var(--text-muted);
+        margin: 0.35rem 0;
+        padding: 0 1.25rem;
+      }
+      .admin-teachers-empty[hidden],
+      .admin-teachers-loading[hidden] {
+        display: none !important;
+      }
+      #teacherOwnProfileWrap[hidden] {
+        display: none !important;
+      }
+      .nav-menu-divider {
+        height: 0;
+        margin: 0;
+        border: none;
+        border-top: 1px solid var(--border-subtle);
+        flex-shrink: 0;
+        align-self: stretch;
+      }
+      .nav-menu-item--nav.active {
+        background: var(--pill-bg);
+        color: var(--pill-text);
+      }
+      .home-content {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.4rem;
+      }
+      .canvas-draft-tables {
+        display: flex;
+        flex-direction: column;
+        gap: 1.25rem;
+        margin-top: 1rem;
+        padding: 0 0 0.75rem;
+      }
+      .canvas-draft-tables:empty {
+        display: none;
+      }
+      .payslip-notion-links {
+        flex-shrink: 0;
+        margin-top: 0.75rem;
+        padding: 0.85rem 1rem 1rem;
+        border-top: 1px solid var(--border-subtle);
+        background: color-mix(in srgb, var(--summary-bg) 55%, transparent);
+      }
+      .payslip-notion-links-title {
+        margin: 0 0 0.35rem;
+        font-size: 0.92rem;
+        font-weight: 700;
+        color: var(--text);
+        letter-spacing: -0.02em;
+      }
+      .payslip-notion-links-hint {
+        margin: 0 0 0.65rem;
+        font-size: 0.82rem;
+        line-height: 1.45;
+        color: var(--text-muted);
+      }
+      .payslip-notion-links-table-wrap {
+        overflow-x: auto;
+        border: 1px solid var(--table-border);
+        border-radius: 8px;
+        background: var(--surface);
+      }
+      .payslip-notion-links-table.data-sheet thead th.payslip-notion-links-col-action {
+        width: 4.75rem;
+        text-align: center;
+        font-size: 0.72rem;
+        color: var(--text-muted);
+        font-weight: 600;
+      }
+      .payslip-notion-links-table.data-sheet tbody td {
+        padding: 0.42rem 0.5rem;
+        vertical-align: middle;
+      }
+      .payslip-notion-links-table-wrap input.payslip-notion-links-input {
+        font: inherit;
+        font-size: 13px;
+        padding: 0.38rem 0.5rem;
+        margin: 0;
+        border: 1px solid var(--table-border);
+        border-radius: 6px;
+        background: var(--surface);
+        color: var(--text);
+        width: 100%;
+        min-width: 8rem;
+        box-sizing: border-box;
+      }
+      .payslip-notion-links-table-wrap
+        input.payslip-notion-links-input.payslip-notion-links-input--id {
+        font-family: ui-monospace, "Cascadia Code", monospace;
+        font-size: 12px;
+      }
+      .payslip-notion-links-table-wrap
+        input.payslip-notion-links-input:focus-visible {
+        outline: 2px solid var(--pill-dot);
+        outline-offset: 1px;
+      }
+      .payslip-notion-links-remove {
+        font: inherit;
+        font-size: 0.78rem;
+        padding: 0.35rem 0.5rem;
+        border-radius: 6px;
+        border: 1px solid var(--btn-border);
+        background: var(--btn-bg);
+        color: var(--text-muted);
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .payslip-notion-links-remove:hover:not(:disabled) {
+        background: var(--btn-hover);
+        color: var(--text);
+      }
+      .payslip-notion-links-td-action {
+        text-align: center;
+        vertical-align: middle;
+        width: 4.75rem;
+      }
+      .payslip-notion-links-footer {
+        margin-top: 0.65rem;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.85rem 1.25rem;
+      }
+      .payslip-notion-links-restrict-label {
+        display: inline-flex;
+        align-items: flex-start;
+        gap: 0.45rem;
+        font-size: 0.8rem;
+        line-height: 1.35;
+        color: var(--text-muted);
+        cursor: pointer;
+        margin: 0;
+        font-weight: 500;
+      }
+      .payslip-notion-links-restrict-label input[type="checkbox"] {
+        flex-shrink: 0;
+        margin-top: 0.12rem;
+        accent-color: var(--pill-dot, #2563eb);
+      }
+      .payslip-notion-links-restrict-text {
+        max-width: 22rem;
+      }
+      .canvas-draft-table-wrap {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface);
+        overflow: hidden;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+      }
+      html[data-theme="dark"] .canvas-draft-table-wrap {
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+      }
+      .canvas-draft-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.5rem 0.75rem;
+        border-bottom: 1px solid var(--border-subtle);
+        background: var(--summary-bg);
+      }
+      .canvas-draft-title {
+        flex: 1;
+        min-width: 4rem;
+        font-weight: 600;
+        font-size: 0.9rem;
+        padding: 0.2rem 0.35rem;
+        border-radius: 6px;
+        outline: none;
+      }
+      .canvas-draft-title:focus-visible {
+        outline: 2px solid var(--pill-dot);
+        outline-offset: 2px;
+      }
+      .canvas-draft-remove {
+        font: inherit;
+        font-size: 0.82rem;
+        padding: 0.3rem 0.55rem;
+        border-radius: 8px;
+        border: 1px solid var(--btn-border);
+        background: var(--btn-bg);
+        color: var(--text-muted);
+        cursor: pointer;
+      }
+      .canvas-draft-remove:hover {
+        background: var(--btn-hover);
+        color: var(--text);
+      }
+      .canvas-draft-table-wrap.canvas-local-database-root {
+        padding: 0;
+      }
+      .canvas-local-database-shell {
+        --ldb-bg: #1f1f1f;
+        --ldb-panel: #252525;
+        --ldb-head: linear-gradient(180deg, #2c2c2c 0%, #252525 100%);
+        --ldb-border: #3a3a3a;
+        --ldb-text: rgba(232, 232, 230, 0.92);
+        --ldb-muted: rgba(231, 230, 228, 0.55);
+        --ldb-accent: #2383e2;
+        --ldb-accent-hover: #1e6dbf;
+        background: var(--ldb-panel);
+        color: var(--ldb-text);
+        font-size: 14px;
+        line-height: 1.35;
+        border-radius: 6px;
+        overflow: hidden;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      }
+      html[data-theme="light"] .canvas-local-database-shell {
+        --ldb-bg: #f7f6f4;
+        --ldb-panel: #f1f1ef;
+        --ldb-head: linear-gradient(180deg, #ebebea 0%, #ececea 100%);
+        --ldb-border: #dcdad6;
+        --ldb-text: #373528;
+        --ldb-muted: #9b988f;
+        --ldb-accent: #2383e2;
+        --ldb-accent-hover: #1e6dbf;
+      }
+      .canvas-local-db-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--ldb-border);
+        background: var(--ldb-head);
+      }
+      .canvas-local-db-title {
+        flex: 1;
+        min-width: 2rem;
+        outline: none;
+        font-weight: 510;
+        color: var(--ldb-muted);
+        padding: 2px 0;
+      }
+      .canvas-local-db-actions {
+        display: flex;
+        align-items: center;
+        gap: 2px;
+        flex-shrink: 0;
+      }
+      .canvas-local-db-icon-btn {
+        width: 28px;
+        height: 28px;
+        padding: 0;
+        border: none;
+        border-radius: 4px;
+        background: transparent;
+        color: var(--ldb-muted);
+        cursor: default;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .canvas-local-db-icon-btn:hover {
+        background: rgba(125, 125, 125, 0.12);
+        color: var(--ldb-text);
+      }
+      html[data-theme="dark"] .canvas-local-db-icon-btn:hover {
+        background: rgba(255, 255, 255, 0.06);
+      }
+      .canvas-local-db-icon-svg {
+        width: 16px;
+        height: 16px;
+      }
+      .canvas-local-db-remove {
+        font: inherit;
+        font-size: 11.5px;
+        padding: 4px 8px;
+        border-radius: 4px;
+        border: 1px solid var(--ldb-border);
+        background: transparent;
+        color: var(--ldb-muted);
+        cursor: pointer;
+        margin: 0 4px;
+      }
+      .canvas-local-db-remove:hover {
+        background: rgba(125, 125, 125, 0.1);
+        color: var(--ldb-text);
+      }
+      html[data-theme="dark"] .canvas-local-db-remove:hover {
+        background: rgba(255, 255, 255, 0.05);
+      }
+      .canvas-local-db-toolbar-new {
+        font: inherit;
+        font-size: 13px;
+        font-weight: 570;
+        padding: 6px 10px;
+        padding-right: 8px;
+        border: none;
+        border-radius: 4px;
+        background: var(--ldb-accent);
+        color: #fff;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+      }
+      .canvas-local-db-toolbar-new:hover {
+        background: var(--ldb-accent-hover);
+      }
+      .canvas-local-db-chevron {
+        font-size: 11px;
+        opacity: 0.92;
+      }
+      .canvas-local-db-scroll {
+        max-height: min(50vh, 22rem);
+        overflow: auto;
+        background: var(--ldb-bg);
+        scrollbar-color: rgba(148, 148, 148, 0.45) rgba(0, 0, 0, 0.08);
+      }
+      .canvas-local-db-table {
+        width: max(100%, 560px);
+        border-collapse: collapse;
+        table-layout: fixed;
+      }
+      .canvas-local-db-table th,
+      .canvas-local-db-table td {
+        border: 1px solid var(--ldb-border);
+        vertical-align: middle;
+      }
+      .canvas-local-db-prop-th {
+        background: var(--ldb-bg);
+        font-weight: 500;
+        color: var(--ldb-muted);
+        padding: 0 8px;
+      }
+      .canvas-local-db-prop-head {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        min-height: 32px;
+      }
+      .canvas-local-db-type-icon {
+        font-family: inherit;
+        font-size: 12px;
+        font-weight: 650;
+        color: var(--ldb-muted);
+        width: 24px;
+        text-align: center;
+        opacity: 0.85;
+        flex-shrink: 0;
+      }
+      .canvas-local-db-prop-label {
+        flex: 1;
+        min-width: 2rem;
+        outline: none;
+        color: var(--ldb-text);
+      }
+      .canvas-local-db-add-property-col {
+        background: var(--ldb-bg);
+        width: 11.5rem;
+      }
+      .canvas-local-db-add-property-btn {
+        width: 100%;
+        height: 100%;
+        min-height: 34px;
+        padding: 0 11px;
+        border: none;
+        background: transparent;
+        font: inherit;
+        font-size: 13px;
+        color: var(--ldb-muted);
+        text-align: left;
+        cursor: pointer;
+      }
+      .canvas-local-db-add-property-btn:hover {
+        background: rgba(125, 125, 125, 0.1);
+        color: var(--ldb-text);
+      }
+      html[data-theme="dark"] .canvas-local-db-add-property-btn:hover {
+        background: rgba(255, 255, 255, 0.04);
+      }
+      .canvas-local-db-cell {
+        background: var(--ldb-bg);
+        color: var(--ldb-text);
+        padding: 6px 10px;
+        min-height: 34px;
+        outline: none;
+      }
+      .canvas-local-db-cell--muted {
+        background: var(--ldb-bg);
+        color: var(--ldb-muted);
+      }
+      .canvas-local-db-cell--new-slot {
+        padding-left: 10px;
+        background: var(--ldb-bg);
+      }
+      .canvas-local-db-new-page-btn {
+        padding: 0;
+        border: none;
+        background: none;
+        font: inherit;
+        font-size: 14px;
+        color: var(--ldb-muted);
+        cursor: pointer;
+        text-align: left;
+      }
+      .canvas-local-db-new-page-btn:hover {
+        color: var(--ldb-text);
+      }
+      .canvas-local-db-placeholder-row .canvas-local-db-cell {
+        cursor: default;
+      }
+      .canvas-local-db-table-foot {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 4px;
+        min-height: 28px;
+        padding: 0 8px;
+        border-top: 1px solid var(--ldb-border);
+        background: rgba(0, 0, 0, 0.12);
+      }
+      html[data-theme="light"] .canvas-local-db-table-foot {
+        background: rgba(0, 0, 0, 0.035);
+      }
+      .canvas-local-db-foot-rail {
+        flex: 1;
+        height: 10px;
+        margin: 0 10px;
+        border-radius: 5px;
+        background: rgba(120, 120, 120, 0.2);
+      }
+      html[data-theme="dark"] .canvas-local-db-foot-rail {
+        background: rgba(255, 255, 255, 0.08);
+      }
+      .canvas-local-db-foot-track,
+      .canvas-local-db-foot-grip {
+        display: none;
+      }
+      .canvas-local-db-foot-nudge {
+        border: none;
+        background: none;
+        color: var(--ldb-muted);
+        padding: 2px 4px;
+        cursor: default;
+        font-size: 10px;
+        line-height: 1;
+      }
+      .canvas-context-menu {
+        position: fixed;
+        z-index: 1100;
+        min-width: 12.5rem;
+        padding: 0.28rem;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: var(--surface);
+        box-shadow: var(--overlay-panel-shadow);
+      }
+      .canvas-context-menu[hidden] {
+        display: none !important;
+      }
+      .canvas-context-menu-item {
+        display: flex;
+        width: 100%;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.48rem 0.7rem;
+        border-radius: 6px;
+        border: none;
+        background: transparent;
+        color: var(--text);
+        font: inherit;
+        font-size: 0.88rem;
+        text-align: left;
+        cursor: pointer;
+      }
+      .canvas-context-menu-item:hover,
+      .canvas-context-menu-item:focus-visible {
+        background: var(--tr-hover);
+      }
+      .row-detail-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 1000;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: clamp(1rem, 4vw, 2.25rem);
+        background: var(--overlay-scrim);
+        backdrop-filter: blur(3px);
+        -webkit-backdrop-filter: blur(3px);
+      }
+      .row-detail-overlay:not([hidden]) {
+        display: flex;
+      }
+      /* Full-app cloud save: centered card + stronger blur over the UI */
+      .cloud-save-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 1001;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: clamp(1rem, 4vw, 2rem);
+        background: rgba(15, 15, 20, 0.35);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+      }
+      html[data-theme="dark"] .cloud-save-overlay {
+        background: rgba(0, 0, 0, 0.45);
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
+      }
+      .cloud-save-overlay:not([hidden]) {
+        display: flex;
+      }
+      .cloud-save-panel {
+        min-width: min(18rem, 100%);
+        max-width: 22rem;
+        padding: 1.75rem 1.5rem 1.65rem;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 1.1rem;
+        text-align: center;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        box-shadow: var(--overlay-panel-shadow);
+        animation: cloud-save-panel-in 0.28s ease-out;
+      }
+      @keyframes cloud-save-panel-in {
+        from {
+          opacity: 0;
+          transform: scale(0.94) translateY(6px);
+        }
+        to {
+          opacity: 1;
+          transform: scale(1) translateY(0);
+        }
+      }
+      .cloud-save-spinner {
+        width: 2.75rem;
+        height: 2.75rem;
+        border-radius: 50%;
+        border: 3px solid var(--border);
+        border-top-color: var(--text);
+        opacity: 0.85;
+        animation: cloud-save-spin 0.72s linear infinite;
+      }
+      .cloud-save-overlay[data-phase="success"] .cloud-save-spinner,
+      .cloud-save-overlay[data-phase="error"] .cloud-save-spinner {
+        display: none;
+      }
+      .cloud-save-icon {
+        width: 2.75rem;
+        height: 2.75rem;
+        display: none;
+        color: var(--text);
+      }
+      .cloud-save-overlay[data-phase="success"] .cloud-save-icon--ok {
+        display: block;
+        color: #16a34a;
+        animation: cloud-save-icon-pop 0.45s ease-out;
+      }
+      .cloud-save-overlay[data-phase="error"] .cloud-save-icon--err {
+        display: block;
+        color: #dc2626;
+        animation: cloud-save-icon-pop 0.45s ease-out;
+      }
+      @keyframes cloud-save-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @keyframes cloud-save-icon-pop {
+        from {
+          opacity: 0;
+          transform: scale(0.5);
+        }
+        to {
+          opacity: 1;
+          transform: scale(1);
+        }
+      }
+      .cloud-save-msg {
+        margin: 0;
+        font-size: 1.05rem;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        color: var(--text);
+        line-height: 1.35;
+      }
+      .cloud-save-overlay[data-phase="error"] .cloud-save-msg {
+        font-weight: 500;
+        font-size: 0.95rem;
+      }
+      .row-detail-panel {
+        width: min(100%, 44rem);
+        max-height: min(90vh, 52rem);
+        display: flex;
+        flex-direction: column;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: var(--overlay-panel-shadow);
+      }
+      .row-detail-toolbar {
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        padding: 0.7rem 1rem;
+        border-bottom: 1px solid var(--border-subtle);
+        background: var(--summary-bg);
+      }
+      .row-detail-close {
+        font: inherit;
+        font-size: 1.35rem;
+        font-weight: 400;
+        line-height: 1;
+        width: 2.25rem;
+        height: 2.25rem;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        border-radius: 8px;
+        border: 1px solid var(--btn-border);
+        background: var(--btn-bg);
+        color: var(--text-muted);
+        cursor: pointer;
+        flex-shrink: 0;
+      }
+      .row-detail-close:hover {
+        color: var(--text);
+        background: var(--btn-hover);
+      }
+      .row-detail-title {
+        font-size: 1rem;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        margin: 0;
+        color: var(--summary-text);
+        min-width: 0;
+        flex: 1;
+        line-height: 1.35;
+      }
+      .row-detail-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        flex-shrink: 0;
+      }
+      .row-detail-download {
+        font: inherit;
+        font-size: 0.82rem;
+        font-weight: 600;
+        padding: 0.38rem 0.75rem;
+        border-radius: 8px;
+        border: 1px solid var(--btn-border);
+        background: var(--btn-bg);
+        color: var(--text);
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .row-detail-download:hover {
+        background: var(--btn-hover);
+      }
+      .row-detail-scroll {
+        flex: 1;
+        min-height: 0;
+        overflow: auto;
+        padding: 1.1rem 1.15rem 1.35rem;
+      }
+      .row-detail-dl {
+        display: grid;
+        grid-template-columns: minmax(8rem, 12.5rem) 1fr;
+        row-gap: 0.72rem;
+        column-gap: 1.15rem;
+        font-size: 0.875rem;
+        max-width: none;
+      }
+      .row-detail-dl dt {
+        font-size: 0.68rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--th-label);
+        padding-top: 0.28rem;
+        align-self: start;
+        line-height: 1.35;
+      }
+      .row-detail-dl dd {
+        margin: 0;
+        font-weight: 500;
+        color: var(--text);
+        padding: 0.45rem 0 0.58rem;
+        border-bottom: 1px solid var(--table-border);
+        line-height: 1.5;
+        word-break: break-word;
+      }
+      .row-detail-dl dd:last-of-type {
+        border-bottom: none;
+      }
+      .row-detail-value-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.14rem 0.55rem 0.14rem 0.45rem;
+        border-radius: 999px;
+        background: var(--pill-bg);
+        color: var(--pill-text);
+        font-size: 0.82rem;
+        font-weight: 500;
+      }
+      .row-detail-value-pill::before {
+        content: "";
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--pill-dot);
+        flex-shrink: 0;
+      }
+
+      .row-detail-panel--payslip {
+        background: #161618;
+        border-color: #2a2a2e;
+      }
+      .row-detail-panel--payslip .row-detail-toolbar {
+        background: #1c1c1f;
+        border-bottom-color: #2a2a2e;
+      }
+      .row-detail-panel--payslip .row-detail-title {
+        color: #f0f0f2;
+      }
+      .row-detail-panel--payslip .row-detail-close,
+      .row-detail-panel--payslip .row-detail-download {
+        background: #2a2a30;
+        border-color: #3f3f46;
+        color: #e4e4e7;
+      }
+      .row-detail-panel--payslip .row-detail-close:hover,
+      .row-detail-panel--payslip .row-detail-download:hover {
+        background: #323238;
+        color: #fafafa;
+      }
+      .row-detail-scroll--payslip {
+        padding: 0;
+        background: #141416;
+      }
+
+      /* Teacher pay slip detail — reference layout (dark) */
+      .teacher-payslip-detail {
+        --tp-label: rgba(245, 245, 250, 0.42);
+        --tp-value: #fafafa;
+        --tp-empty: rgba(245, 245, 250, 0.36);
+        --tp-stack-gap: 1.45rem;
+        font-family: Inter, system-ui, -apple-system, Segoe UI, sans-serif;
+        background: #141416;
+        color: var(--tp-value);
+        padding: clamp(1.25rem, 4vw, 1.65rem) clamp(1rem, 4vw, 1.35rem)
+          clamp(1.75rem, 5vw, 2.25rem);
+        min-height: min(65vh, 100%);
+      }
+      .teacher-payslip-detail__header {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 1rem 1.25rem;
+        margin-bottom: 1.75rem;
+        padding-bottom: 1.5rem;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+      }
+      .teacher-payslip-detail__head-cell {
+        min-width: 0;
+      }
+      .teacher-payslip-detail__label {
+        font-size: 0.62rem;
+        font-weight: 600;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--tp-label);
+        margin-bottom: 0.55rem;
+        line-height: 1.3;
+      }
+      .teacher-payslip-detail__value {
+        font-size: 1.35rem;
+        font-weight: 600;
+        line-height: 1.25;
+        letter-spacing: -0.02em;
+        word-break: break-word;
+      }
+      .teacher-payslip-detail__value--empty {
+        font-size: 0.95rem;
+        font-weight: 500;
+        color: var(--tp-empty);
+      }
+      .teacher-payslip-detail__pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.22rem 0.65rem 0.22rem 0.55rem;
+        border-radius: 999px;
+        font-size: 0.95rem;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+      .teacher-payslip-detail__pill::before {
+        content: "";
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
+      .teacher-payslip-detail__pill--school {
+        background: rgba(59, 130, 246, 0.22);
+        color: #93c5fd;
+      }
+      .teacher-payslip-detail__pill--school::before {
+        background: #3b82f6;
+      }
+      .teacher-payslip-detail__pill--status {
+        background: rgba(34, 197, 94, 0.2);
+        color: #86efac;
+      }
+      .teacher-payslip-detail__pill--status::before {
+        background: #22c55e;
+      }
+      .teacher-payslip-detail__stack {
+        display: flex;
+        flex-direction: column;
+        gap: var(--tp-stack-gap);
+      }
+      .teacher-payslip-detail__divider {
+        height: 1px;
+        background: rgba(255, 255, 255, 0.07);
+        margin: 0.35rem 0 0.15rem;
+      }
+      .teacher-payslip-detail__row {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+
+      .auth-gate {
+        position: relative;
+        z-index: 10000;
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0.65rem 0.65rem;
+        background: var(--bg);
+      }
+      .auth-gate[hidden] {
+        display: none !important;
+      }
+      .auth-card {
+        width: 100%;
+        max-width: 15rem;
+        padding: 1.15rem 0.75rem 1.55rem;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12);
+      }
+      /* Sign-in only (#authGate): near-square panel (not the in-app teacher cards). */
+      .auth-gate > .auth-card {
+        box-sizing: border-box;
+        width: min(25rem, calc(100vw - 1.3rem), calc(98dvh - 1.3rem));
+        max-width: min(25rem, calc(100vw - 1.3rem), calc(98dvh - 1.3rem));
+        aspect-ratio: 1 / 1;
+        height: auto;
+        padding: 0.35rem 0.5rem 0.85rem;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-start;
+        overflow: hidden;
+      }
+      .auth-gate .auth-card-brand {
+        align-self: stretch;
+        width: 100%;
+        flex: 0 0 42%;
+        min-height: 5.25rem;
+        margin: 0 0 0.65rem;
+        object-fit: contain;
+        object-position: center center;
+      }
+      .auth-gate #authForm {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+      .auth-gate .auth-field {
+        margin-bottom: 0;
+      }
+      .auth-gate .auth-field label {
+        font-size: 0.62rem;
+        margin-bottom: 0.22rem;
+        letter-spacing: 0.04em;
+      }
+      .auth-gate .auth-field input {
+        font-size: 0.8rem;
+        padding: 0.32rem 0.45rem;
+      }
+      .auth-gate .auth-submit {
+        margin-top: 0;
+        padding: 0.38rem 0.65rem;
+        font-size: 0.82rem;
+      }
+      .auth-gate .auth-mode-toggle {
+        margin: 0.65rem 0 0;
+        line-height: 1.35;
+        width: 100%;
+      }
+      .auth-gate .auth-mode-toggle-inner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.65rem;
+        flex-wrap: wrap;
+        text-align: left;
+      }
+      .auth-gate .auth-remember-wrap {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        font-size: 0.73rem;
+        font-weight: 600;
+        color: var(--text-muted);
+      }
+      .auth-gate .auth-remember-wrap input[type="checkbox"] {
+        width: 0.92rem;
+        height: 0.92rem;
+        accent-color: var(--text);
+        cursor: pointer;
+        flex-shrink: 0;
+      }
+      .auth-gate .auth-remember-wrap label {
+        cursor: pointer;
+        user-select: none;
+      }
+      .auth-gate .auth-theme-toggle {
+        margin: 0.45rem 0 0;
+        line-height: 1.35;
+      }
+      .auth-gate .auth-link-btn {
+        padding: 0.1rem 0.15rem;
+        font-size: 0.76rem;
+      }
+      .auth-gate .auth-error {
+        margin: 0.55rem 0 0;
+        padding: 0.3rem 0.4rem;
+        font-size: 0.72rem;
+        line-height: 1.25;
+      }
+      .auth-gate .auth-supabase-hint {
+        margin: 0 0 0.5rem;
+        font-size: 0.74rem;
+        line-height: 1.3;
+      }
+      html[data-theme="dark"] .auth-card {
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+      }
+      /* Overrides narrow sign-in .auth-card when used for admin teachers directory */
+      .auth-card.admin-teachers-card {
+        max-width: none;
+        width: 100%;
+        padding: 0.85rem 0 0;
+        border-radius: 0;
+        box-shadow: none;
+        border: none;
+        border-bottom: 1px solid var(--border);
+        background: var(--surface);
+      }
+      html[data-theme="dark"] .auth-card.admin-teachers-card {
+        border-bottom-color: var(--border);
+      }
+      .auth-card.teacher-profile-card {
+        max-width: 28rem;
+        width: 100%;
+        margin: 0 auto 2rem;
+        padding: 1.3rem 1.4rem 1.45rem;
+        background: var(--surface);
+        border: 1px solid var(--teacher-profile-border);
+        border-radius: 14px;
+        box-shadow: var(--teacher-profile-shadow);
+      }
+      .auth-card-brand {
+        display: block;
+        margin: 0 auto 0.65rem;
+        width: 100%;
+        height: auto;
+        max-height: none;
+        object-fit: contain;
+      }
+      .auth-supabase-hint {
+        font-size: 0.82rem;
+        color: var(--text-muted);
+        margin: 0 0 1rem;
+        line-height: 1.35;
+        text-align: center;
+      }
+      .auth-supabase-hint[hidden] {
+        display: none !important;
+      }
+      .auth-field {
+        margin-bottom: 0.9rem;
+      }
+      .auth-field label {
+        display: block;
+        font-size: 0.72rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.055em;
+        color: var(--th-label);
+        margin-bottom: 0.32rem;
+      }
+      .auth-field input {
+        width: 100%;
+        font: inherit;
+        font-size: 0.9rem;
+        padding: 0.5rem 0.65rem;
+        border-radius: 8px;
+        border: 1px solid var(--btn-border);
+        background: var(--btn-bg);
+        color: var(--text);
+        box-sizing: border-box;
+      }
+      .auth-field input:focus {
+        outline: 2px solid var(--text-muted);
+        outline-offset: 1px;
+      }
+      .auth-field textarea {
+        width: 100%;
+        min-height: 4.5rem;
+        resize: vertical;
+        font: inherit;
+        font-size: 0.9rem;
+        padding: 0.5rem 0.65rem;
+        border-radius: 8px;
+        border: 1px solid var(--btn-border);
+        background: var(--btn-bg);
+        color: var(--text);
+        box-sizing: border-box;
+      }
+      .auth-field textarea:focus {
+        outline: 2px solid var(--text-muted);
+        outline-offset: 1px;
+      }
+      .auth-submit {
+        width: 100%;
+        margin-top: 0.35rem;
+        padding: 0.55rem 1rem;
+        font: inherit;
+        font-weight: 600;
+        font-size: 0.92rem;
+        border-radius: 8px;
+        border: 1px solid var(--btn-border);
+        background: var(--text);
+        color: var(--surface);
+        cursor: pointer;
+      }
+      html[data-theme="dark"] .auth-submit {
+        color: var(--bg);
+      }
+      .auth-submit:hover {
+        opacity: 0.92;
+      }
+      .auth-submit:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+      .auth-mode-toggle {
+        margin: 1rem 0 0;
+        text-align: center;
+      }
+      .auth-theme-toggle {
+        margin: 0.65rem 0 0;
+        text-align: center;
+      }
+      .auth-theme-toggle .auth-link-btn {
+        text-decoration: none;
+      }
+      .auth-theme-toggle .auth-link-btn:hover {
+        text-decoration: none;
+      }
+      .auth-theme-icon {
+        margin-right: 0.2rem;
+      }
+      .auth-link-btn {
+        font: inherit;
+        font-size: 0.86rem;
+        font-weight: 600;
+        color: var(--text-muted);
+        background: none;
+        border: none;
+        cursor: pointer;
+        text-decoration: underline;
+        padding: 0.25rem;
+      }
+      .auth-link-btn:hover {
+        color: var(--text);
+      }
+      .teacher-profile-card {
+        width: 100%;
+      }
+      .teacher-profile-title {
+        font-size: 1rem;
+        font-weight: 700;
+        margin-bottom: 1rem;
+        color: var(--text);
+      }
+      .teacher-profile-head {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        margin-bottom: 1.25rem;
+      }
+      .teacher-profile-avatar {
+        width: 4.25rem;
+        height: 4.25rem;
+        border-radius: 50%;
+        object-fit: cover;
+        background: var(--border-subtle);
+        border: 1px solid var(--border);
+        flex-shrink: 0;
+      }
+      .teacher-profile-avatar[hidden] {
+        display: none;
+      }
+      .teacher-profile-name {
+        font-size: 1.2rem;
+        font-weight: 600;
+        margin: 0;
+        color: var(--text);
+        line-height: 1.25;
+      }
+      .teacher-profile-name-row {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+      }
+      .teacher-profile-name-col {
+        min-width: 0;
+        flex: 1;
+      }
+      .teacher-profile-notion-dot {
+        flex-shrink: 0;
+        width: 0.65rem;
+        height: 0.65rem;
+        min-width: 0.65rem;
+        min-height: 0.65rem;
+        padding: 0;
+        border: none;
+        border-radius: 50%;
+        cursor: pointer;
+        box-shadow: 0 0 0 2px var(--border);
+        background: #9e9e9e;
+        transition: transform 0.12s ease, box-shadow 0.12s ease;
+      }
+      .teacher-profile-notion-dot:hover {
+        transform: scale(1.12);
+      }
+      .teacher-profile-notion-dot:focus-visible {
+        outline: 2px solid var(--text-muted);
+        outline-offset: 2px;
+      }
+      .teacher-profile-notion-dot--ok {
+        background: #2e7d32;
+        box-shadow: 0 0 0 2px rgba(46, 125, 50, 0.35);
+      }
+      .teacher-profile-notion-dot--err {
+        background: #c62828;
+        box-shadow: 0 0 0 2px rgba(198, 40, 40, 0.35);
+      }
+      .teacher-profile-notion-dot--unknown {
+        background: #9e9e9e;
+      }
+      html[data-theme="dark"] .teacher-profile-notion-dot--ok {
+        background: #66bb6a;
+        box-shadow: 0 0 0 2px rgba(102, 187, 106, 0.35);
+      }
+      html[data-theme="dark"] .teacher-profile-notion-dot--err {
+        background: #ef5350;
+        box-shadow: 0 0 0 2px rgba(239, 83, 80, 0.35);
+      }
+      html[data-theme="dark"] .teacher-profile-notion-dot--unknown {
+        background: #78909c;
+      }
+      .teacher-profile-notion-reveal {
+        margin-top: 0.55rem;
+        padding: 0.65rem 0.75rem;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: var(--summary-bg);
+        font-size: 0.78rem;
+        line-height: 1.45;
+        color: var(--text);
+        max-width: 100%;
+      }
+      .teacher-profile-notion-reveal[hidden] {
+        display: none !important;
+      }
+      .teacher-profile-notion-reveal__lead {
+        margin: 0 0 0.45rem;
+        font-weight: 600;
+        color: var(--text-muted);
+        font-size: 0.76rem;
+      }
+      .teacher-profile-notion-reveal__dl {
+        margin: 0;
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 0.35rem 0.65rem;
+        font-size: 0.78rem;
+      }
+      .teacher-profile-notion-reveal__dl dt {
+        margin: 0;
+        color: var(--text-muted);
+        font-weight: 600;
+      }
+      .teacher-profile-notion-reveal__dl dd {
+        margin: 0;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.74rem;
+        word-break: break-all;
+      }
+      .teacher-profile-dl {
+        display: grid;
+        gap: 0.65rem 0.75rem;
+        grid-template-columns: auto 1fr;
+        font-size: 0.9rem;
+      }
+      .teacher-profile-dl dt {
+        color: var(--text-muted);
+        font-weight: 600;
+      }
+      .teacher-profile-dl dd {
+        margin: 0;
+        color: var(--text);
+        white-space: pre-wrap;
+      }
+      .teacher-profile-error {
+        margin-top: 0.75rem;
+        font-size: 0.88rem;
+        color: var(--error-text);
+      }
+      .teacher-profile-error[hidden] {
+        display: none;
+      }
+      .teacher-profile-form-title {
+        font-size: 0.88rem;
+        font-weight: 700;
+        margin: 1rem 0 0.65rem;
+        color: var(--text);
+      }
+      .teacher-profile-form[hidden] {
+        display: none !important;
+      }
+      .teacher-profile-form-hint {
+        margin: 0.4rem 0 0;
+        font-size: 0.78rem;
+        color: var(--text-muted);
+        line-height: 1.35;
+      }
+      .teacher-profile-form-message {
+        margin-top: 0.65rem;
+        font-size: 0.86rem;
+        min-height: 1.25rem;
+      }
+      .teacher-profile-form-message[hidden] {
+        display: none;
+      }
+      .teacher-profile-form-message.is-ok {
+        color: var(--text-muted);
+      }
+      .teacher-profile-form-message.is-err {
+        color: var(--error-text);
+      }
+      .teacher-profile-save {
+        margin-top: 0.65rem;
+      }
+      .teacher-payslips {
+        margin-top: 1.35rem;
+        padding-top: 1.1rem;
+        border-top: 1px solid var(--border-subtle);
+      }
+      .teacher-payslips[hidden] {
+        display: none !important;
+      }
+      .teacher-payslips--page {
+        margin-top: 0;
+        padding-top: 0;
+        border-top: none;
+      }
+      /* Pay slips: full-width / full-height panel (teachers only). */
+      .teacher-payslips-page-root.teachers-page {
+        flex: 1;
+        min-height: 0;
+        width: 100%;
+        align-self: stretch;
+        padding: 0.35rem var(--top-chrome-pad-x) 0.75rem;
+        background: transparent;
+        border: none;
+        border-radius: 0;
+      }
+      .teacher-payslips-page-root .teacher-payslip-page-inner {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        width: 100%;
+        max-width: none;
+      }
+      .teacher-payslips-page-root
+        .auth-card.teacher-profile-card.teacher-payslips-page-card {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        max-width: none;
+        margin: 0;
+        padding: 1.35rem 1.35rem 1.25rem;
+        border-radius: 16px;
+        border: 1px solid var(--teacher-profile-border);
+        background: var(--surface);
+        box-shadow: var(--teacher-profile-shadow);
+        position: relative;
+        overflow: hidden;
+      }
+      .teacher-payslips-page-root
+        .auth-card.teacher-profile-card.teacher-payslips-page-card::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 3px;
+        background: var(--admin-badge);
+        opacity: 0.9;
+        pointer-events: none;
+      }
+      .teacher-payslips-page-root .teacher-payslips--page {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        position: relative;
+        z-index: 1;
+      }
+      .teacher-payslips-page-root .teacher-payslips-page-title {
+        margin: 0 0 1rem;
+        font-size: 1.2rem;
+        font-weight: 700;
+        letter-spacing: -0.025em;
+        color: var(--text);
+      }
+      .teacher-payslips-page-root .teacher-payslips-loading {
+        margin-top: 0.15rem;
+      }
+      .teacher-payslips-page-root .teacher-payslips-table-wrap {
+        flex: 1;
+        min-height: 10rem;
+        margin-top: 0.5rem;
+        border: 1px solid var(--teacher-profile-border);
+        border-radius: 12px;
+        background: var(--summary-bg);
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+      }
+      html[data-theme="dark"]
+        .teacher-payslips-page-root
+        .teacher-payslips-table-wrap {
+        box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+        background: var(--summary-bg);
+      }
+      .teacher-payslips-page-root .teacher-payslips-table th {
+        background: var(--th-bg);
+      }
+      .teacher-payslips-hint {
+        font-size: 0.78rem;
+        color: var(--text-muted);
+        margin: 0 0 0.65rem;
+        line-height: 1.4;
+      }
+      .teacher-payslips-hint[hidden] {
+        display: none !important;
+      }
+      .teacher-payslips-table-wrap {
+        overflow-x: auto;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        margin-top: 0.35rem;
+      }
+      .auth-card.teacher-profile-card .teacher-payslips-table-wrap {
+        border-color: var(--teacher-profile-border);
+        border-radius: 10px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+      }
+      html[data-theme="dark"] .auth-card.teacher-profile-card .teacher-payslips-table-wrap {
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+      }
+      .teacher-payslips-table-wrap[hidden] {
+        display: none !important;
+      }
+      .teacher-payslips-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.84rem;
+      }
+      .teacher-payslips-table th,
+      .teacher-payslips-table td {
+        padding: 0.5rem 0.65rem;
+        text-align: left;
+        border-bottom: 1px solid var(--border-subtle);
+        vertical-align: middle;
+      }
+      .teacher-payslips-table th {
+        font-weight: 600;
+        font-size: 0.68rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--th-label);
+        background: var(--summary-bg);
+      }
+      .teacher-payslips-table tr:last-child td {
+        border-bottom: none;
+      }
+      .teacher-payslip-pdf-btn {
+        font: inherit;
+        font-size: 0.78rem;
+        font-weight: 600;
+        padding: 0.3rem 0.55rem;
+        border-radius: 6px;
+        border: 1px solid var(--btn-border);
+        background: var(--btn-bg);
+        color: var(--text);
+        cursor: pointer;
+      }
+      .teacher-payslip-pdf-btn:hover {
+        background: var(--btn-hover);
+      }
+      .teacher-payslips-loading {
+        font-size: 0.86rem;
+        color: var(--text-muted);
+        margin: 0.35rem 0 0;
+      }
+      .teacher-payslips-loading[hidden] {
+        display: none !important;
+      }
+      .auth-remember {
+        display: flex;
+        align-items: center;
+        gap: 0.45rem;
+        margin: 0.25rem 0 0.35rem;
+        font-size: 0.82rem;
+        color: var(--text-muted);
+        cursor: pointer;
+        user-select: none;
+      }
+      .auth-remember input {
+        width: auto;
+        margin: 0;
+        accent-color: var(--text);
+      }
+      .auth-error {
+        margin: 0.85rem 0 0;
+        padding: 0.5rem 0.65rem;
+        font-size: 0.82rem;
+        border-radius: 8px;
+        background: var(--error-bg);
+        color: var(--error-text);
+      }
+      .auth-error[hidden] {
+        display: none !important;
+      }
+      #appMain[hidden] {
+        display: none !important;
+      }
+      #appMain:not([hidden]) {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+      }
+      /* Matches logo gutters; cluster vertically centered vs logo artwork block */
+      .nav-menu-wrap--floating {
+        position: fixed;
+        z-index: 2000;
+        top: calc(
+          var(--top-chrome-pad-y) +
+            (var(--app-logo-block-height) - var(--nav-burger-size)) / 2
+        );
+        right: var(--top-chrome-pad-x);
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        gap: 0.45rem;
+      }
+      .nav-menu-admin-label {
+        font-size: 0.86rem;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        color: var(--admin-badge);
+        user-select: none;
+        line-height: 1;
+        display: inline-flex;
+        align-items: center;
+        min-height: var(--nav-burger-size);
+      }
+      .nav-menu-burger {
+        position: relative;
+        z-index: 1600;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: var(--nav-burger-size);
+        height: var(--nav-burger-size);
+        padding: 0;
+        border-radius: 8px;
+        border: 1px solid var(--toggle-border);
+        background: var(--toggle-bg);
+        color: var(--text);
+        cursor: pointer;
+        transition: background 0.15s ease, border-color 0.15s ease;
+      }
+      .nav-menu-burger:hover {
+        background: var(--toggle-hover);
+      }
+      .nav-menu-burger:focus-visible {
+        outline: 2px solid var(--text-muted);
+        outline-offset: 2px;
+      }
+      .nav-menu-burger-inner {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        justify-content: center;
+        gap: 0.26rem;
+        width: 1.12rem;
+      }
+      .nav-menu-line {
+        display: block;
+        height: 2px;
+        border-radius: 1px;
+        background: currentColor;
+        transition: transform 0.2s ease, opacity 0.2s ease;
+        transform-origin: center;
+      }
+      .nav-menu-burger--open .nav-menu-line:nth-child(1) {
+        transform: translateY(5px) rotate(45deg);
+      }
+      .nav-menu-burger--open .nav-menu-line:nth-child(2) {
+        opacity: 0;
+        transform: scaleX(0);
+      }
+      .nav-menu-burger--open .nav-menu-line:nth-child(3) {
+        transform: translateY(-5px) rotate(-45deg);
+      }
+      /* Nav overlay: keep transparent — Electron often paints backdrop-filter as a flat grey sheet. */
+      .nav-menu-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 1400;
+        border: none;
+        padding: 0;
+        margin: 0;
+        cursor: default;
+        background: transparent;
+      }
+      .nav-menu-backdrop[hidden] {
+        display: none !important;
+      }
+      .nav-menu-panel {
+        position: fixed;
+        --nav-panel-inset-y: 0.5rem;
+        --nav-panel-inset-x: 0.45rem;
+        top: max(var(--nav-panel-inset-y), env(safe-area-inset-top, 0px));
+        bottom: max(var(--nav-panel-inset-y), env(safe-area-inset-bottom, 0px));
+        right: var(--nav-panel-inset-x);
+        z-index: 1500;
+        width: min(18.5rem, 90vw);
+        min-width: 13.75rem;
+        box-sizing: border-box;
+        padding-left: 0.85rem;
+        padding-right: 0.85rem;
+        padding-bottom: 0.75rem;
+        /* First item sits just below the burger / close control (aligned with chrome vars). */
+        padding-top: max(
+          0.85rem,
+          calc(
+            var(--top-chrome-pad-y) +
+              (var(--app-logo-block-height) + var(--nav-burger-size)) / 2 -
+              max(
+                var(--nav-panel-inset-y),
+                env(safe-area-inset-top, 0px)
+              ) +
+              0.45rem
+          )
+        );
+        border-radius: 18px;
+        border: 1px solid var(--border);
+        background: var(--surface);
+        overflow-x: hidden;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+        box-shadow:
+          -4px 0 18px rgba(0, 0, 0, 0.07),
+          -12px 0 40px rgba(0, 0, 0, 0.1);
+      }
+      html[data-theme="dark"] .nav-menu-panel {
+        box-shadow:
+          -4px 0 24px rgba(0, 0, 0, 0.35),
+          -16px 0 56px rgba(0, 0, 0, 0.45);
+      }
+      .nav-menu-panel[hidden] {
+        display: none !important;
+      }
+      /* Teacher portal: hide admin Home + workspace icon shortcuts in the menu only. */
+      #appMain.teacher-nav-portal #navAdminHomeGroup,
+      #appMain.teacher-nav-portal #navOpenWorkspaceDashboard,
+      #appMain.teacher-nav-portal #navGoTeachers,
+      #appMain.teacher-nav-portal #navGoTeachers + hr.nav-menu-divider {
+        display: none !important;
+      }
+      /* Teacher portal: hide logo-area pages sidebar toggle (author display can override [hidden]). */
+      #appMain.teacher-nav-portal #toggleEditorSidebarBtn.app-editor-sidebar-toggle {
+        display: none !important;
+      }
+      /* Admin portal: hide Home row and top three icon rows (workspace, teachers, mode). */
+      #appMain:not(.teacher-nav-portal) #navAdminHomeGroup,
+      #appMain:not(.teacher-nav-portal) #navOpenWorkspaceDashboard,
+      #appMain:not(.teacher-nav-portal) #navGoTeachers,
+      #appMain:not(.teacher-nav-portal) #navGoTeachers + hr.nav-menu-divider,
+      #appMain:not(.teacher-nav-portal) #themeToggle,
+      #appMain:not(.teacher-nav-portal) #themeToggle + hr.nav-menu-divider {
+        display: none !important;
+      }
+      /* Admin portal: Pay slips shortcut (teacher nav) must not appear in admin menu. */
+      #appMain:not(.teacher-nav-portal) #navTeacherGoPaySlips {
+        display: none !important;
+      }
+      /* Admin portal: pin Refresh / Restart / Sign out to the bottom of the menu panel. */
+      .nav-menu-footer-actions {
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+      }
+      #appMain:not(.teacher-nav-portal) .nav-menu-footer-actions {
+        margin-top: auto;
+      }
+      .nav-menu-panel > span {
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+      }
+      .nav-menu-item {
+        display: flex;
+        align-items: center;
+        gap: 0.65rem;
+        width: 100%;
+        padding: 0.85rem 0.88rem;
+        border: none;
+        border-radius: 9px;
+        background: transparent;
+        color: var(--text);
+        font: inherit;
+        font-size: 0.95rem;
+        font-weight: 600;
+        line-height: 1.4;
+        text-align: left;
+        cursor: pointer;
+        transition: background 0.12s ease;
+      }
+      .nav-menu-item:hover {
+        background: var(--btn-hover);
+      }
+      .nav-menu-item:focus-visible {
+        outline: 2px solid var(--text-muted);
+        outline-offset: 0;
+      }
+      .nav-menu-item .theme-toggle-icon {
+        font-size: 1.14rem;
+        line-height: 1;
+        width: 1.38rem;
+        text-align: center;
+      }
+      .nav-menu-item--dashboard-refresh .nav-menu-refresh-icon {
+        flex-shrink: 0;
+        width: 1.38rem;
+        height: 1.38rem;
+        opacity: 0.92;
+      }
+      .nav-menu-item--restart-app .nav-menu-restart-icon {
+        flex-shrink: 0;
+        width: 1.38rem;
+        height: 1.38rem;
+        opacity: 0.92;
+      }
+      .nav-menu-item--ws-dash .nav-menu-ws-dash-icon {
+        flex-shrink: 0;
+        width: 1.38rem;
+        height: 1.38rem;
+        opacity: 0.92;
+      }
+      .nav-menu-item--teachers-nav .nav-menu-teachers-icon {
+        flex-shrink: 0;
+        width: 1.38rem;
+        height: 1.38rem;
+        opacity: 0.92;
+      }
+      .nav-menu-item--teacher-nav-icon .nav-menu-teacher-nav-icon {
+        flex-shrink: 0;
+        width: 1.38rem;
+        height: 1.38rem;
+        opacity: 0.92;
+      }
+      .nav-menu-item-label {
+        flex: 1;
+      }
+      .nav-menu-panel .nav-menu-item--theme {
+        margin-top: auto;
+      }
+      .nav-menu-item--logout {
+        color: var(--text-muted);
+        border-radius: 9px;
+      }
+      .nav-menu-item--logout:hover {
+        color: var(--error-text);
+        background: var(--error-bg);
+      }
+
+      .teacher-dashboard-page {
+        width: 100%;
+        max-width: 72rem;
+        margin: 0 auto;
+        padding: 0 0 1.5rem;
+      }
+      .teacher-dashboard-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 1.15rem;
+        width: 100%;
+      }
+      .teacher-dashboard-card.auth-card.teacher-profile-card {
+        max-width: none;
+        margin-bottom: 0;
+        padding: 1.15rem 1.25rem 1.35rem;
+      }
+      .teacher-dashboard-chart-card.auth-card.teacher-profile-card {
+        max-width: none;
+        margin-bottom: 0;
+        padding: 1.15rem 1.25rem 1.35rem;
+      }
+      .teacher-dashboard-chart-card[hidden] {
+        display: none !important;
+      }
+      .teacher-dashboard-title {
+        font-size: 1.05rem;
+        font-weight: 700;
+        margin: 0 0 0.15rem;
+        color: var(--text);
+      }
+      .teacher-dashboard-sub {
+        font-size: 0.8rem;
+        color: var(--text-muted);
+        margin: 0 0 1rem;
+        line-height: 1.35;
+      }
+      .teacher-dashboard-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 0.65rem;
+      }
+      @media (max-width: 900px) {
+        .teacher-dashboard-grid {
+          grid-template-columns: repeat(2, 1fr);
+        }
+      }
+      @media (max-width: 480px) {
+        .teacher-dashboard-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+      .teacher-dashboard-stat {
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: var(--summary-bg);
+        padding: 0.75rem 0.85rem;
+        min-height: 4.5rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.28rem;
+      }
+      .teacher-dashboard-stat-label {
+        font-size: 0.68rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.045em;
+        color: var(--th-label);
+        line-height: 1.25;
+      }
+      .teacher-dashboard-stat-value {
+        font-size: 1.05rem;
+        font-weight: 700;
+        color: var(--text);
+        line-height: 1.25;
+        word-break: break-word;
+      }
+      .teacher-dashboard-stat-note {
+        font-size: 0.72rem;
+        color: var(--text-muted);
+        line-height: 1.3;
+      }
+      .teacher-dashboard-chart-heading {
+        margin: 0 0 0.5rem;
+        font-size: 0.78rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--text-muted);
+      }
+      .teacher-dashboard-net-chart {
+        text-align: center;
+      }
+      .teacher-dashboard-donut-frame {
+        width: 100%;
+        max-width: 21rem;
+        margin: 0 auto;
+        padding: 0.35rem 0 0.15rem;
+        background: transparent;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      .teacher-dashboard-net-chart-empty {
+        font-size: 0.82rem;
+        color: var(--text-muted);
+        margin: 0.35rem 0 0;
+        line-height: 1.35;
+      }
+      .teacher-dashboard-net-chart-empty[hidden] {
+        display: none !important;
+      }
+      .teacher-dashboard-net-donut-body {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 1.15rem;
+      }
+      .teacher-dashboard-net-donut-body[hidden] {
+        display: none !important;
+      }
+      .teacher-dashboard-net-donut-visual {
+        position: relative;
+        width: 228px;
+        max-width: 100%;
+        margin: 0 auto;
+        flex-shrink: 0;
+      }
+      .teacher-dash-net-donut-svg {
+        display: block;
+        width: 100%;
+        height: auto;
+        overflow: visible;
+      }
+      .teacher-dash-donut-center {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        pointer-events: none;
+        padding: 2rem 1rem;
+      }
+      .teacher-dash-donut-center-main {
+        font-size: 1.15rem;
+        font-weight: 700;
+        color: var(--text);
+        letter-spacing: -0.02em;
+        line-height: 1.15;
+        font-variant-numeric: tabular-nums;
+        max-width: 11rem;
+        word-break: break-word;
+      }
+      .teacher-dash-donut-center-sub {
+        font-size: 0.68rem;
+        font-weight: 500;
+        color: var(--text-muted);
+        margin-top: 0.38rem;
+        letter-spacing: 0.02em;
+        line-height: 1.25;
+      }
+      .teacher-dashboard-net-donut-legend {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        max-width: 100%;
+        display: grid;
+        grid-template-columns: repeat(10, minmax(0, 1fr));
+        gap: 0.55rem 0.4rem;
+        justify-items: center;
+        align-items: start;
+      }
+      @media (max-width: 1100px) {
+        .teacher-dashboard-net-donut-legend {
+          grid-template-columns: repeat(5, minmax(0, 1fr));
+        }
+      }
+      @media (max-width: 640px) {
+        .teacher-dashboard-net-donut-legend {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+      }
+      .teacher-dashboard-net-donut-legend li {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 0.28rem;
+        font-size: 0.72rem;
+        line-height: 1.25;
+        color: var(--text);
+        text-align: center;
+        min-width: 0;
+      }
+      .teacher-dashboard-net-donut-swatch {
+        flex-shrink: 0;
+        width: 0.65rem;
+        height: 0.65rem;
+        border-radius: 2px;
+        margin-top: 0;
+      }
+      .teacher-dashboard-net-donut-legend-date {
+        color: var(--text-muted);
+        word-break: break-word;
+        max-width: 100%;
+      }
+      .teacher-net-chart-summary-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.65rem;
+        margin-top: 1rem;
+        text-align: left;
+      }
+      .teacher-net-chart-summary-row[hidden] {
+        display: none !important;
+      }
+      .teacher-net-chart-summary-card {
+        min-height: 0;
+        margin: 0;
+      }
+      .teacher-dashboard-hint {
+        font-size: 0.82rem;
+        color: var(--text-muted);
+        margin: 0.5rem 0 0;
+        line-height: 1.35;
+      }
+      .teacher-dashboard-hint[hidden] {
+        display: none !important;
+      }
+      .teacher-dashboard-loading {
+        font-size: 0.88rem;
+        color: var(--text-muted);
+        margin: 0.25rem 0 0;
+      }
+      .teacher-dashboard-loading[hidden] {
+        display: none !important;
+      }
+      .teacher-dashboard-error {
+        margin: 0.5rem 0 0;
+        font-size: 0.84rem;
+        color: var(--error-text);
+        background: var(--error-bg);
+        padding: 0.45rem 0.55rem;
+        border-radius: 8px;
+      }
+      .teacher-dashboard-error[hidden] {
+        display: none !important;
+      }
+      /* Teacher portal dashboard only: space above Net composition; tighter donut legend date cells */
+      #pageTeacherDashboard .teacher-dashboard-stack {
+        gap: 3.95rem;
+      }
+      #pageTeacherDashboard .teacher-dashboard-net-donut-legend {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        align-items: flex-start;
+        gap: 0.65rem 0.72rem;
+        width: 100%;
+        max-width: 100%;
+      }
+      #pageTeacherDashboard .teacher-dashboard-net-donut-legend li {
+        gap: 0.12rem;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="authGate" class="auth-gate">
+      <div class="auth-card">
+        <img
+          class="auth-card-brand"
+          src="assets/rme-logo.png"
+          width="960"
+          height="346"
+          alt="RME"
+        />
+        <p id="authSupabaseHint" class="auth-supabase-hint" hidden></p>
+        <form id="authForm" autocomplete="on">
+          <div class="auth-field">
+            <label for="authEmail">Email</label>
+            <input
+              id="authEmail"
+              type="email"
+              name="email"
+              autocomplete="username"
+              required
+            />
+          </div>
+          <div class="auth-field">
+            <label for="authPassword">Password</label>
+            <input
+              id="authPassword"
+              type="password"
+              name="password"
+              autocomplete="current-password"
+              required
+              minlength="6"
+            />
+          </div>
+          <div class="auth-field" id="authConfirmWrap" hidden>
+            <label for="authPasswordConfirm">Confirm password</label>
+            <input
+              id="authPasswordConfirm"
+              type="password"
+              name="password-confirm"
+              autocomplete="new-password"
+              minlength="6"
+            />
+          </div>
+          <button type="submit" class="auth-submit" id="authSubmitBtn">
+            Sign in
+          </button>
+        </form>
+        <p class="auth-mode-toggle">
+          <span class="auth-mode-toggle-inner">
+            <span class="auth-remember-wrap">
+              <input
+                type="checkbox"
+                id="authRememberMe"
+                checked
+                autocomplete="off"
+              />
+              <label for="authRememberMe">Remember me</label>
+            </span>
+            <button type="button" class="auth-link-btn" id="authToggleRegister">
+              Create an account
+            </button>
+          </span>
+        </p>
+        <p class="auth-theme-toggle">
+          <button
+            type="button"
+            class="auth-link-btn"
+            id="authThemeToggle"
+            aria-label="Toggle light or dark mode"
+          >
+            <span class="auth-theme-icon" aria-hidden="true">☽</span>
+            Mode
+          </button>
+        </p>
+        <p id="authError" class="auth-error" hidden role="alert"></p>
+      </div>
+    </div>
+    <div id="appMain" hidden>
+      <div class="app-logo-wrap">
+        <img
+          class="app-logo"
+          src="assets/rme-logo.png"
+          width="200"
+          height="72"
+          alt="RME"
+        />
+        <button
+          type="button"
+          id="toggleEditorSidebarBtn"
+          class="app-editor-sidebar-toggle"
+          hidden
+          aria-pressed="true"
+          aria-controls="notionEditorSidebar"
+          aria-label="Hide pages sidebar"
+          title="Show or hide the pages sidebar"
+        >
+          <span class="app-editor-sidebar-toggle__triangle" aria-hidden="true"></span>
+        </button>
+      </div>
+      <div class="nav-menu-wrap nav-menu-wrap--floating">
+            <span class="nav-menu-admin-label" id="navRoleLabel">Admin</span>
+            <button
+              type="button"
+              id="navMenuBtn"
+              class="nav-menu-burger"
+              aria-expanded="false"
+              aria-haspopup="true"
+              aria-controls="navMenuPanel"
+              aria-label="Menu"
+            >
+              <span class="nav-menu-burger-inner" aria-hidden="true">
+                <span class="nav-menu-line"></span>
+                <span class="nav-menu-line"></span>
+                <span class="nav-menu-line"></span>
+              </span>
+            </button>
+            <button
+              type="button"
+              id="navMenuBackdrop"
+              class="nav-menu-backdrop"
+              hidden
+              aria-hidden="true"
+              tabindex="-1"
+            ></button>
+            <div
+              id="navMenuPanel"
+              class="nav-menu-panel"
+              role="menu"
+              hidden
+            >
+              <span id="navTeacherPortalGroup" hidden>
+                <button
+                  type="button"
+                  id="navTeacherGoDashboard"
+                  class="nav-menu-item nav-menu-item--nav nav-menu-item--ws-dash"
+                  role="menuitem"
+                  aria-label="Dashboard"
+                  title="Dashboard"
+                >
+                  <svg
+                    class="nav-menu-ws-dash-icon"
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <rect x="3" y="3" width="7" height="7" rx="1" />
+                    <rect x="14" y="3" width="7" height="7" rx="1" />
+                    <rect x="3" y="14" width="7" height="7" rx="1" />
+                    <rect x="14" y="14" width="7" height="7" rx="1" />
+                  </svg>
+                  <span class="nav-menu-item-label">Dashboard</span>
+                </button>
+                <button
+                  type="button"
+                  id="navTeacherGoProfile"
+                  class="nav-menu-item nav-menu-item--nav nav-menu-item--teacher-nav-icon"
+                  role="menuitem"
+                  aria-label="Profile"
+                  title="Profile"
+                >
+                  <svg
+                    class="nav-menu-teacher-nav-icon"
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                    <circle cx="12" cy="7" r="4" />
+                  </svg>
+                  <span class="nav-menu-item-label">Profile</span>
+                </button>
+                <button
+                  type="button"
+                  id="navTeacherGoPaySlips"
+                  class="nav-menu-item nav-menu-item--nav nav-menu-item--teacher-nav-icon"
+                  role="menuitem"
+                  aria-label="Pay slips"
+                  title="Pay slips"
+                >
+                  <svg
+                    class="nav-menu-teacher-nav-icon"
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"
+                    />
+                    <polyline points="14 2 14 8 20 8" />
+                    <line x1="16" y1="13" x2="8" y2="13" />
+                    <line x1="16" y1="17" x2="8" y2="17" />
+                    <line x1="10" y1="9" x2="8" y2="9" />
+                  </svg>
+                  <span class="nav-menu-item-label">Pay slips</span>
+                </button>
+                <hr class="nav-menu-divider" aria-hidden="true" />
+              </span>
+              <span id="navAdminHomeGroup">
+                <button
+                  type="button"
+                  id="navGoHome"
+                  class="nav-menu-item nav-menu-item--nav"
+                  role="menuitem"
+                >
+                  Home
+                </button>
+                <hr class="nav-menu-divider" aria-hidden="true" />
+              </span>
+              <button
+                type="button"
+                id="navOpenWorkspaceDashboard"
+                class="nav-menu-item nav-menu-item--nav nav-menu-item--ws-dash"
+                role="menuitem"
+                hidden
+                aria-label="Open workspace Dashboard in the Pages sidebar"
+                title="Opens the Dashboard page (main Notion table) from the left Pages list."
+              >
+                <svg
+                  class="nav-menu-ws-dash-icon"
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <rect x="3" y="3" width="7" height="7" rx="1" />
+                  <rect x="14" y="3" width="7" height="7" rx="1" />
+                  <rect x="3" y="14" width="7" height="7" rx="1" />
+                  <rect x="14" y="14" width="7" height="7" rx="1" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                id="navGoTeachers"
+                class="nav-menu-item nav-menu-item--nav nav-menu-item--teachers-nav"
+                role="menuitem"
+                aria-label="Teachers"
+                title="Teachers directory"
+              >
+                <svg
+                  class="nav-menu-teachers-icon"
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                  <circle cx="9" cy="7" r="4" />
+                  <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+                  <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                </svg>
+              </button>
+              <hr class="nav-menu-divider" aria-hidden="true" />
+              <button
+                type="button"
+                id="themeToggle"
+                class="nav-menu-item nav-menu-item--theme"
+                role="menuitem"
+              >
+                <span class="theme-toggle-icon" aria-hidden="true">☽</span>
+                <span class="nav-menu-item-label">Mode</span>
+              </button>
+              <hr class="nav-menu-divider" aria-hidden="true" />
+              <div class="nav-menu-footer-actions">
+                <span id="navTeacherDashboardRefreshGroup" hidden>
+                  <button
+                    type="button"
+                    id="navTeacherDashboardRefreshBtn"
+                    class="nav-menu-item nav-menu-item--dashboard-refresh"
+                    role="menuitem"
+                    aria-label="Refresh Notion: main table first, then all draft databases"
+                    title="Reloads the main Notion database first. Draft databases update right after (from that load). Use a card’s own refresh icon to pull live from Notion for that person only."
+                  >
+                    <svg
+                      class="nav-menu-refresh-icon"
+                      width="18"
+                      height="18"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M23 4v6h-6" />
+                      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                    </svg>
+                    <span class="nav-menu-item-label">Refresh</span>
+                  </button>
+                  <hr class="nav-menu-divider" aria-hidden="true" />
+                </span>
+                <button
+                  type="button"
+                  id="navRestartAppBtn"
+                  class="nav-menu-item nav-menu-item--restart-app"
+                  role="menuitem"
+                  aria-label="Restart application"
+                  title="Quits and reopens the desktop app."
+                >
+                  <svg
+                    class="nav-menu-restart-icon"
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                    <path d="M3 3v5h5" />
+                  </svg>
+                  <span class="nav-menu-item-label">Restart app</span>
+                </button>
+                <hr class="nav-menu-divider" aria-hidden="true" />
+                <button
+                  type="button"
+                  id="logoutBtn"
+                  class="nav-menu-item nav-menu-item--logout"
+                  role="menuitem"
+                >
+                  Sign out
+                </button>
+              </div>
+            </div>
+      </div>
+    <div class="layout">
+      <div class="main-stage">
+        <div class="app-page app-page-notion-home" id="pageHome" data-nav-page="home">
+          <div class="notion-workspace" id="notionWorkspace">
+            <aside
+              class="notion-editor-sidebar"
+              id="notionEditorSidebar"
+              aria-label="Editor pages"
+            >
+              <div class="notion-editor-sidebar-head">
+                <span class="notion-editor-sidebar-title">Pages</span>
+                <button
+                  type="button"
+                  id="notionWorkspaceNewPage"
+                  class="notion-editor-sidebar-add"
+                  aria-label="New page"
+                  title="New page"
+                >
+                  +
+                </button>
+              </div>
+              <nav
+                class="notion-editor-sidebar-pages"
+                id="notionWorkspacePageList"
+                aria-label="Open a page"
+              ></nav>
+            </aside>
+            <div class="notion-ws-panes notion-ws-panes--editor-main" id="notionWsPanes">
+              <section
+                class="notion-ws-pane notion-ws-pane--visible notion-ws-pane--payslips"
+                id="notionWsPanePaySlips"
+                data-workspace-id="__payslips"
+                aria-label="Dashboard"
+              >
+          <div class="home-content notion-ws-pane-scroll" id="homeContent">
+          <details class="notion-panel" id="notionDetails" open>
+            <summary class="notion-panel-summary">Dashboard</summary>
+            <div class="notion-panel-body">
+              <div
+                id="mainNotionSpreadsheetLegacy"
+                class="legacy-main-notion-sheet"
+                hidden
+                aria-hidden="true"
+              >
+              <div class="status" id="status">Loading…</div>
+              <div class="status-actions" id="statusActions" hidden>
+                <button
+                  type="button"
+                  id="openConfigFolderBtn"
+                  class="status-open-folder-btn"
+                >
+                  Open folder where .env lives (paste your Notion keys here)
+                </button>
+              </div>
+              <div class="table-wrap">
+                <div
+                  class="teacher-view-tabs"
+                  id="teacherViewTabs"
+                  role="tablist"
+                  aria-label="Teacher Notion database"
+                  hidden
+                ></div>
+                <div class="table-toolbar" id="tableToolbar">
+                  <div class="table-toolbar-strip">
+                    <div class="table-toolbar-icons">
+                      <button
+                        type="button"
+                        id="filterToggle"
+                        class="filter-toggle"
+                        aria-expanded="false"
+                        aria-controls="tableFilters"
+                        aria-label="Filters"
+                        title="Show or hide filters"
+                        hidden
+                      >
+                        <svg
+                          class="filter-toggle-icon"
+                          viewBox="0 0 24 24"
+                          aria-hidden="true"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        id="refreshBtn"
+                        class="filter-toggle"
+                        aria-label="Refresh from Notion"
+                        title="Refresh from Notion"
+                      >
+                        <svg
+                          class="filter-toggle-icon"
+                          viewBox="0 0 24 24"
+                          aria-hidden="true"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <path
+                            d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"
+                          />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        id="showAllColumnsBtn"
+                        class="filter-toggle filter-toggle--show-hidden-cols"
+                        hidden
+                        aria-label="Show hidden columns"
+                        title="Reveal locally hidden columns only—does not reload from Notion. Deleted columns cannot be restored here."
+                      >
+                        <svg
+                          class="filter-toggle-icon"
+                          viewBox="0 0 24 24"
+                          aria-hidden="true"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <path
+                            d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"
+                          />
+                          <circle cx="12" cy="12" r="3" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                  <div class="table-filters" id="tableFilters" hidden>
+                    <div class="filter-group" id="filterSchoolGroup">
+                      <label for="filterSchool">School</label>
+                      <select id="filterSchool" aria-label="Filter by school"></select>
+                    </div>
+                    <div class="filter-group" id="filterDateGroup">
+                      <label for="filterDate">Date</label>
+                      <input
+                        type="date"
+                        id="filterDate"
+                        aria-label="Filter by date"
+                      />
+                    </div>
+                    <div class="filter-group" id="filterSortGroup">
+                      <label for="filterSort">Sort by date</label>
+                      <select id="filterSort" aria-label="Sort by date">
+                        <option value="">Notion order</option>
+                        <option value="desc" selected>Newest first</option>
+                        <option value="asc">Oldest first</option>
+                      </select>
+                    </div>
+                    <button type="button" class="filter-clear" id="filterClear">
+                      Clear filters
+                    </button>
+                  </div>
+                </div>
+                <div class="table-scroll" id="tableScroll">
+                  <table
+                    id="dataTable"
+                    class="data-sheet"
+                    hidden
+                    aria-label="Notion database rows"
+                  >
+                    <thead id="thead"></thead>
+                    <tbody id="tbody"></tbody>
+                  </table>
+                </div>
+                <div class="table-sheet-footer" id="tableSheetFooter" hidden>
+                  <p class="table-load-hint" id="tableLoadHint" aria-live="polite"></p>
+                </div>
+              </div>
+              </div>
+              <div id="canvasDraftTables" class="canvas-draft-tables"></div>
+            </div>
+          </details>
+          <div
+            id="workspaceSubpagesMountDash"
+            class="notion-ws-workspace-subpages-mount"
+            aria-live="polite"
+          ></div>
+        </div>
+      </section>
+              <section
+                class="notion-ws-pane"
+                id="notionWsPaneVault"
+                data-workspace-id="__vault"
+                aria-label="Vault"
+              >
+                <div
+                  class="home-content notion-ws-pane-scroll vault-page-inner"
+                  id="vaultContent"
+                >
+                  <div
+                    id="workspaceSubpagesMountVault"
+                    class="notion-ws-workspace-subpages-mount"
+                    aria-live="polite"
+                  ></div>
+                </div>
+              </section>
+              <section
+                class="notion-ws-pane"
+                id="notionWsPaneVaultNotionLinks"
+                data-workspace-id="__vaultNotionLinks"
+                aria-label="Names and Notion row IDs"
+              >
+                <div
+                  class="home-content notion-ws-pane-scroll vault-page-inner"
+                  id="vaultNotionLinksContent"
+                >
+                  <section
+                    class="payslip-notion-links payslip-notion-links--vault"
+                    id="payslipNotionLinksSection"
+                    aria-label="Person and Notion row ID links"
+                  >
+                    <p class="payslip-notion-links-hint">
+                      Match each teacher to their pay-slip row inside your
+                      Notion database — use the row’s page ID so the line
+                      can sync to the right person.
+                    </p>
+                    <div class="payslip-notion-links-table-wrap">
+                      <table
+                        class="data-sheet payslip-notion-links-table"
+                        aria-label="People and linked Notion IDs"
+                      >
+                        <thead>
+                          <tr>
+                            <th scope="col">Name</th>
+                            <th scope="col">Surname</th>
+                            <th scope="col">ID</th>
+                            <th
+                              scope="col"
+                              class="payslip-notion-links-col-action"
+                              aria-label="Actions"
+                            >
+                              —
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody id="payslipNotionLinksTbody"></tbody>
+                      </table>
+                    </div>
+                    <div class="payslip-notion-links-footer">
+                      <button type="button" id="payslipNotionLinksAddRow">
+                        Add row
+                      </button>
+                      <label
+                        class="payslip-notion-links-restrict-label"
+                        title="Keeps School/Date filters, then hides rows unless their Notion page ID is listed below."
+                      >
+                        <input
+                          type="checkbox"
+                          id="payslipNotionRestrictSheetMapped"
+                        />
+                        <span class="payslip-notion-links-restrict-text">
+                          Show only mapped Notion IDs in the sheet
+                        </span>
+                      </label>
+                    </div>
+                  </section>
+                </div>
+              </section>
+              <section
+                class="notion-ws-pane notion-ws-pane--trash"
+                id="notionWsPaneTrash"
+                data-workspace-id="__trash"
+                aria-label="Trash"
+              >
+                <div class="notion-trash-pane notion-ws-pane-scroll">
+                  <header class="notion-trash-pane-header">
+                    <h2 class="notion-trash-pane-title">Trash</h2>
+                    <p class="notion-trash-pane-hint">
+                      Pages you remove from the sidebar stay here until you
+                      restore them, erase them, or until they have been here for
+                      30 days — then they are removed automatically.
+                    </p>
+                  </header>
+                  <div
+                    id="notionTrashListMount"
+                    class="notion-trash-list-mount"
+                    aria-label="Trashed pages list"
+                  ></div>
+                </div>
+              </section>
+              <div
+                id="notionWsBlankPanesMount"
+                class="notion-ws-blank-mount"
+              ></div>
+            </div>
+          </div>
+        </div>
+        <div
+          class="app-page teachers-pay-slips-hub"
+          id="pageTeachersPaySlipsHub"
+          data-nav-page="teachers-pay-slips"
+          hidden
+          aria-label="Teachers pay slips"
+        >
+          <header class="teachers-pay-slips-hub-header" id="teachersPaySlipsHubHeader">
+            <h1 class="teachers-pay-slips-hub-title" id="teachersPaySlipsHubTitle">
+              Teachers pay slips
+            </h1>
+          </header>
+          <div class="teachers-pay-slips-hub-scroll">
+        <div
+          class="teachers-page teacher-dashboard-page teachers-pay-slips-hub-section"
+          id="pageTeacherDashboard"
+          data-nav-page="dashboard"
+          hidden
+          aria-label="Dashboard"
+        >
+          <div class="teacher-dashboard-stack">
+            <div class="auth-card teacher-profile-card teacher-dashboard-card">
+              <h2 class="teacher-dashboard-title">Latest period</h2>
+              <p class="teacher-dashboard-sub">
+                Latest pay period from your Notion pay slips (by pay date).
+              </p>
+              <p
+                class="teacher-dashboard-loading"
+                id="teacherDashboardLoading"
+                hidden
+              >
+                Loading…
+              </p>
+              <p
+                id="teacherDashboardError"
+                class="teacher-dashboard-error"
+                hidden
+                role="alert"
+              ></p>
+              <p
+                id="teacherDashboardHint"
+                class="teacher-dashboard-hint"
+                hidden
+              ></p>
+              <div id="teacherDashboardGridWrap" hidden>
+                <div class="teacher-dashboard-grid" aria-label="Pay summary">
+                  <div class="teacher-dashboard-stat">
+                    <span class="teacher-dashboard-stat-label">Exchange amount</span>
+                    <span class="teacher-dashboard-stat-value" id="teacherDashExchangeAmount">—</span>
+                  </div>
+                  <div class="teacher-dashboard-stat">
+                    <span class="teacher-dashboard-stat-label">Status</span>
+                    <span class="teacher-dashboard-stat-value" id="teacherDashStatus">—</span>
+                  </div>
+                  <div class="teacher-dashboard-stat">
+                    <span class="teacher-dashboard-stat-label">Last updated</span>
+                    <span class="teacher-dashboard-stat-value" id="teacherDashLastUpdated">—</span>
+                    <span class="teacher-dashboard-stat-note" id="teacherDashDataSyncNote" hidden></span>
+                  </div>
+                  <div class="teacher-dashboard-stat">
+                    <span class="teacher-dashboard-stat-label">Fees (USD)</span>
+                    <span class="teacher-dashboard-stat-value" id="teacherDashFees">—</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div
+              id="teacherDashboardChartCard"
+              class="auth-card teacher-profile-card teacher-dashboard-chart-card"
+              hidden
+            >
+              <h4 class="teacher-dashboard-chart-heading">Net composition</h4>
+              <div
+                id="teacherDashboardNetChartWrap"
+                class="teacher-dashboard-net-chart"
+                role="region"
+                aria-label="Net profit chart"
+              >
+                <p id="teacherDonutChartDesc" class="sr-only">
+                  Donut chart: each colored arc is one pay slip period. Center
+                  shows exact total Net Profit in ZAR for all pay slips in the
+                  table.
+                </p>
+                <p
+                  id="teacherDashNetDonutEmpty"
+                  class="teacher-dashboard-net-chart-empty"
+                  hidden
+                ></p>
+                <div
+                  id="teacherDashNetDonutBody"
+                  class="teacher-dashboard-net-donut-body"
+                  hidden
+                >
+                  <div class="teacher-dashboard-donut-frame">
+                    <div class="teacher-dashboard-net-donut-visual">
+                      <svg
+                        id="teacherDashNetDonutSvg"
+                        class="teacher-dash-net-donut-svg"
+                        viewBox="0 0 200 200"
+                        width="228"
+                        height="228"
+                        role="img"
+                        aria-describedby="teacherDonutChartDesc"
+                      ></svg>
+                      <div class="teacher-dash-donut-center" aria-hidden="true">
+                        <span
+                          id="teacherDashDonutCenterMain"
+                          class="teacher-dash-donut-center-main"
+                          >—</span
+                        >
+                        <span class="teacher-dash-donut-center-sub"
+                          >Net Profit</span
+                        >
+                      </div>
+                    </div>
+                  </div>
+                  <ul
+                    id="teacherDashNetDonutLegend"
+                    class="teacher-dashboard-net-donut-legend"
+                    aria-label="Colors by pay period"
+                  ></ul>
+                </div>
+              </div>
+              <div
+                id="teacherNetChartSummaryRow"
+                class="teacher-net-chart-summary-row"
+                hidden
+              >
+                <div
+                  class="teacher-dashboard-stat teacher-net-chart-summary-card"
+                >
+                  <span class="teacher-dashboard-stat-label">Pay period</span>
+                  <span
+                    class="teacher-dashboard-stat-value"
+                    id="teacherNetChartPayPeriodRange"
+                    >—</span
+                  >
+                </div>
+                <div
+                  class="teacher-dashboard-stat teacher-net-chart-summary-card"
+                >
+                  <span class="teacher-dashboard-stat-label">Pay slips</span>
+                  <span
+                    class="teacher-dashboard-stat-value"
+                    id="teacherNetChartPaySlipCount"
+                    >—</span
+                  >
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div
+          class="teachers-page teachers-pay-slips-hub-section"
+          id="pageTeachers"
+          data-nav-page="teachers"
+          hidden
+          aria-label="Teachers"
+        >
+          <div class="admin-teachers-panel" id="adminTeachersPanel" hidden>
+            <div class="auth-card admin-teachers-card">
+              <div class="admin-teachers-lead">
+                <div class="admin-teachers-lead-top">
+                  <div class="admin-teachers-title-group">
+                    <h2 class="admin-teachers-title">Teachers directory</h2>
+                    <button
+                      type="button"
+                      id="adminTeachersRefreshBtn"
+                      class="admin-teachers-refresh-btn"
+                      aria-label="Refresh online status for all teachers"
+                      title="Refresh online status (re-checks last-seen heartbeats)"
+                    >
+                      <svg
+                        class="admin-teachers-refresh-icon"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path d="M23 4v6h-6" />
+                        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                      </svg>
+                      <span class="admin-teachers-refresh-label">Refresh</span>
+                    </button>
+                  </div>
+                  <p class="admin-teachers-count" id="adminTeachersCount" hidden></p>
+                </div>
+                <p class="admin-teachers-intro">
+                  Registered accounts with a teacher profile. Not a live “who is online” view.
+                </p>
+              </div>
+              <div class="admin-teachers-status">
+                <p
+                  id="adminTeachersError"
+                  class="teacher-profile-error"
+                  hidden
+                  role="alert"
+                ></p>
+                <p class="admin-teachers-loading" id="adminTeachersLoading" hidden>
+                  Loading…
+                </p>
+              </div>
+              <p class="admin-teachers-empty" id="adminTeachersEmpty" hidden>
+                No teacher accounts yet.
+              </p>
+              <div class="admin-teachers-table-shell">
+                <div
+                  class="admin-teachers-table-wrap"
+                  id="adminTeachersTableWrap"
+                  hidden
+                >
+                  <table
+                    class="admin-teachers-table"
+                    aria-label="Teachers registered in the app"
+                  >
+                    <thead>
+                      <tr>
+                        <th scope="col" class="admin-teachers-th-status">Status</th>
+                        <th scope="col">Photo</th>
+                        <th scope="col">Name</th>
+                        <th scope="col">Email</th>
+                        <th scope="col">Joined</th>
+                        <th scope="col">Last profile update</th>
+                      </tr>
+                    </thead>
+                    <tbody id="adminTeachersTbody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div id="teacherOwnProfileWrap">
+            <div class="auth-card teacher-profile-card">
+              <h2 class="teacher-profile-title">Your profile</h2>
+              <div class="teacher-profile-head">
+                <img
+                  id="teacherProfileAvatar"
+                  class="teacher-profile-avatar"
+                  alt=""
+                  width="68"
+                  height="68"
+                  hidden
+                />
+                <div class="teacher-profile-name-col">
+                  <div class="teacher-profile-name-row">
+                    <h3 class="teacher-profile-name" id="teacherProfileName">
+                      —
+                    </h3>
+                    <button
+                      type="button"
+                      id="teacherProfileNotionDotBtn"
+                      class="teacher-profile-notion-dot teacher-profile-notion-dot--unknown"
+                      hidden
+                      aria-label="Show Notion IDs and connection status"
+                      aria-expanded="false"
+                      aria-controls="teacherProfileNotionReveal"
+                    ></button>
+                  </div>
+                  <div
+                    id="teacherProfileNotionReveal"
+                    class="teacher-profile-notion-reveal"
+                    hidden
+                  >
+                    <p class="teacher-profile-notion-reveal__lead">
+                      Notion IDs used for pay slips and analytics
+                    </p>
+                    <dl
+                      class="teacher-profile-notion-reveal__dl"
+                      id="teacherProfileNotionRevealDl"
+                    ></dl>
+                  </div>
+                </div>
+              </div>
+              <dl class="teacher-profile-dl" id="teacherProfileDl"></dl>
+              <form class="teacher-profile-form" id="teacherProfileForm" hidden>
+                <h3 class="teacher-profile-form-title">Edit your details</h3>
+                <div class="auth-field">
+                  <label for="teacherFirstName">First name</label>
+                  <input
+                    id="teacherFirstName"
+                    name="firstName"
+                    type="text"
+                    autocomplete="given-name"
+                    maxlength="120"
+                  />
+                </div>
+                <div class="auth-field">
+                  <label for="teacherLastName">Surname</label>
+                  <input
+                    id="teacherLastName"
+                    name="lastName"
+                    type="text"
+                    autocomplete="family-name"
+                    maxlength="120"
+                  />
+                </div>
+                <div class="auth-field">
+                  <label for="teacherContactEmail">Email</label>
+                  <input
+                    id="teacherContactEmail"
+                    name="contactEmail"
+                    type="email"
+                    autocomplete="email"
+                    maxlength="320"
+                  />
+                </div>
+                <div class="auth-field">
+                  <label for="teacherPhoneNumber">Phone number</label>
+                  <input
+                    id="teacherPhoneNumber"
+                    name="phoneNumber"
+                    type="tel"
+                    autocomplete="tel"
+                    maxlength="40"
+                  />
+                </div>
+                <div class="auth-field">
+                  <label for="teacherBankDetails">Bank details</label>
+                  <textarea
+                    id="teacherBankDetails"
+                    name="bankDetails"
+                    rows="4"
+                    maxlength="4000"
+                    placeholder="Bank name, account number, branch code, etc."
+                  ></textarea>
+                </div>
+                <div class="auth-field">
+                  <label for="teacherNationalId">ID</label>
+                  <input
+                    id="teacherNationalId"
+                    name="nationalId"
+                    type="text"
+                    autocomplete="off"
+                    maxlength="64"
+                  />
+                </div>
+                <div class="auth-field">
+                  <label for="teacherAvatarFile">Profile photo</label>
+                  <input
+                    id="teacherAvatarFile"
+                    name="avatar"
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/gif"
+                  />
+                  <p class="teacher-profile-form-hint">
+                    JPEG, PNG, WebP or GIF. Up to 5&nbsp;MB. Replaces your current
+                    photo when you save.
+                  </p>
+                </div>
+                <button type="submit" class="auth-submit teacher-profile-save" id="teacherProfileSaveBtn">
+                  Save changes
+                </button>
+                <p
+                  id="teacherProfileFormMessage"
+                  class="teacher-profile-form-message"
+                  hidden
+                  aria-live="polite"
+                ></p>
+              </form>
+              <p
+                id="teacherProfileError"
+                class="teacher-profile-error"
+                hidden
+                role="alert"
+              ></p>
+            </div>
+          </div>
+        </div>
+        <div
+          class="teachers-page teacher-payslips-page-root teachers-pay-slips-hub-section"
+          id="pageTeacherPaySlips"
+          data-nav-page="payslips"
+          hidden
+          aria-label="Your pay slips"
+        >
+          <div class="teacher-payslip-page-inner">
+            <div
+              class="auth-card teacher-profile-card teacher-payslips-page-card"
+            >
+              <section class="teacher-payslips teacher-payslips--page" id="teacherPaySlipsSection" hidden>
+                <h2 class="teacher-profile-title teacher-payslips-page-title">
+                  Your pay slips
+                </h2>
+                <p class="teacher-payslips-hint" id="teacherPaySlipsHint" hidden></p>
+                <p
+                  class="teacher-profile-error"
+                  id="teacherPaySlipsError"
+                  hidden
+                  role="alert"
+                ></p>
+                <p class="teacher-payslips-loading" id="teacherPaySlipsLoading" hidden>
+                  Loading pay slips…
+                </p>
+                <div
+                  class="teacher-payslips-table-wrap"
+                  id="teacherPaySlipsTableWrap"
+                  hidden
+                >
+                  <table class="teacher-payslips-table" aria-label="Your pay slips">
+                    <thead>
+                      <tr>
+                        <th scope="col">Pay slip</th>
+                        <th scope="col">Period</th>
+                        <th scope="col">PDF</th>
+                      </tr>
+                    </thead>
+                    <tbody id="teacherPaySlipsTbody"></tbody>
+                  </table>
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+          </div>
+        </div>
+    </div>
+    <div
+      id="cloudSaveOverlay"
+      class="cloud-save-overlay"
+      hidden
+      role="status"
+      aria-live="polite"
+      aria-busy="false"
+    >
+      <div class="cloud-save-panel">
+        <div class="cloud-save-spinner" aria-hidden="true"></div>
+        <svg
+          class="cloud-save-icon cloud-save-icon--ok"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.25"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+          <polyline points="22 4 12 14.01 9 11.01" />
+        </svg>
+        <svg
+          class="cloud-save-icon cloud-save-icon--err"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.25"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <circle cx="12" cy="12" r="10" />
+          <line x1="15" y1="9" x2="9" y2="15" />
+          <line x1="9" y1="9" x2="15" y2="15" />
+        </svg>
+        <p class="cloud-save-msg" id="cloudSaveOverlayMessage">Saving…</p>
+      </div>
+    </div>
+    <div
+      class="row-detail-overlay"
+      id="rowDetailOverlay"
+      hidden
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="rowDetailTitle"
+    >
+      <div class="row-detail-panel" id="rowDetailPanel">
+        <div class="row-detail-toolbar">
+          <h2 class="row-detail-title" id="rowDetailTitle"></h2>
+          <div class="row-detail-actions">
+            <button
+              type="button"
+              class="row-detail-download"
+              id="rowDetailDownloadPdf"
+            >
+              Download PDF
+            </button>
+            <button
+              type="button"
+              class="row-detail-close"
+              id="rowDetailClose"
+              aria-label="Close details"
+            >
+              &times;
+            </button>
+          </div>
+        </div>
+        <div class="row-detail-scroll" id="rowDetailScroll">
+          <div
+            id="rowDetailTeacherView"
+            class="teacher-payslip-detail"
+            hidden
+          ></div>
+          <dl class="row-detail-dl" id="rowDetailDl"></dl>
+        </div>
+      </div>
+    </div>
+    <div
+      id="columnMenu"
+      class="column-menu"
+      hidden
+      role="menu"
+      aria-label="Column options"
+    >
+      <button type="button" class="column-menu-item" id="columnMenuHide" role="menuitem">
+        <svg
+          class="column-menu-icon"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+          <path d="M1 1l22 22" />
+        </svg>
+        Hide
+      </button>
+      <button
+        type="button"
+        class="column-menu-item"
+        id="columnMenuRemoveColumn"
+        role="menuitem"
+        title="Deletes this column from the app with no undo. Notion is unchanged."
+      >
+        <svg
+          class="column-menu-icon"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <rect width="18" height="14" x="3" y="5" rx="2" ry="2" />
+          <path d="M8 12h8" />
+        </svg>
+        Delete column
+      </button>
+    </div>
+    </div>
+    <div
+      id="canvasContextMenu"
+      class="canvas-context-menu"
+      hidden
+      role="menu"
+      aria-label="Canvas actions"
+    >
+      <button
+        type="button"
+        class="canvas-context-menu-item"
+        id="canvasCreateDbTableBtn"
+        role="menuitem"
+      >
+        Create database
+      </button>
+    </div>
+    <script src="renderer.js" defer></script>
+  </body>
+</html>
