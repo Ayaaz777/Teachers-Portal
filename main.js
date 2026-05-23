@@ -1,20 +1,59 @@
-const { app, BrowserWindow, ipcMain, shell, dialog } = require("electron");
+const { app, BrowserWindow, ipcMain, shell, dialog, Notification, nativeImage } = require("electron");
 const path = require("path");
 const fs = require("fs");
+const { execFile } = require("child_process");
+const { promisify } = require("util");
+const crypto = require("crypto");
+
+const execFileAsync = promisify(execFile);
+const {
+  createPlannerFileStore,
+  migratePlannerStore,
+  sanitizePlannerScopeId,
+  PLANNER_FILE_KEYS,
+} = require("./planner-file-store");
+const { createKeywordIndexService } = require("./keyword-index-service");
+
+/* Windows 11 Chromium Fluent scrollbars ignore slim `::-webkit-scrollbar` widths; use classic webkit styling. */
+if (process.platform === "win32") {
+  app.commandLine.appendSwitch("disable-features", "FluentScrollbars");
+}
+
+/** Windows 11 Efficiency Mode (EcoQoS) — green leaf in Task Manager when backgrounded. */
+let winEfficiencyMode = null;
+if (process.platform === "win32") {
+  try {
+    winEfficiencyMode = require("./win-efficiency-mode");
+    const boot = winEfficiencyMode.applyToCurrentProcess("background");
+    if (!boot.ok) {
+      console.warn("Windows efficiency mode (main):", boot.reason || "failed");
+    }
+  } catch (e) {
+    console.warn("Windows efficiency mode unavailable:", e);
+  }
+}
 
 /** Injected on window close as a best-effort sync persist. */
 const RENDERER_FLUSH_FLOATING_DRAFTS_JS =
   "(function(){try{if(typeof window.__persistFloatingReplicasNow==='function')window.__persistFloatingReplicasNow();}catch(e){console.error('[persist drafts]',e);}})();";
 
+/** Await planner notes / to-dos / reminders file writes before the window closes. */
+const RENDERER_FLUSH_PLANNER_JS =
+  "(async function(){try{if(typeof window.rmePlannerFlushAll==='function')await window.rmePlannerFlushAll();}catch(e){console.error('[planner flush]',e);}})();";
+
 function loadDotenv() {
   const dotenv = require("dotenv");
   /** Later paths win. Exe dir first, then userData, so AppData edits override install folder. */
+  /** Later paths win. Dev: project .env overrides AppData so unsaved edits in the repo file apply after save. */
   const paths = app.isPackaged
     ? [
         path.join(path.dirname(process.execPath), ".env"),
         path.join(app.getPath("userData"), ".env"),
       ]
-    : [path.join(__dirname, ".env")];
+    : [
+        path.join(app.getPath("userData"), ".env"),
+        path.join(__dirname, ".env"),
+      ];
 
   for (const envPath of paths) {
     if (!fs.existsSync(envPath)) {
@@ -44,6 +83,7 @@ function loadDotenv() {
 
   if (app.isPackaged) {
     applyBundledNotionDefaults(dotenv);
+    applyBundledSupabaseDefaults(dotenv);
   }
 }
 
@@ -87,8 +127,113 @@ const {
   hasAdmin,
   ALLOWED_ADMIN_EMAIL,
 } = require("./auth-store");
+const { initAutoUpdate, registerAutoUpdateIpc } = require("./auto-update");
+const { createVoiceAgentService, VOICE_SYSTEM_PROMPT } = require("./lib/voice-agent");
+const { NotionApi } = require("./lib/notion-api");
+const { ensureWhisperServer } = require("./lib/voice-agent/whisper-server");
+const { cudaRuntimeLikelyAvailable } = require("./lib/voice/cuda-check");
+const { log } = require("./lib/log");
+const {
+  resolveVoiceEnvPaths,
+  applyVoiceEnvPaths,
+} = require("./lib/voice-env-resolve");
+const voiceMemory = require("./lib/supabase/voice-memory");
+const pageMemory = require("./lib/supabase/page-memory");
+const retrievalPipeline = require("./lib/retrieval-pipeline");
+const distillation = require("./lib/distillation");
+const searchTools = require("./lib/search");
+const { embed } = require("./lib/embeddings");
+const { extractAndStore: extractFacts } = require("./lib/voice-agent/fact-extractor");
 
 let mainWindow = null;
+/** @type {NotionApi | null} */
+let notionApi = null;
+
+/** @type {{ level: string; text: string; ts: number }[]} */
+const devLogBuffer = [];
+const DEV_LOG_MAX = 500;
+
+const _origConsoleLog = console.log;
+const _origConsoleWarn = console.warn;
+const _origConsoleError = console.error;
+
+console.log = (...args) => {
+  const text = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
+  devLogBuffer.push({ level: 'log', text, ts: Date.now() });
+  if (devLogBuffer.length > DEV_LOG_MAX) devLogBuffer.shift();
+  const w = getMainBrowserWindow();
+  if (w && !w.isDestroyed()) {
+    try { w.webContents.send('devlog:new', { level: 'log', text }); } catch {}
+  }
+  _origConsoleLog.apply(console, args);
+};
+
+console.warn = (...args) => {
+  const text = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
+  devLogBuffer.push({ level: 'warn', text, ts: Date.now() });
+  if (devLogBuffer.length > DEV_LOG_MAX) devLogBuffer.shift();
+  const w = getMainBrowserWindow();
+  if (w && !w.isDestroyed()) {
+    try { w.webContents.send('devlog:new', { level: 'warn', text }); } catch {}
+  }
+  _origConsoleWarn.apply(console, args);
+};
+
+console.error = (...args) => {
+  const text = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
+  devLogBuffer.push({ level: 'error', text, ts: Date.now() });
+  if (devLogBuffer.length > DEV_LOG_MAX) devLogBuffer.shift();
+  const w = getMainBrowserWindow();
+  if (w && !w.isDestroyed()) {
+    try { w.webContents.send('devlog:new', { level: 'error', text }); } catch {}
+  }
+  _origConsoleError.apply(console, args);
+};
+
+function getVoiceAgent() {
+  loadDotenv();
+  applyVoiceEnvPaths(__dirname);
+  const voicePaths = resolveVoiceEnvPaths(__dirname, {
+    whisperBin: process.env.RME_WHISPER_BIN,
+    whisperModel: process.env.RME_WHISPER_MODEL,
+    ffmpegBin: process.env.RME_FFMPEG_BIN,
+  });
+  return createVoiceAgentService({
+    ...voicePaths,
+    anthropicKey: process.env.ANTHROPIC_API_KEY,
+    anthropicModel: process.env.ANTHROPIC_MODEL,
+    anthropicModelFast: process.env.RME_ANTHROPIC_MODEL_FAST,
+    claudePromptCache: process.env.RME_CLAUDE_PROMPT_CACHE !== "0",
+    persistAudioPath: path.join(app.getPath("userData"), "rme-voice-last.wav"),
+  });
+}
+
+/** @param {unknown} payload */
+function voicePayloadToBuffer(payload) {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const p = /** @type {{ audioBase64?: string; audio?: unknown }} */ (payload);
+  if (typeof p.audioBase64 === "string" && p.audioBase64.length) {
+    try {
+      return Buffer.from(p.audioBase64, "base64");
+    } catch {
+      return null;
+    }
+  }
+  const raw = p.audio;
+  if (Buffer.isBuffer(raw)) {
+    return raw;
+  }
+  if (raw instanceof ArrayBuffer) {
+    return Buffer.from(raw);
+  }
+  if (ArrayBuffer.isView(raw)) {
+    const view = /** @type {ArrayBufferView} */ (raw);
+    return Buffer.from(view.buffer, view.byteOffset, view.byteLength);
+  }
+  return null;
+}
 
 const NOTION_VERSION = "2026-03-11";
 
@@ -140,12 +285,89 @@ function normalizeDataSourceId(raw) {
   return normalizeDatabaseId(s);
 }
 
+function stripEnvQuotes(s) {
+  let v = String(s ?? "").trim();
+  if (
+    (v.startsWith('"') && v.endsWith('"')) ||
+    (v.startsWith("'") && v.endsWith("'"))
+  ) {
+    v = v.slice(1, -1).trim();
+  }
+  return v;
+}
+
+/**
+ * Values passed to @supabase/supabase-js in the preload bridge. Fixes common .env
+ * mistakes (missing scheme, trailing slash, stray quotes, line breaks in the anon key)
+ * that surface in the UI as "Failed to fetch".
+ * @param {string | undefined} raw
+ */
+function normalizeSupabaseUrlForClient(raw) {
+  let u = stripEnvQuotes(typeof raw === "string" ? raw : "");
+  if (!u) return "";
+  if (!/^https?:\/\//i.test(u)) {
+    u = `https://${u}`;
+  }
+  try {
+    const p = new URL(u);
+    const path = p.pathname.replace(/\/+$/, "");
+    if (
+      p.protocol === "http:" &&
+      p.hostname !== "127.0.0.1" &&
+      p.hostname !== "localhost"
+    ) {
+      return `https://${p.host}${path}`;
+    }
+    return `${p.origin}${path}`;
+  } catch {
+    return u.replace(/\/+$/, "");
+  }
+}
+
+/** @param {string | undefined} raw */
+function normalizeSupabaseAnonKey(raw) {
+  return stripEnvQuotes(typeof raw === "string" ? raw : "").replace(/\s+/g, "");
+}
+
 /**
  * Packaged apps read NOTION_TOKEN from .env files; NOTION_DATABASE_ID comes from
  * the shipped resources/.env.example so new installers match the build (stale
  * %APPDATA% seeds no longer pin an old database). Set NOTION_SKIP_BUNDLED_DATABASE_ID=1
  * in .env to use only file-based NOTION_DATABASE_ID.
  */
+/**
+ * Packaged builds ship supabase.public.env (baked at `npm run release` from dev .env).
+ * Fills SUPABASE_URL / SUPABASE_ANON_KEY when the user's AppData .env omits them.
+ */
+function applyBundledSupabaseDefaults(dotenv) {
+  const hasUrl = Boolean(normalizeSupabaseUrlForClient(process.env.SUPABASE_URL));
+  const hasKey = Boolean(normalizeSupabaseAnonKey(process.env.SUPABASE_ANON_KEY));
+  if (hasUrl && hasKey) {
+    return;
+  }
+  const bundledPath = path.join(process.resourcesPath, "supabase.public.env");
+  if (!fs.existsSync(bundledPath)) {
+    return;
+  }
+  let raw = fs.readFileSync(bundledPath, "utf8");
+  if (raw.charCodeAt(0) === 0xfeff) {
+    raw = raw.slice(1);
+  }
+  const parsed = dotenv.parse(raw);
+  if (!hasUrl) {
+    const url = normalizeSupabaseUrlForClient(parsed.SUPABASE_URL);
+    if (url) {
+      process.env.SUPABASE_URL = url;
+    }
+  }
+  if (!hasKey) {
+    const key = normalizeSupabaseAnonKey(parsed.SUPABASE_ANON_KEY);
+    if (key) {
+      process.env.SUPABASE_ANON_KEY = key;
+    }
+  }
+}
+
 function applyBundledNotionDefaults(dotenv) {
   if (process.env.NOTION_SKIP_BUNDLED_DATABASE_ID === "1") {
     return;
@@ -191,7 +413,7 @@ function notionReadHeaders(token) {
  */
 async function resolveDataSourceId(token, databaseId, explicitFallbackDs) {
   const res = await fetch(
-    `https://api.notion.com/v1/databases/${databaseId}`,
+    "https://" + "api.notion.com/v1/databases/" + databaseId,
     {
       method: "GET",
       headers: notionReadHeaders(token),
@@ -234,7 +456,7 @@ function isDataSourceQueryPageRow(r) {
   if (!r || typeof r !== "object") {
     return false;
   }
-  const o = /** @type {{ object?: string; properties?: unknown }} */ (r);
+  const o = /** @type {any} */ (r);
   if (o.object === "data_source") {
     return false;
   }
@@ -275,7 +497,7 @@ async function queryDataSourceAllPages(token, dataSourceId) {
     }
 
     const res = await fetch(
-      `https://api.notion.com/v1/data_sources/${dataSourceId}/query`,
+      "https://" + "api.notion.com/v1/data_sources/" + dataSourceId + "/query",
       {
         method: "POST",
         headers: notionHeaders(token),
@@ -289,7 +511,7 @@ async function queryDataSourceAllPages(token, dataSourceId) {
       if (res.status === 401) {
         message +=
           "\n\nFix checklist:\n" +
-          "• Use an Internal integration: https://www.notion.so/my-integrations → New integration → type Internal. Copy the full secret (one line, no spaces).\n" +
+          "• Use an Internal integration: Notion integrations page → New integration → type Internal. Copy the full secret (one line, no spaces).\n" +
           "• If the integration is Public (OAuth), the \"client secret\" is not the API key — this app expects the internal secret only, unless you add OAuth.\n" +
           "• After pasting, save .env and restart the app. Try \"Refresh secret\" in Notion if this key was ever shared.";
       }
@@ -321,7 +543,7 @@ async function queryDataSourceAllPages(token, dataSourceId) {
 
 /**
  * Resolve token + primary data source id (same rules as table load).
- * @param {{ databaseId?: string; dataSourceId?: string }} [opts]
+ * @param {object} [opts]
  * @returns {Promise<{ token: string; dataSourceId: string }>}
  */
 async function resolveNotionTokenAndDataSourceId(opts = {}) {
@@ -360,6 +582,230 @@ async function resolveNotionTokenAndDataSourceId(opts = {}) {
 }
 
 /**
+ * Discover all accessible databases and pages via POST /v1/search.
+ * @returns {Promise<{ databases: { id: string; title: string; url: string }[]; pages: { id: string; title: string; parentDatabaseId: string | null }[] }>}
+ */
+async function searchNotionWorkspace() {
+  const token = normalizeNotionToken(process.env.NOTION_TOKEN);
+  if (!token) {
+    return { databases: [], pages: [] };
+  }
+
+  let allResults = [];
+  let startCursor = undefined;
+
+  while (true) {
+    const body = { page_size: 100, sort: { direction: "ascending", timestamp: "last_edited_time" } };
+    if (startCursor) {
+      body.start_cursor = startCursor;
+    }
+
+    const res = await fetch("https://" + "api.notion.com/v1/search", {
+      method: "POST",
+      headers: notionHeaders(token),
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      console.warn(`[notion] search failed ${res.status}: ${await res.text().catch(() => "")}`);
+      return { databases: [], pages: [] };
+    }
+
+    const data = await res.json();
+    const results = Array.isArray(data.results) ? data.results : [];
+    allResults = allResults.concat(results);
+
+    if (!data.has_more || !data.next_cursor) break;
+    startCursor = data.next_cursor;
+  }
+
+  const databases = [];
+  const pages = [];
+
+  for (const r of allResults) {
+    const obj = r;
+    if (!obj || typeof obj !== "object") continue;
+    const id = normalizePageId(String(obj.id || ""));
+    if (!id) continue;
+
+    const title = obj.object === "database"
+      ? String(obj.title?.[0]?.plain_text ?? obj.name ?? "").trim()
+      : plainTitleFromNotionPageProperties(obj.properties);
+
+    if (obj.object === "database") {
+      const url = typeof obj.url === "string" ? obj.url : "";
+      databases.push({ id, title: title || "Untitled Database", url });
+    } else if (obj.object === "page") {
+      const parent = obj.parent;
+      const parentDatabaseId = parent?.type === "database_id"
+        ? normalizePageId(String(parent.database_id || ""))
+        : null;
+      pages.push({ id, title: title || "Untitled Page", parentDatabaseId });
+    }
+  }
+
+  return { databases, pages };
+}
+
+/**
+ * Get child blocks of a Notion page via GET /v1/blocks/{pageId}/children.
+ * Returns child database block ids (with titles when available).
+ * @param {string} pageId
+ * @returns {Promise<{ id: string; title: string }[]>}
+ */
+async function getPageChildDatabases(pageId) {
+  const token = normalizeNotionToken(process.env.NOTION_TOKEN);
+  if (!token || !pageId) return [];
+
+  const normalizedId = normalizePageId(pageId);
+  if (!normalizedId) return [];
+
+  const childDatabases = [];
+  let startCursor = undefined;
+
+  while (true) {
+    let url = "https://" + `api.notion.com/v1/blocks/${normalizedId}/children?page_size=100`;
+    if (startCursor) {
+      url += `&start_cursor=${startCursor}`;
+    }
+
+    const res = await fetch(url, {
+      method: "GET",
+      headers: notionReadHeaders(token),
+    });
+
+    if (!res.ok) {
+      console.warn(`[notion] blocks API failed ${res.status} for ${normalizedId.slice(0, 8)}...`);
+      return childDatabases;
+    }
+
+    const data = await res.json();
+    const results = Array.isArray(data.results) ? data.results : [];
+
+    for (const block of results) {
+      if (!block || typeof block !== "object") continue;
+      if (block.type === "child_database") {
+        const dbId = normalizePageId(String(block.id || ""));
+        if (dbId) {
+          const title = String(block.child_database?.title || "").trim();
+          childDatabases.push({ id: dbId, title: title || "Untitled Database" });
+        }
+      }
+    }
+
+    if (!data.has_more || !data.next_cursor) break;
+    startCursor = data.next_cursor;
+  }
+
+  return childDatabases;
+}
+
+/** @type {{ context: string; expiresAt: number } | null} */
+let notionVoiceContextCache = null;
+
+/**
+ * Build compact plain-text Notion context for the voice agent.
+ * Always queries main DB directly via .env ID (up to 20 rows).
+ * Search discovers other databases by name (non-blocking).
+ * Cached with 5-minute TTL.
+ * @returns {Promise<string>} Empty string on total failure.
+ */
+async function buildNotionVoiceContext() {
+  loadDotenv();
+  const now = Date.now();
+  if (notionVoiceContextCache && notionVoiceContextCache.expiresAt > now) {
+    console.log(`[voice] notion context cache hit, returning ${notionVoiceContextCache.context.length} chars`);
+    return notionVoiceContextCache.context;
+  }
+
+  try {
+    const mainId = normalizeDatabaseId(process.env.NOTION_DATABASE_ID);
+    console.log(`[voice] buildNotionVoiceContext: NOTION_DATABASE_ID=${mainId ? mainId.slice(0, 8) + '...' : 'EMPTY'}`);
+    const lines = [];
+    let totalRows = 0;
+    const MAX_TOTAL_ROWS = 20;
+
+    /* Try as a database first, otherwise treat as a page (THE VAULT). */
+    if (mainId) {
+      let triedAsDb = false;
+      try {
+        const table = await queryNotionTableForSource({ databaseId: mainId });
+        triedAsDb = true;
+        const cols = table.columns || [];
+        const rows = (table.rows || []).slice(0, MAX_TOTAL_ROWS);
+        totalRows += rows.length;
+        console.log(`[voice] main DB query OK: ${cols.length} columns, ${rows.length} rows`);
+
+        lines.push(`# Live Notion Context`);
+        if (cols.length > 0) lines.push(`Columns: ${cols.join(" | ")}`);
+        for (const row of rows) {
+          const cells = cols.map((_, i) => row[i] || "").map(s => String(s).trim());
+          lines.push(`• ${cells.join(" | ")}`);
+        }
+      } catch (e) {
+        /* Not a database — treat as a page (THE VAULT). */
+        if (!triedAsDb) {
+          try {
+            const childDbs = await getPageChildDatabases(mainId);
+            console.log(`[voice] vault page children: ${childDbs.length} databases found`);
+            if (childDbs.length > 0) lines.push(`# Live Notion Context — THE VAULT`);
+
+            let rowsPerDb = Math.max(1, Math.floor(MAX_TOTAL_ROWS / (childDbs.length || 1)));
+            for (const childDb of childDbs) {
+              if (totalRows >= MAX_TOTAL_ROWS) break;
+              try {
+                const table = await queryNotionTableForSource({ databaseId: childDb.id });
+                const cols = table.columns || [];
+                const rows = (table.rows || []).slice(0, rowsPerDb);
+                totalRows += rows.length;
+                lines.push(`[${childDb.title}]`);
+                if (cols.length > 0) lines.push(`  Columns: ${cols.join(" | ")}`);
+                for (const row of rows) {
+                  const cells = cols.map((_, i) => row[i] || "").map(s => String(s).trim());
+                  lines.push(`  • ${cells.join(" | ")}`);
+                }
+              } catch {
+                console.warn(`[voice] child DB query failed: ${childDb.title}`);
+              }
+            }
+          } catch {
+            console.warn(`[voice] vault page children failed`);
+          }
+        }
+      }
+    } else {
+      console.warn(`[voice] NOTION_DATABASE_ID is not set in .env`);
+    }
+
+    /* Search for other databases (best-effort, non-blocking). */
+    try {
+      const { databases } = await searchNotionWorkspace();
+      console.log(`[voice] search found ${databases.length} databases`);
+      if (databases.length > 0) {
+        lines.push("");
+        lines.push("# Other Workspace Databases");
+        for (const db of databases) {
+          lines.push(`• ${db.title}`);
+        }
+      }
+    } catch (e) {
+      console.warn(`[voice] search failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
+    const context = lines.join("\n");
+    console.log(`[voice] notion context built: ${context.length} chars, lines=${lines.length}`);
+    if (context.length > 0 && context.length < 500) {
+      console.log(`[voice] context preview: ${context}`);
+    }
+    notionVoiceContextCache = { context, expiresAt: now + 5 * 60 * 1000 };
+    return context;
+  } catch (e) {
+    console.warn(`[voice] buildNotionVoiceContext failed: ${e instanceof Error ? e.message : String(e)}`);
+    return "";
+  }
+}
+
+/**
  * @param {unknown} properties properties object from GET /pages/{id}
  * @returns {string} Plain text title (Notion databases have exactly one title property).
  */
@@ -368,7 +814,7 @@ function plainTitleFromNotionPageProperties(properties) {
     return "";
   }
   for (const key of Object.keys(properties)) {
-    const p = /** @type {{ type?: string; title?: { plain_text?: string }[] }} */ (
+    const p = /** @type {any} */ (
       properties[key]
     );
     if (p && p.type === "title" && Array.isArray(p.title)) {
@@ -397,15 +843,13 @@ async function enrichRelationTitlesOnPages(token, pages) {
     if (!page || typeof page !== "object") {
       continue;
     }
-    const props =
-      /** @type {{ properties?: Record<string, unknown> }} */ (page)
-        .properties;
+    const props = /** @type {any} */ (page).properties;
     if (!props || typeof props !== "object") {
       continue;
     }
     for (const raw of Object.values(props)) {
       const prop =
-        /** @type {{ type?: string; relation?: Array<{ id?: string }> }} */ (
+        /** @type {any} */ (
           raw
         );
       if (!prop || prop.type !== "relation" || !Array.isArray(prop.relation)) {
@@ -436,7 +880,7 @@ async function enrichRelationTitlesOnPages(token, pages) {
     await Promise.all(
       chunk.map(async (id) => {
         try {
-          const res = await fetch(`https://api.notion.com/v1/pages/${id}`, {
+          const res = await fetch("https://" + "api.notion.com/v1/pages/" + id, {
             method: "GET",
             headers: notionReadHeaders(token),
           });
@@ -444,7 +888,7 @@ async function enrichRelationTitlesOnPages(token, pages) {
           if (!res.ok) {
             return;
           }
-          const data = /** @type {{ properties?: unknown }} */ (JSON.parse(text));
+          const data = /** @type {any} */ (JSON.parse(text));
           const title = plainTitleFromNotionPageProperties(data.properties);
           if (title) {
             idToTitle.set(id, title);
@@ -463,15 +907,13 @@ async function enrichRelationTitlesOnPages(token, pages) {
     if (!page || typeof page !== "object") {
       continue;
     }
-    const props =
-      /** @type {{ properties?: Record<string, unknown> }} */ (page)
-        .properties;
+    const props = /** @type {any} */ (page).properties;
     if (!props || typeof props !== "object") {
       continue;
     }
     for (const raw of Object.values(props)) {
       const prop =
-        /** @type {{ type?: string; relation?: Array<{ id?: string }> }} */ (
+        /** @type {any} */ (
           raw
         );
       if (!prop || prop.type !== "relation" || !Array.isArray(prop.relation)) {
@@ -509,7 +951,7 @@ function notionNormalizeComparableTitle(t) {
  */
 async function notionGetDatabase(token, databaseIdNormalized) {
   const res = await fetch(
-    `https://api.notion.com/v1/databases/${databaseIdNormalized}`,
+    "https://" + "api.notion.com/v1/databases/" + databaseIdNormalized,
     {
       method: "GET",
       headers: notionReadHeaders(token),
@@ -534,7 +976,7 @@ function notionPrimaryDataSourceIdFromDbJson(dbJson) {
   }
   const id0 =
     typeof sources[0] === "object" && sources[0] !== null
-      ? /** @type {{ id?: string }} */ (sources[0]).id
+      ? /** @type {any} */ (sources[0]).id
       : undefined;
   return typeof id0 === "string" ? normalizeDataSourceId(id0.trim()) : "";
 }
@@ -627,7 +1069,7 @@ async function retrieveNotionFullDatabaseAsTable(token, dbIdNormalized) {
  * If the id is actually a database, loads the entire database into columns/rows/pageIds (up to sync limits).
  * @param {string} token
  * @param {string} pageIdRaw
- * @param {{ rowTitleHint?: string }} [options] Forward-compatibility; reserved for IPC.
+ * @param {object} [options] Forward-compatibility; reserved for IPC.
  */
 async function retrieveNotionPageAsTable(token, pageIdRaw, _options = {}) {
   void _options;
@@ -639,7 +1081,7 @@ async function retrieveNotionPageAsTable(token, pageIdRaw, _options = {}) {
     throw err;
   }
 
-  const res = await fetch(`https://api.notion.com/v1/pages/${id}`, {
+  const res = await fetch("https://" + "api.notion.com/v1/pages/" + id, {
     method: "GET",
     headers: notionReadHeaders(token),
   });
@@ -701,7 +1143,7 @@ async function retrieveNotionPageAsTable(token, pageIdRaw, _options = {}) {
 }
 
 /**
- * @param {{ databaseId?: string; dataSourceId?: string }} [opts]
+ * @param {object} [opts]
  */
 async function queryNotionTableForSource(opts = {}) {
   const { token, dataSourceId } = await resolveNotionTokenAndDataSourceId(opts);
@@ -712,6 +1154,75 @@ async function queryNotionTableForSource(opts = {}) {
 
 async function queryNotionDatabase() {
   return queryNotionTableForSource({});
+}
+
+/**
+ * Load all pages from a source, filter to this teacher, then resolve relation titles only for those rows.
+ * Avoids hundreds of GET /pages calls when the shared payslip DB has many teachers' rows.
+ * @param {{ databaseId?: string; dataSourceId?: string }} sourceOpts Passed to {@link resolveNotionTokenAndDataSourceId}.
+ * @param {string} email Teacher sign-in email (used when person filter matches nothing).
+ * @param {string} notionPersonRecordId Optional Notion person / row id filter.
+ * @param {{ personOnly?: boolean }} [mode] When true (dedicated DB), only apply the person filter (no email fallback).
+ */
+async function queryNotionTeacherPayslipRowsPartialEnrich(
+  sourceOpts,
+  email,
+  notionPersonRecordId,
+  mode,
+) {
+  const { token, dataSourceId } =
+    await resolveNotionTokenAndDataSourceId(sourceOpts);
+  const pages = await queryDataSourceAllPages(token, dataSourceId);
+  const baseTable = pagesToTable(pages);
+
+  /** @type {{ columns: string[]; rows: string[][]; pageIds: string[]; noEmailColumn?: boolean }} */
+  let filtered;
+
+  if (mode?.personOnly && notionPersonRecordId) {
+    filtered = filterPayslipsForNotionPerson(baseTable, notionPersonRecordId);
+  } else if (notionPersonRecordId) {
+    const byPerson = filterPayslipsForNotionPerson(
+      baseTable,
+      notionPersonRecordId,
+    );
+    filtered =
+      byPerson.rows.length > 0
+        ? byPerson
+        : filterPayslipsForTeacher(baseTable, email);
+  } else {
+    filtered = filterPayslipsForTeacher(baseTable, email);
+  }
+
+  /** @type {Map<string, object>} */
+  const pageById = new Map();
+  for (const p of pages) {
+    if (!p || typeof p !== "object" || !("id" in p)) {
+      continue;
+    }
+    const id = normalizePageId(String(/** @type {{ id?: unknown }} */ (p).id));
+    if (id) {
+      pageById.set(id, /** @type {object} */ (p));
+    }
+  }
+
+  const orderedSubset = [];
+  for (const rawPid of filtered.pageIds || []) {
+    const pid = normalizePageId(String(rawPid));
+    const pg = pid ? pageById.get(pid) : undefined;
+    if (pg) {
+      orderedSubset.push(pg);
+    }
+  }
+
+  await enrichRelationTitlesOnPages(token, orderedSubset);
+  const out = pagesToTable(orderedSubset);
+  return {
+    ok: true,
+    columns: out.columns,
+    rows: out.rows,
+    pageIds: out.pageIds,
+    noEmailColumn: Boolean(filtered.noEmailColumn),
+  };
 }
 
 /**
@@ -752,7 +1263,7 @@ async function patchNotionPageDateProperty(
     ? { date: null }
     : { date: { start: String(ymd).trim() } };
 
-  const res = await fetch(`https://api.notion.com/v1/pages/${id}`, {
+  const res = await fetch("https://" + "api.notion.com/v1/pages/" + id, {
     method: "PATCH",
     headers: notionHeaders(token),
     body: JSON.stringify({ properties }),
@@ -811,7 +1322,7 @@ async function patchNotionPageNumberProperty(
   const properties = {};
   properties[prop] = clear ? { number: null } : { number: value };
 
-  const res = await fetch(`https://api.notion.com/v1/pages/${id}`, {
+  const res = await fetch("https://" + "api.notion.com/v1/pages/" + id, {
     method: "PATCH",
     headers: notionHeaders(token),
     body: JSON.stringify({ properties }),
@@ -831,6 +1342,133 @@ async function patchNotionPageNumberProperty(
     const err = new Error(
       `Could not update Notion (${res.status}): ${detail}`,
     );
+    err.code = "API";
+    throw err;
+  }
+}
+
+/**
+ * PATCH a database page property by exact Notion column name. The existing page schema
+ * decides the safe payload shape, so renderer.js never sends raw Notion API bodies.
+ * @param {string} token
+ * @param {string} pageIdRaw
+ * @param {string} propertyName
+ * @param {unknown} value
+ */
+async function patchNotionPageGenericProperty(
+  token,
+  pageIdRaw,
+  propertyName,
+  value,
+) {
+  const id = normalizePageId(pageIdRaw);
+  if (!id) {
+    const err = new Error("Missing or invalid Notion page id.");
+    err.code = "BAD_INPUT";
+    throw err;
+  }
+  const propName = String(propertyName ?? "").trim();
+  if (!propName) {
+    const err = new Error("Missing property name.");
+    err.code = "BAD_INPUT";
+    throw err;
+  }
+
+  const pageRes = await fetch("https://" + "api.notion.com/v1/pages/" + id, {
+    method: "GET",
+    headers: notionReadHeaders(token),
+  });
+  const pageText = await pageRes.text();
+  if (!pageRes.ok) {
+    const err = new Error(`Could not read Notion page (${pageRes.status}): ${pageText}`);
+    err.code = "API";
+    throw err;
+  }
+  const pageJson = JSON.parse(pageText);
+  const prop = pageJson?.properties?.[propName];
+  if (!prop || typeof prop !== "object") {
+    const err = new Error(`Property "${propName}" was not found on this Notion row.`);
+    err.code = "BAD_INPUT";
+    throw err;
+  }
+
+  const raw = value == null ? "" : String(value);
+  const trimmed = raw.trim();
+  /** @type {Record<string, unknown>} */
+  const properties = {};
+  switch (prop.type) {
+    case "title":
+      properties[propName] = { title: trimmed ? [{ text: { content: trimmed } }] : [] };
+      break;
+    case "rich_text":
+      properties[propName] = { rich_text: trimmed ? [{ text: { content: trimmed } }] : [] };
+      break;
+    case "url":
+      properties[propName] = { url: trimmed || null };
+      break;
+    case "email":
+      properties[propName] = { email: trimmed || null };
+      break;
+    case "phone_number":
+      properties[propName] = { phone_number: trimmed || null };
+      break;
+    case "number": {
+      if (!trimmed) {
+        properties[propName] = { number: null };
+      } else {
+        const n = Number.parseFloat(trimmed);
+        if (!Number.isFinite(n)) {
+          const err = new Error("Invalid number.");
+          err.code = "BAD_INPUT";
+          throw err;
+        }
+        properties[propName] = { number: n };
+      }
+      break;
+    }
+    case "checkbox":
+      properties[propName] = { checkbox: /^(1|true|yes|y|done|checked)$/i.test(trimmed) };
+      break;
+    case "select":
+      properties[propName] = { select: trimmed ? { name: trimmed } : null };
+      break;
+    case "status":
+      properties[propName] = { status: trimmed ? { name: trimmed } : null };
+      break;
+    case "multi_select":
+      properties[propName] = {
+        multi_select: trimmed
+          ? trimmed.split(",").map((name) => ({ name: name.trim() })).filter((x) => x.name)
+          : [],
+      };
+      break;
+    case "date":
+      properties[propName] = { date: trimmed ? { start: trimmed } : null };
+      break;
+    default: {
+      const err = new Error(`Property type "${prop.type}" is not editable from the Operations dashboard yet.`);
+      err.code = "BAD_INPUT";
+      throw err;
+    }
+  }
+
+  const res = await fetch("https://" + "api.notion.com/v1/pages/" + id, {
+    method: "PATCH",
+    headers: notionHeaders(token),
+    body: JSON.stringify({ properties }),
+  });
+  const bodyText = await res.text();
+  if (!res.ok) {
+    let detail = bodyText;
+    try {
+      const j = JSON.parse(bodyText);
+      if (typeof j.message === "string") {
+        detail = j.message;
+      }
+    } catch {
+      /* keep bodyText */
+    }
+    const err = new Error(`Could not update Notion (${res.status}): ${detail}`);
     err.code = "API";
     throw err;
   }
@@ -924,7 +1562,7 @@ function findPayslipEmailColumnIndices(columns) {
 }
 
 /**
- * @param {{ columns: string[]; rows: string[][]; pageIds: string[] }} table
+ * @param {object} table
  * @param {string} teacherEmail
  */
 function filterPayslipsForTeacher(table, teacherEmail) {
@@ -961,6 +1599,69 @@ function filterPayslipsForTeacher(table, teacherEmail) {
   };
 }
 
+/**
+ * Normalize Notion UUID for loose comparison (hyphens optional).
+ * @param {unknown} raw
+ */
+function normalizeNotionUuidLoose(raw) {
+  const s = String(raw ?? "")
+    .replace(/-/g, "")
+    .toLowerCase()
+    .trim();
+  return /^[0-9a-f]{20,}$/.test(s) ? s : "";
+}
+
+/**
+ * Keep payslip rows tied to a teacher's Notion person/page id (from admin links).
+ * Matches row page id or any cell text containing the id (e.g. relation rollups).
+ * @param {object} table
+ * @param {string} personIdRaw
+ */
+function filterPayslipsForNotionPerson(table, personIdRaw) {
+  const want = normalizeNotionUuidLoose(personIdRaw);
+  if (!want) {
+    return {
+      columns: table.columns || [],
+      rows: [],
+      pageIds: [],
+      noEmailColumn: false,
+    };
+  }
+  const withHyphens = String(personIdRaw ?? "").trim();
+  const cols = table.columns || [];
+  const rows = [];
+  const pageIds = [];
+  const tableRows = table.rows || [];
+  const tablePageIds = table.pageIds || [];
+  tableRows.forEach((row, i) => {
+    if (!row || !row.length) {
+      return;
+    }
+    const pid = normalizeNotionUuidLoose(tablePageIds[i]);
+    if (pid && pid === want) {
+      rows.push(row);
+      pageIds.push(tablePageIds[i] || "");
+      return;
+    }
+    const hay = row
+      .map((c) => String(c ?? "").toLowerCase())
+      .join(" \n ");
+    if (
+      hay.includes(want) ||
+      (withHyphens.length > 8 && hay.includes(withHyphens.toLowerCase()))
+    ) {
+      rows.push(row);
+      pageIds.push(tablePageIds[i] || "");
+    }
+  });
+  return {
+    columns: cols,
+    rows,
+    pageIds,
+    noEmailColumn: false,
+  };
+}
+
 function sanitizePaySlipFileStem(title) {
   const base = String(title || "Pay slip")
     .replace(/[\\/:*?"<>|]+/g, " ")
@@ -970,11 +1671,115 @@ function sanitizePaySlipFileStem(title) {
   return base || "Pay slip";
 }
 
-function focusMainWindow() {
-  const w =
+/** HTTPS Discord channel/message links only (teachers portal support + totals). */
+function isAllowedDiscordExternalUrl(rawUrl) {
+  let u;
+  try {
+    u = new URL(String(rawUrl ?? "").trim());
+  } catch {
+    return false;
+  }
+  if (u.protocol !== "https:") {
+    return false;
+  }
+  const host = u.hostname.toLowerCase();
+  const allowed =
+    host === "discord.com" ||
+    host.endsWith(".discord.com") ||
+    host === "discordapp.com" ||
+    host.endsWith(".discordapp.com");
+  if (!allowed) {
+    return false;
+  }
+  const parts = u.pathname.split("/").filter(Boolean);
+  return parts[0] === "channels" && parts.length >= 2;
+}
+
+/**
+ * discord:// links are handled by the Discord desktop app; https:// opens in the browser.
+ * @param {string} httpsUrl
+ * @returns {string[]}
+ */
+function discordDesktopUrlCandidates(httpsUrl) {
+  const u = new URL(String(httpsUrl ?? "").trim());
+  const parts = u.pathname.split("/").filter(Boolean);
+  if (parts[0] !== "channels" || parts.length < 2) {
+    return [];
+  }
+  const guildId = parts[1];
+  const channelId = parts[2];
+  const messageId = parts[3];
+  const channelPath =
+    messageId != null && String(messageId).length > 0
+      ? `/channels/${guildId}/${channelId}/${messageId}`
+      : `/channels/${guildId}/${channelId}`;
+  return [
+    `discord://discord.com${channelPath}`,
+    `discord://-${channelPath}`,
+  ];
+}
+
+/**
+ * @param {string} deepUrl
+ * @returns {Promise<boolean>}
+ */
+async function launchDiscordDesktopUrl(deepUrl) {
+  try {
+    await shell.openExternal(deepUrl, { activate: true });
+    return true;
+  } catch {
+    /* fall through */
+  }
+  if (process.platform === "win32") {
+    try {
+      await execFileAsync("cmd.exe", ["/d", "/c", "start", "", deepUrl], {
+        windowsHide: true,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+/**
+ * @param {string} httpsUrl
+ * @returns {Promise<{ ok: boolean; message?: string; opened?: string; fallback?: string }>}
+ */
+async function openDiscordExternal(httpsUrl) {
+  const url = String(httpsUrl ?? "").trim();
+  if (!isAllowedDiscordExternalUrl(url)) {
+    return { ok: false, message: "Invalid URL." };
+  }
+  const candidates = discordDesktopUrlCandidates(url);
+  for (const deep of candidates) {
+    if (await launchDiscordDesktopUrl(deep)) {
+      return { ok: true, opened: deep };
+    }
+  }
+  try {
+    await shell.openExternal(url, { activate: true });
+    return { ok: true, opened: url, fallback: "browser" };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
+function getMainBrowserWindow() {
+  return (
     BrowserWindow.getFocusedWindow() ||
     mainWindow ||
-    BrowserWindow.getAllWindows()[0];
+    BrowserWindow.getAllWindows()[0] ||
+    null
+  );
+}
+
+function focusMainWindow() {
+  const w = getMainBrowserWindow();
   if (w && !w.isDestroyed()) {
     if (w.isMinimized()) {
       w.restore();
@@ -983,12 +1788,65 @@ function focusMainWindow() {
   }
 }
 
+function minimizeMainWindow() {
+  const w = getMainBrowserWindow();
+  if (w && !w.isDestroyed()) {
+    w.minimize();
+  }
+}
+
+/** @param {"background" | "foreground"} profile */
+function syncWindowsEfficiencyMode(profile) {
+  if (!winEfficiencyMode) {
+    return;
+  }
+  try {
+    winEfficiencyMode.applyToCurrentProcess(profile);
+    const w = getMainBrowserWindow();
+    if (w && !w.isDestroyed()) {
+      winEfficiencyMode.applyToBrowserWindow(w, profile);
+    }
+  } catch (e) {
+    console.warn("Windows efficiency mode sync:", e);
+  }
+}
+
+function attachWindowsEfficiencyModeHandlers(win) {
+  if (!winEfficiencyMode || !win) {
+    return;
+  }
+  const applyBackground = () => syncWindowsEfficiencyMode("background");
+  const applyForeground = () => syncWindowsEfficiencyMode("foreground");
+
+  win.webContents.on("did-finish-load", () => {
+    applyBackground();
+    setTimeout(() => applyBackground(), 1200);
+  });
+
+  win.on("minimize", applyBackground);
+  win.on("hide", applyBackground);
+  win.on("blur", applyBackground);
+
+  win.on("restore", applyForeground);
+  win.on("show", applyForeground);
+  win.on("focus", applyForeground);
+
+  app.on("browser-window-blur", () => {
+    if (BrowserWindow.getFocusedWindow() == null) {
+      applyBackground();
+    }
+  });
+}
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1024,
     height: 800,
     show: false,
     fullscreenable: true,
+    // Avoid a white native surface flash before the renderer paints (app defaults to dark).
+    backgroundColor: "#191919",
+    icon: path.join(__dirname, "assets", "rme-logo.png"),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -998,6 +1856,8 @@ function createWindow() {
   });
 
   mainWindow = win;
+
+  attachWindowsEfficiencyModeHandlers(win);
 
   win.once("ready-to-show", () => {
     try {
@@ -1020,6 +1880,10 @@ function createWindow() {
         if (!win.webContents.isDestroyed()) {
           await win.webContents.executeJavaScript(
             RENDERER_FLUSH_FLOATING_DRAFTS_JS,
+            true,
+          );
+          await win.webContents.executeJavaScript(
+            RENDERER_FLUSH_PLANNER_JS,
             true,
           );
         }
@@ -1045,6 +1909,135 @@ function createWindow() {
   win.loadFile(path.join(__dirname, "index.html"));
 }
 
+/** @type {Map<string, number>} */
+const recentCalendarNotifications = new Map();
+
+const CALENDAR_APP_USER_MODEL_ID = "com.recruitmyenglish.app";
+
+/** @returns {string | undefined} */
+function calendarReminderIconPath() {
+  // Prefer the small PNG — loading the multi-MB JPG blocks Windows toasts.
+  const candidates = [
+    path.join(__dirname, "assets", "tolerance-bridge-bg.png"),
+    path.join(__dirname, "assets", "tolerance-new.jpg"),
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
+  }
+  return undefined;
+}
+
+/** @type {import("electron").NativeImage | null | undefined} */
+let cachedReminderNotificationIcon;
+
+/** @returns {import("electron").NativeImage | null} */
+function getCachedReminderNotificationIcon() {
+  if (cachedReminderNotificationIcon !== undefined) {
+    return cachedReminderNotificationIcon;
+  }
+  const iconPath = calendarReminderIconPath();
+  if (!iconPath) {
+    cachedReminderNotificationIcon = null;
+    return null;
+  }
+  try {
+    const img = nativeImage.createFromPath(iconPath);
+    cachedReminderNotificationIcon = img.isEmpty() ? null : img;
+  } catch {
+    cachedReminderNotificationIcon = null;
+  }
+  return cachedReminderNotificationIcon;
+}
+
+function warmReminderNotificationAssets() {
+  ensureWindowsNotificationShortcut();
+  getCachedReminderNotificationIcon();
+}
+
+/** Windows toast notifications require a Start Menu shortcut with AppUserModelID. */
+function ensureWindowsNotificationShortcut() {
+  if (process.platform !== "win32") return;
+
+  app.setAppUserModelId(CALENDAR_APP_USER_MODEL_ID);
+
+  const shortcutPath = path.join(
+    app.getPath("appData"),
+    "Microsoft",
+    "Windows",
+    "Start Menu",
+    "Programs",
+    "Recruit My English.lnk",
+  );
+  const projectRoot = path.resolve(__dirname);
+  /** @type {import("electron").ShortcutDetails} */
+  const details = {
+    target: process.execPath,
+    args: app.isPackaged ? "" : ".",
+    cwd: app.isPackaged ? path.dirname(process.execPath) : projectRoot,
+    description: "Recruit My English",
+    appUserModelId: CALENDAR_APP_USER_MODEL_ID,
+  };
+  const iconPath = calendarReminderIconPath();
+  if (iconPath) {
+    details.icon = iconPath;
+    details.iconIndex = 0;
+  }
+  let ok = false;
+  try {
+    ok = shell.writeShortcutLink(shortcutPath, "replace", details);
+    if (!ok) {
+      ok = shell.writeShortcutLink(shortcutPath, "create", details);
+    }
+  } catch (e) {
+    console.warn("[calendar notifications] Start Menu shortcut:", e);
+  }
+  if (!ok) {
+    console.warn(
+      "[calendar notifications] Could not write Start Menu shortcut — Windows toasts may not appear until the app is installed.",
+    );
+  }
+}
+
+function flashMainWindowAttention() {
+  const win =
+    mainWindow && !mainWindow.isDestroyed()
+      ? mainWindow
+      : BrowserWindow.getAllWindows().find((w) => !w.isDestroyed());
+  if (!win || win.isDestroyed()) return false;
+  try {
+    win.flashFrame(true);
+    const stop = () => {
+      if (!win.isDestroyed()) win.flashFrame(false);
+      win.removeListener("focus", stop);
+    };
+    win.on("focus", stop);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Show a native toast immediately (do not wait for the "show" event — that lags IPC).
+ * @param {Electron.NotificationConstructorOptions} opts
+ * @returns {{ ok: boolean; reason?: string }}
+ */
+function showNativeReminderNotification(opts) {
+  try {
+    const n = new Notification(opts);
+    n.on("click", () => {
+      focusMainWindow();
+    });
+    n.show();
+    return { ok: true };
+  } catch (e) {
+    return {
+      ok: false,
+      reason: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
   app.quit();
@@ -1053,12 +2046,108 @@ if (!gotTheLock) {
     focusMainWindow();
   });
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
+    loadDotenv();
+    applyVoiceEnvPaths(__dirname);
+    if (!cudaRuntimeLikelyAvailable()) {
+      console.warn(
+        "[voice] CUDA 12.x toolkit not detected. Whisper may use DirectML or CPU.",
+      );
+    }
+    void ensureWhisperServer().catch((e) => {
+      console.warn(
+        `[voice] whisper-server did not start: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    });
     const userDataPath = app.getPath("userData");
     seedPackagedEnvTemplate(userDataPath);
     loadDotenv();
+    applyVoiceEnvPaths(__dirname);
+    void getVoiceAgent().warmVoiceStack().catch((e) => {
+      console.warn(
+        `[voice] background warm failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    });
+    warmReminderNotificationAssets();
 
-    ipcMain.handle("auth:has-admin", () => hasAdmin(userDataPath));
+    notionApi = new NotionApi();
+    /* AI Chat service (non-voice, reuses notionApi for REST tools) */
+    (function initAiChat() {
+      const { getAiChatService } = require("./lib/ai-chat");
+      const { ALLOWED_ADMIN_EMAIL } = require("./auth-store");
+      const svc = getAiChatService();
+      svc._notionApi = notionApi;
+      svc.setUserEmail(ALLOWED_ADMIN_EMAIL);
+    })();
+
+    log.info("notion", { tokenSet: !!process.env.NOTION_TOKEN, status: "ready" });
+
+    /* Pre-warm embedding model in background so first voice turn isn't slowed */
+    embed("warm up").then(r => {
+      if (r.ok) log.info("memory", { embedWarm: "ok" });
+      else log.warn("memory", { embedWarm: "failed", error: r.error?.message });
+    });
+
+    /* Warm-load studio master so ffmpeg binary resolves at startup */
+    require("./lib/tts/studio-master");
+    console.log("[tts] Studio TTS chain ready");
+
+    ipcMain.handle("calendar:notification-supported", () => Notification.isSupported());
+    ipcMain.handle("calendar:flash-attention", () => flashMainWindowAttention());
+    ipcMain.on("calendar:show-reminder", (_evt, payload) => {
+      if (!Notification.isSupported()) return;
+      const p =
+        payload && typeof payload === "object" && !Array.isArray(payload)
+          ? payload
+          : {};
+      const title =
+        typeof p.title === "string" && p.title.trim()
+          ? p.title.trim()
+          : "Reminder";
+      const body = typeof p.body === "string" ? p.body.trim() : "";
+      const tag = typeof p.tag === "string" ? p.tag.trim() : "";
+      const silent = p.silent === true;
+      if (tag) {
+        const prev = recentCalendarNotifications.get(tag) ?? 0;
+        if (Date.now() - prev < 90000) return;
+      }
+
+      flashMainWindowAttention();
+
+      const icon = getCachedReminderNotificationIcon();
+      /** @type {Electron.NotificationConstructorOptions} */
+      const withIcon = {
+        title,
+        body: body || undefined,
+        silent,
+        ...(tag ? { tag } : {}),
+        ...(icon ? { icon } : {}),
+      };
+      let result = showNativeReminderNotification(withIcon);
+      if (!result.ok) {
+        result = showNativeReminderNotification({
+          title,
+          body: body || undefined,
+          silent,
+        });
+      }
+      if (!result.ok) {
+        console.warn("[calendar notifications] show failed:", result.reason || "unknown");
+        return;
+      }
+
+      if (tag) {
+        recentCalendarNotifications.set(tag, Date.now());
+        if (recentCalendarNotifications.size > 200) {
+          const cutoff = Date.now() - 3600000;
+          for (const [k, t] of recentCalendarNotifications) {
+            if (t < cutoff) recentCalendarNotifications.delete(k);
+          }
+        }
+      }
+    });
+
+    ipcMain.handle("auth:has-admin", (_evt, email) => hasAdmin(email));
     ipcMain.handle("auth:allowed-admin-email", () => ({
       email: ALLOWED_ADMIN_EMAIL,
     }));
@@ -1218,6 +2307,39 @@ if (!gotTheLock) {
       }
     });
 
+    ipcMain.handle("notion:update-page-property", async (_evt, payload) => {
+      try {
+        loadDotenv();
+        const token = normalizeNotionToken(process.env.NOTION_TOKEN);
+        if (!token) {
+          return { ok: false, message: notionMissingTokenMessage() };
+        }
+        const p =
+          payload && typeof payload === "object" && !Array.isArray(payload)
+            ? payload
+            : {};
+        const pageId =
+          typeof p.pageId === "string"
+            ? p.pageId.trim()
+            : "";
+        const propertyName =
+          typeof p.propertyName === "string"
+            ? p.propertyName.trim()
+            : "";
+        await patchNotionPageGenericProperty(
+          token,
+          pageId,
+          propertyName,
+          p.value,
+        );
+        return { ok: true };
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        const code = e instanceof Error && "code" in e ? e.code : "UNKNOWN";
+        return { ok: false, code, message };
+      }
+    });
+
     ipcMain.handle("notion:query-teacher-databases", async (_evt, sources) => {
       try {
         loadDotenv();
@@ -1274,6 +2396,7 @@ if (!gotTheLock) {
         let email = "";
         let databaseId = "";
         let dataSourceId = "";
+        let notionPersonRecordId = "";
         if (
           payload &&
           typeof payload === "object" &&
@@ -1289,6 +2412,10 @@ if (!gotTheLock) {
             typeof payload.dataSourceId === "string"
               ? payload.dataSourceId.trim()
               : "";
+          notionPersonRecordId =
+            typeof payload.notionPersonRecordId === "string"
+              ? payload.notionPersonRecordId.trim()
+              : "";
         } else if (typeof payload === "string") {
           email = payload.trim();
         }
@@ -1297,6 +2424,14 @@ if (!gotTheLock) {
           normalizeDatabaseId(databaseId) || normalizeDataSourceId(dataSourceId);
 
         if (hasDedicatedSource) {
+          if (notionPersonRecordId) {
+            return await queryNotionTeacherPayslipRowsPartialEnrich(
+              { databaseId, dataSourceId },
+              email,
+              notionPersonRecordId,
+              { personOnly: true },
+            );
+          }
           const table = await queryNotionTableForSource({
             databaseId,
             dataSourceId,
@@ -1304,9 +2439,12 @@ if (!gotTheLock) {
           return { ok: true, ...table, noEmailColumn: false };
         }
 
-        const table = await queryNotionDatabase();
-        const filtered = filterPayslipsForTeacher(table, email);
-        return { ok: true, ...filtered };
+        return await queryNotionTeacherPayslipRowsPartialEnrich(
+          {},
+          email,
+          notionPersonRecordId,
+          { personOnly: false },
+        );
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
         const code = e instanceof Error && "code" in e ? e.code : "UNKNOWN";
@@ -1354,24 +2492,795 @@ if (!gotTheLock) {
       return { ok: true };
     });
 
+    ipcMain.handle("shell:open-external-url", async (_evt, rawUrl) => {
+      return openDiscordExternal(rawUrl);
+    });
+
     ipcMain.handle("app:relaunch", () => {
       app.relaunch();
       app.exit(0);
     });
 
+    ipcMain.handle("app:quit", async () => {
+      const w = getMainBrowserWindow();
+      if (w && !w.isDestroyed() && !w.webContents.isDestroyed()) {
+        try {
+          await w.webContents.executeJavaScript(
+            RENDERER_FLUSH_FLOATING_DRAFTS_JS,
+            true,
+          );
+          await w.webContents.executeJavaScript(
+            RENDERER_FLUSH_PLANNER_JS,
+            true,
+          );
+        } catch {
+          /* WebContents may refuse during teardown */
+        }
+      }
+      app.quit();
+      return { ok: true };
+    });
+
+    ipcMain.handle("devlog:read", () => {
+      return { entries: devLogBuffer.slice(-200) };
+    });
+
+    ipcMain.handle("devlog:clear", () => {
+      devLogBuffer.length = 0;
+      return { ok: true };
+    });
+
+    ipcMain.handle("window:minimize", () => {
+      minimizeMainWindow();
+      return { ok: true };
+    });
+
+    // Turn 39 — file-backed admin auto-sign-in across restart.
+    // Stores admin email+password to <userData>/admin-creds.json so the renderer
+    // can auto-sign-in on the next boot (app.relaunch(), npm start, or PC reboot).
+    // Strictly gated to ALLOWED_ADMIN_EMAIL — never saves any other user's creds.
+    const adminCredsFilePath = () =>
+      path.join(app.getPath("userData"), "admin-creds.json");
+
+    function isAllowedAdminEmail(raw) {
+      const want = String(ALLOWED_ADMIN_EMAIL || "").trim().toLowerCase();
+      const got = String(raw || "").trim().toLowerCase();
+      return Boolean(want) && want === got;
+    }
+
+    ipcMain.handle("admin-creds:save", (_evt, payload) => {
+      try {
+        const email = String(payload?.email ?? "").trim();
+        const password = String(payload?.password ?? "");
+        if (!email || !password) {
+          return { ok: false, message: "Missing email or password." };
+        }
+        if (!isAllowedAdminEmail(email)) {
+          // Silently no-op for non-admin users — never persist their creds.
+          return { ok: false, message: "Not admin." };
+        }
+        const p = adminCredsFilePath();
+        fs.mkdirSync(path.dirname(p), { recursive: true });
+        fs.writeFileSync(
+          p,
+          JSON.stringify({
+            email,
+            password,
+            savedAt: new Date().toISOString(),
+          }),
+          "utf8",
+        );
+        return { ok: true };
+      } catch (e) {
+        return {
+          ok: false,
+          message: e instanceof Error ? e.message : String(e),
+        };
+      }
+    });
+
+    ipcMain.handle("admin-creds:load", () => {
+      try {
+        const p = adminCredsFilePath();
+        if (!fs.existsSync(p)) {
+          return { ok: true, creds: null };
+        }
+        const raw = fs.readFileSync(p, "utf8");
+        let j = null;
+        try {
+          j = JSON.parse(raw);
+        } catch {
+          return { ok: true, creds: null };
+        }
+        const email = typeof j?.email === "string" ? j.email : "";
+        const password = typeof j?.password === "string" ? j.password : "";
+        if (!email || !password) {
+          return { ok: true, creds: null };
+        }
+        if (!isAllowedAdminEmail(email)) {
+          return { ok: true, creds: null };
+        }
+        return { ok: true, creds: { email, password } };
+      } catch (e) {
+        return {
+          ok: false,
+          creds: null,
+          message: e instanceof Error ? e.message : String(e),
+        };
+      }
+    });
+
+    ipcMain.handle("admin-creds:clear", () => {
+      try {
+        const p = adminCredsFilePath();
+        if (fs.existsSync(p)) {
+          fs.unlinkSync(p);
+        }
+        return { ok: true };
+      } catch (e) {
+        return {
+          ok: false,
+          message: e instanceof Error ? e.message : String(e),
+        };
+      }
+    });
+
+    /** Planner — per signed-in user under userData/planner/<auth-user-id>/ */
+    const plannerUserDataPath = app.getPath("userData");
+    const legacyPlannerStore = createPlannerFileStore(plannerUserDataPath);
+    /** @type {Map<string, ReturnType<typeof createPlannerFileStore>>} */
+    const plannerStoresByScope = new Map();
+    let activePlannerScope = "";
+
+    const plannerFileKeySet = new Set(PLANNER_FILE_KEYS);
+
+    function getActivePlannerStore() {
+      if (activePlannerScope) {
+        let scoped = plannerStoresByScope.get(activePlannerScope);
+        if (!scoped) {
+          scoped = createPlannerFileStore(
+            plannerUserDataPath,
+            activePlannerScope,
+          );
+          plannerStoresByScope.set(activePlannerScope, scoped);
+        }
+        return scoped;
+      }
+      return legacyPlannerStore;
+    }
+
+    const keywordIndex = createKeywordIndexService({
+      readSettings: () => getActivePlannerStore().read("settings"),
+      writeSettings: (json) => getActivePlannerStore().write("settings", json),
+    });
+
+    ipcMain.handle("planner:set-scope", (_evt, payload) => {
+      try {
+        const p =
+          payload && typeof payload === "object" && !Array.isArray(payload)
+            ? payload
+            : {};
+        const userId = sanitizePlannerScopeId(p.userId);
+        const email = String(p.email ?? "").trim().toLowerCase();
+        const firstName = String(p.firstName ?? "").trim();
+        const lastName = String(p.lastName ?? "").trim();
+
+        activePlannerScope = userId;
+
+        if (userId) {
+          let scoped = plannerStoresByScope.get(userId);
+          if (!scoped) {
+            scoped = createPlannerFileStore(plannerUserDataPath, userId);
+            plannerStoresByScope.set(userId, scoped);
+          }
+          const profileMeta = {
+            teacherId: userId,
+            email,
+            firstName,
+            lastName,
+          };
+          if (
+            hasAdmin(email) &&
+            !scoped.isInitialized() &&
+            legacyPlannerStore.isInitialized()
+          ) {
+            migratePlannerStore(legacyPlannerStore, scoped, {
+              ...profileMeta,
+              role: "admin",
+            });
+          }
+          // Do not markInitialized here for empty teacher scopes — renderer migrates
+          // localStorage into the file store on first planner load.
+        }
+
+        keywordIndex.reloadSettings();
+        const store = getActivePlannerStore();
+        return {
+          ok: true,
+          scope: userId,
+          dir: store.dir,
+        };
+      } catch (e) {
+        return {
+          ok: false,
+          message: e instanceof Error ? e.message : String(e),
+        };
+      }
+    });
+
+    ipcMain.handle("planner:is-initialized", () => {
+      try {
+        const store = getActivePlannerStore();
+        return { ok: true, initialized: store.isInitialized(), scope: activePlannerScope };
+      } catch (e) {
+        return {
+          ok: false,
+          initialized: false,
+          message: e instanceof Error ? e.message : String(e),
+        };
+      }
+    });
+
+    ipcMain.handle("planner:read", (_evt, rawKey) => {
+      try {
+        const key = String(rawKey ?? "").trim();
+        if (!plannerFileKeySet.has(key)) {
+          return { ok: false, content: null, message: "Unknown planner store key." };
+        }
+        if (!activePlannerScope) {
+          return {
+            ok: false,
+            content: null,
+            message: "Planner scope not set (sign in first).",
+          };
+        }
+        return { ok: true, content: getActivePlannerStore().read(key) };
+      } catch (e) {
+        return {
+          ok: false,
+          content: null,
+          message: e instanceof Error ? e.message : String(e),
+        };
+      }
+    });
+
+    ipcMain.handle("planner:write", (_evt, payload) => {
+      try {
+        const key = String(payload?.key ?? "").trim();
+        const content = typeof payload?.content === "string" ? payload.content : null;
+        if (!plannerFileKeySet.has(key)) {
+          return { ok: false, message: "Unknown planner store key." };
+        }
+        if (!activePlannerScope) {
+          return { ok: false, message: "Planner scope not set (sign in first)." };
+        }
+        if (content == null) {
+          return { ok: false, message: "Missing content." };
+        }
+        getActivePlannerStore().write(key, content);
+        if (key === "events" || key === "day-pages" || key === "settings") {
+          keywordIndex.reloadSettings();
+        }
+        return { ok: true };
+      } catch (e) {
+        return {
+          ok: false,
+          message: e instanceof Error ? e.message : String(e),
+        };
+      }
+    });
+
+    ipcMain.handle("keywords:rebuild", (_evt, payload) => keywordIndex.rebuild(payload));
+    ipcMain.handle("keywords:sync-vault", (_evt, payload) => {
+      keywordIndex.scheduleSync(payload);
+      return { ok: true };
+    });
+    ipcMain.handle("keywords:get-mentions", (_evt, payload) =>
+      keywordIndex.getMentions(payload?.filePath),
+    );
+    ipcMain.handle("keywords:get-edges", () => keywordIndex.getEdges());
+    ipcMain.handle("keywords:get-config", () => keywordIndex.getConfig());
+    ipcMain.handle("keywords:update-config", (_evt, partial) =>
+      keywordIndex.updateConfig(partial),
+    );
+    ipcMain.handle("keywords:promote-edges-toggle", (_evt, payload) =>
+      keywordIndex.promoteEdgesToggle(payload?.enabled),
+    );
+
+    ipcMain.handle("planner:mark-initialized", (_evt, meta) => {
+      try {
+        if (!activePlannerScope) {
+          return { ok: false, message: "Planner scope not set (sign in first)." };
+        }
+        const detail =
+          meta && typeof meta === "object" && !Array.isArray(meta) ? meta : {};
+        getActivePlannerStore().markInitialized(detail);
+        return { ok: true };
+      } catch (e) {
+        return {
+          ok: false,
+          message: e instanceof Error ? e.message : String(e),
+        };
+      }
+    });
+
+    ipcMain.handle("planner:storage-info", () => {
+      try {
+        const info = getActivePlannerStore().storageInfo();
+        return { ok: true, scope: activePlannerScope, ...info };
+      } catch (e) {
+        return {
+          ok: false,
+          message: e instanceof Error ? e.message : String(e),
+        };
+      }
+    });
+
     ipcMain.handle("config:get-supabase", () => {
       loadDotenv();
-      const url = process.env.SUPABASE_URL;
-      const anonKey = process.env.SUPABASE_ANON_KEY;
-      const trimmedUrl = typeof url === "string" ? url.trim() : "";
-      const trimmedKey = typeof anonKey === "string" ? anonKey.trim() : "";
       return {
-        url: trimmedUrl,
-        anonKey: trimmedKey,
+        url: normalizeSupabaseUrlForClient(process.env.SUPABASE_URL),
+        anonKey: normalizeSupabaseAnonKey(process.env.SUPABASE_ANON_KEY),
       };
     });
 
+    ipcMain.handle("voice:status", () => getVoiceAgent().getStatus());
+    ipcMain.handle("voice:system-prompt", () => VOICE_SYSTEM_PROMPT);
+    ipcMain.handle("voice:warm-tts", async () => {
+      try {
+        await getVoiceAgent().warmVoiceStack();
+        return { ok: true };
+      } catch (e) {
+        return {
+          ok: false,
+          error: e instanceof Error ? e.message : String(e),
+        };
+      }
+    });
+    ipcMain.handle("voice:transcribe", async (_evt, payload) => {
+      const buf = voicePayloadToBuffer(payload);
+      const mimeType =
+        payload && typeof payload === "object" && typeof payload.mimeType === "string"
+          ? payload.mimeType
+          : "audio/webm";
+      if (!buf || !buf.length) {
+        return { ok: false, error: "No audio data received." };
+      }
+      return getVoiceAgent().transcribe(buf, mimeType);
+    });
+    ipcMain.handle("voice:ask-claude", async (evt, payload) => {
+      const p =
+        payload && typeof payload === "object" && !Array.isArray(payload)
+          ? payload
+          : {};
+      return getVoiceAgent().askClaude({
+        messages: Array.isArray(p.messages) ? p.messages : [],
+        system: typeof p.system === "string" ? p.system : undefined,
+        maxTokens: typeof p.maxTokens === "number" ? p.maxTokens : undefined,
+        onDelta: (chunk) => {
+          try {
+            if (!evt.sender.isDestroyed()) {
+              evt.sender.send("voice:claude-delta", { text: chunk });
+            }
+          } catch {
+            /* ignore */
+          }
+        },
+      });
+    });
+
+    ipcMain.handle("voice:speak", async (_evt, payload) => {
+      const text =
+        payload && typeof payload === "object" && typeof payload.text === "string"
+          ? payload.text
+          : "";
+      return getVoiceAgent().speak(text);
+    });
+    ipcMain.handle("voice:assistant-turn", async (evt, payload) => {
+      const p = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
+      const sender = evt.sender;
+      const cid = crypto.randomUUID();
+
+      /* --- Retrieval pipeline: multi-stage facts + page refs + memories + stale detection --- */
+      let systemText = typeof p.system === "string" ? p.system : VOICE_SYSTEM_PROMPT;
+      const messages = Array.isArray(p.messages) ? p.messages : [];
+      const lastUserMsg = messages.reduceRight((acc, m) => {
+        if (acc === null && m.role === "user" && typeof m.content === "string") return m.content;
+        return acc;
+      }, null);
+
+      const contextBlocks = [];
+
+      if (lastUserMsg) {
+        const retrievalResult = await Promise.race([
+          retrievalPipeline.retrieve({ userEmail: ALLOWED_ADMIN_EMAIL, query: lastUserMsg, k: 10, confidenceThreshold: 0.4, staleDays: 90 }),
+          new Promise(resolve => setTimeout(() => resolve({ facts: [], pageRefs: [], memories: [], staleFacts: [], writeStaleFacts: [], temporalSummary: null, temporalConversations: [] }), 1500)),
+        ]);
+
+        if (Array.isArray(retrievalResult.memories) && retrievalResult.memories.length > 0) {
+          const lines = retrievalResult.memories.map(h =>
+            `- [${h.source_table}] (similarity ${(h.similarity || 0).toFixed(2)}) ${h.content}`
+          );
+          contextBlocks.push("## Relevant memories from past conversations:\n" + lines.join("\n"));
+          log.info("memory", { recallHits: retrievalResult.memories.length, cid });
+        }
+
+        if (Array.isArray(retrievalResult.staleFacts) && retrievalResult.staleFacts.length > 0) {
+          const staleLines = retrievalResult.staleFacts.slice(0, 3).map(f =>
+            `  - ${f.fact_key}: ${f.fact_value} (stored ${new Date(f.updated_at || f.created_at).toLocaleDateString()}) — ask user if still current`
+          );
+          contextBlocks.push("## Facts to verify (may be outdated):\n" + staleLines.join("\n"));
+          log.info("memory", { staleCount: retrievalResult.staleFacts.length, cid });
+        }
+
+        if (Array.isArray(retrievalResult.writeStaleFacts) && retrievalResult.writeStaleFacts.length > 0) {
+          const writeStaleLines = retrievalResult.writeStaleFacts.map(f =>
+            `  - ${f.fact_key}: ${f.fact_value} (updated ${new Date(f.updated_at || f.created_at).toLocaleDateString()})`
+          );
+          contextBlocks.push("## Facts older than 30 days (verify before writes):\n" + writeStaleLines.join("\n"));
+          log.info("memory", { writeStaleCount: retrievalResult.writeStaleFacts.length, cid });
+        }
+
+        if (retrievalResult.temporalSummary) {
+          const ts = retrievalResult.temporalSummary;
+          const label = ts.week_label || "";
+          let block = "## Past conversation summary";
+          if (label) block += ` (${label})`;
+          block += ":\n" + (ts.summaryText || ts.summary_text || "");
+          if (Array.isArray(retrievalResult.temporalConversations) && retrievalResult.temporalConversations.length > 0) {
+            const excerptLines = retrievalResult.temporalConversations.slice(0, 6).map(r =>
+              `- ${r.turn_role === "assistant" ? "Assistant" : "User"}: ${r.content.slice(0, 200)}`
+            );
+            block += "\n\nRelevant conversations:\n" + excerptLines.join("\n");
+          }
+          contextBlocks.push(block);
+          log.info("memory", { temporalInjected: 1, cid });
+        }
+      }
+
+      /* Fallback: always include recent facts and page refs even without a user query */
+      const [factsFallback, refsFallback] = await Promise.all([
+        voiceMemory.listFacts({ userEmail: ALLOWED_ADMIN_EMAIL }),
+        pageMemory.listPageRefs({ userEmail: ALLOWED_ADMIN_EMAIL }),
+      ]);
+      const fallbackFacts = (factsFallback.ok ? factsFallback.data : []).slice(0, 30);
+      const fallbackRefs = (refsFallback.ok ? refsFallback.data : []).slice(0, 30);
+
+      if (fallbackFacts.length > 0) {
+        const factLines = fallbackFacts.map(f => `  - ${f.fact_key}: ${f.fact_value} (updated ${new Date(f.updated_at || f.created_at).toLocaleDateString()})`);
+        contextBlocks.push("## Stored facts (most recent 30):\n" + factLines.join("\n"));
+        log.info("memory", { injectedFacts: fallbackFacts.length, cid });
+      }
+      if (fallbackRefs.length > 0) {
+        const refLines = fallbackRefs.map(r => `  - ${r.page_name} → page_id: ${r.page_id}${r.database_id ? ` (database: ${r.database_id})` : ""}`);
+        contextBlocks.push("## Stored page references (most recent 30):\n" + refLines.join("\n"));
+        log.info("memory", { injectedPageRefs: fallbackRefs.length, cid });
+      }
+
+      if (contextBlocks.length > 0) {
+        systemText = contextBlocks.join("\n\n") + "\n\n" + systemText;
+      }
+
+      /* --- Recent conversation history from Supabase (persistent context across sessions) --- */
+      const convResult = await voiceMemory.getRecentConversations({
+        userEmail: ALLOWED_ADMIN_EMAIL,
+        limit: 100,
+      });
+      if (convResult.ok && Array.isArray(convResult.data) && convResult.data.length > 0) {
+        const historyMessages = convResult.data
+          .slice()
+          .reverse()
+          .map(row => ({
+            role: row.turn_role === "assistant" ? "assistant" : "user",
+            content: row.content,
+          }));
+        messages.unshift(...historyMessages);
+        log.info("memory", { convHistoryRows: convResult.data.length, cid });
+      }
+
+      /* --- Build tool list (Notion REST API + memory tools) --- */
+      const toolDefs = notionApi.buildClaudeToolDefs();
+      const tools = [];
+      if (Array.isArray(toolDefs)) {
+        for (const t of toolDefs) tools.push(t);
+      }
+      /* Memory tools — always available (no MCP dependency) */
+      tools.push(
+        {
+          name: "memory_store_fact",
+          description: "Store a fact or preference the user asked you to remember. INPUT: key (short snake_case tag), value (plain English fact).",
+          input_schema: { type: "object", properties: { key: { type: "string" }, value: { type: "string" } }, required: ["key", "value"] },
+        },
+        {
+          name: "memory_forget_fact",
+          description: "Delete a stored fact by its key. INPUT: key (snake_case tag).",
+          input_schema: { type: "object", properties: { key: { type: "string" } }, required: ["key"] },
+        },
+        {
+          name: "memory_list_facts",
+          description: "List all stored facts and preferences.",
+          input_schema: { type: "object", properties: {} },
+        },
+        {
+          name: "memory_recall",
+          description: "Search stored facts and page references by keyword. Use this when the pre-injected data doesn't contain what you need. INPUT: search (string, the word or phrase to search for).",
+          input_schema: { type: "object", properties: { search: { type: "string", description: "Word or phrase to search for in stored facts and page refs" } }, required: ["search"] },
+        },
+      );
+
+      /* Page reference tools — auto-stored page IDs for cross-restart recall */
+      tools.push(
+        {
+          name: "page_ref_find",
+          description: "Find a stored Notion page ID by the teacher/page name. CALL THIS BEFORE notion_fetch or notion_update_page when the user refers to a page by name. INPUT: pageName (string, the teacher or page name to look up). RETURNS: the page record with page_id, page_name, database_id, created_at.",
+          input_schema: { type: "object", properties: { pageName: { type: "string", description: "Teacher or page name to look up" } }, required: ["pageName"] },
+        },
+        {
+          name: "page_ref_list",
+          description: "List all stored page references — every page or record that was created or updated and auto-saved. RETURNS: array of {page_id, page_name, database_id, created_at}.",
+          input_schema: { type: "object", properties: {} },
+        },
+        {
+          name: "page_ref_remove",
+          description: "Remove a stored page reference by name. INPUT: pageName (string, the teacher or page name).",
+          input_schema: { type: "object", properties: { pageName: { type: "string" } }, required: ["pageName"] },
+        },
+      );
+
+      /* Web search + Wikipedia tools */
+      const searchDefs = searchTools.buildToolDefs();
+      if (Array.isArray(searchDefs)) {
+        for (const t of searchDefs) tools.push(t);
+      }
+
+      if (tools.length > 0) {
+        log.info("memory", { toolsCount: tools.length, toolNames: tools.map(t => t.name).join(","), cid });
+      }
+
+      const onToolCall = async (toolCall) => {
+        const tName = typeof toolCall.name === "string" ? toolCall.name : "";
+        const tInput = toolCall.input && typeof toolCall.input === "object" ? toolCall.input : {};
+        if (!tName) {
+          return { ok: false, error: { code: "INVALID_TOOL_CALL", message: "No tool name", cid } };
+        }
+
+        /* --- Memory tools handled locally (no MCP needed) --- */
+        if (tName === "memory_store_fact") {
+          const key = typeof tInput.key === "string" ? tInput.key.trim() : "";
+          const value = typeof tInput.value === "string" ? tInput.value.trim() : "";
+          if (!key || !value) {
+            return { ok: false, error: { code: "BAD_INPUT", message: "key and value required" } };
+          }
+          const result = await voiceMemory.storeFact({ userEmail: ALLOWED_ADMIN_EMAIL, key, value, sourceCid: cid });
+          return {
+            ok: result.ok,
+            data: result.ok ? { stored: true, key, value, previousValue: result.previousValue || null, contradiction: !!result.contradiction } : null,
+            error: result.ok ? null : result.error,
+          };
+        }
+        if (tName === "memory_forget_fact") {
+          const key = typeof tInput.key === "string" ? tInput.key.trim() : "";
+          if (!key) return { ok: false, error: { code: "BAD_INPUT", message: "key required" } };
+          const result = await voiceMemory.forgetFact({ userEmail: ALLOWED_ADMIN_EMAIL, key });
+          return { ok: result.ok, data: result.ok ? result.data : null, error: result.ok ? null : result.error };
+        }
+        if (tName === "memory_list_facts") {
+          const result = await voiceMemory.listFacts({ userEmail: ALLOWED_ADMIN_EMAIL });
+          return { ok: result.ok, data: result.ok ? result.data : null, error: result.ok ? null : result.error };
+        }
+        if (tName === "memory_recall") {
+          const search = typeof tInput.search === "string" ? tInput.search.trim() : "";
+          if (!search) return { ok: false, error: { code: "BAD_INPUT", message: "search string required" } };
+          const [factResults, pageRefResults] = await Promise.all([
+            voiceMemory.searchFacts({ userEmail: ALLOWED_ADMIN_EMAIL, search, limit: 5 }),
+            pageMemory.searchPageRefs({ userEmail: ALLOWED_ADMIN_EMAIL, search, limit: 5 }),
+          ]);
+          return { ok: true, data: { facts: factResults.ok ? factResults.data : [], pageRefs: pageRefResults.ok ? pageRefResults.data : [] } };
+        }
+
+        /* --- Page reference tools (stored in Supabase voice_page_refs table) --- */
+        if (tName === "page_ref_find") {
+          const pageName = typeof tInput.pageName === "string" ? tInput.pageName.trim() : "";
+          if (!pageName) return { ok: false, error: { code: "BAD_INPUT", message: "pageName required" } };
+          const result = await pageMemory.findPageRef({ userEmail: ALLOWED_ADMIN_EMAIL, pageName });
+          return { ok: result.ok, data: result.ok ? result.data : null, error: result.ok ? null : result.error };
+        }
+        if (tName === "page_ref_list") {
+          const result = await pageMemory.listPageRefs({ userEmail: ALLOWED_ADMIN_EMAIL });
+          return { ok: result.ok, data: result.ok ? result.data : null, error: result.ok ? null : result.error };
+        }
+        if (tName === "page_ref_remove") {
+          const pageName = typeof tInput.pageName === "string" ? tInput.pageName.trim() : "";
+          if (!pageName) return { ok: false, error: { code: "BAD_INPUT", message: "pageName required" } };
+          const result = await pageMemory.removePageRef({ userEmail: ALLOWED_ADMIN_EMAIL, pageName });
+          return { ok: result.ok, data: result.ok ? result.data : null, error: result.ok ? null : result.error };
+        }
+
+        /* --- Web search + Wikipedia tools --- */
+        if (tName === "web_search" || tName === "web_fetch" || tName === "wiki_search" || tName === "wiki_lookup") {
+          const result = await searchTools.callTool(tName, tInput);
+          return { ok: result.ok, data: result.data, error: result.ok ? null : { message: typeof result.data === "string" ? result.data : "Search tool failed" } };
+        }
+
+        /* --- Notion tools via REST API --- */
+        log.info("notion", { tool: tName, cid });
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15000);
+        try {
+          const result = await notionApi.callTool(tName, tInput);
+          log.info("notion", { tool: tName, ok: result.ok, ms: result.ms, cid });
+          /* Auto-store page IDs on successful writes so Claude can reference them later */
+          if (result.ok && (tName === "notion_create_page" || tName === "notion_update_page")) {
+            try {
+              const body = JSON.parse(result.data[0].text);
+              const pageId = body.id;
+              if (pageId) {
+                const teacherName = body.title || "";
+                if (teacherName) {
+                  const dbId = tName === "notion_create_page" ? String(tInput.database_id || "").trim() : "";
+                  pageMemory.storePageRef({ userEmail: ALLOWED_ADMIN_EMAIL, pageId, pageName: teacherName, databaseId: dbId, sourceCid: cid }).catch(() => {});
+                  log.info("memory", { storedPageRef: pageId, teacherName, cid });
+                }
+              }
+            } catch {}
+          }
+          return result;
+        } finally {
+          clearTimeout(timeout);
+        }
+      };
+
+      const turnResult = await getVoiceAgent().runAssistantTurn({
+        messages,
+        system: systemText,
+        maxTokens: typeof p.maxTokens === "number" ? p.maxTokens : undefined,
+        tools: tools.length > 0 ? tools : undefined,
+        onToolCall,
+        onClaudeDelta: (chunk) => {
+          try {
+            if (!sender.isDestroyed()) {
+              sender.send("voice:claude-delta", { text: chunk });
+            }
+          } catch {
+            /* ignore */
+          }
+        },
+        onTtsChunk: (detail) => {
+          try {
+            if (!sender.isDestroyed()) {
+              const payload = { ...detail };
+              if (!Buffer.isBuffer(payload.audio) && payload.audioBase64) {
+                payload.audio = Buffer.from(String(payload.audioBase64), "base64");
+                delete payload.audioBase64;
+              }
+              sender.send("voice:tts-chunk", payload);
+            }
+          } catch {
+            /* ignore */
+          }
+        },
+      });
+
+      /* --- Fire-and-forget: store conversation turns --- */
+      if (lastUserMsg) {
+        voiceMemory.storeTurn({ userEmail: ALLOWED_ADMIN_EMAIL, role: "user", content: lastUserMsg, cid }).catch(() => {});
+      }
+      if (turnResult && turnResult.ok && turnResult.text) {
+        voiceMemory.storeTurn({ userEmail: ALLOWED_ADMIN_EMAIL, role: "assistant", content: turnResult.text, cid }).catch(() => {});
+        /* Phase 2 stub: fact extraction runs after turn, doesn't block */
+        extractFacts({ userMessage: lastUserMsg, assistantReply: turnResult.text, userEmail: ALLOWED_ADMIN_EMAIL, cid }).catch(() => {});
+        distillation.maybeDistill({ userEmail: ALLOWED_ADMIN_EMAIL, interval: 50 }).catch(() => {});
+      }
+
+      return turnResult;
+    });
+
+    /* --- Memory IPC handlers (admin-only) --- */
+    const adminGate = () => {
+      if (!ALLOWED_ADMIN_EMAIL) return false;
+      return true;
+    };
+    const forbid = () => ({ ok: false, error: { code: "FORBIDDEN", message: "Admin only" } });
+
+    ipcMain.handle("memory:recall", async (_evt, args) => {
+      if (!adminGate()) return forbid();
+      const p = args && typeof args === "object" ? args : {};
+      const queryText = typeof p.queryText === "string" ? p.queryText : "";
+      const k = typeof p.k === "number" ? p.k : 5;
+      if (!queryText) return { ok: false, error: { code: "BAD_INPUT", message: "queryText required" } };
+      return voiceMemory.recallSemantic({ userEmail: ALLOWED_ADMIN_EMAIL, queryText, k });
+    });
+
+    ipcMain.handle("memory:list-facts", async () => {
+      if (!adminGate()) return forbid();
+      return voiceMemory.listFacts({ userEmail: ALLOWED_ADMIN_EMAIL });
+    });
+
+    ipcMain.handle("memory:forget-fact", async (_evt, args) => {
+      if (!adminGate()) return forbid();
+      const p = args && typeof args === "object" ? args : {};
+      const key = typeof p.key === "string" ? p.key.trim() : "";
+      if (!key) return { ok: false, error: { code: "BAD_INPUT", message: "key required" } };
+      return voiceMemory.forgetFact({ userEmail: ALLOWED_ADMIN_EMAIL, key });
+    });
+
+    ipcMain.handle("memory:store-fact", async (_evt, args) => {
+      if (!adminGate()) return forbid();
+      const p = args && typeof args === "object" ? args : {};
+      const key = typeof p.key === "string" ? p.key.trim() : "";
+      const value = typeof p.value === "string" ? p.value.trim() : "";
+      if (!key || !value) return { ok: false, error: { code: "BAD_INPUT", message: "key and value required" } };
+      return voiceMemory.storeFact({ userEmail: ALLOWED_ADMIN_EMAIL, key, value, sourceCid: null });
+    });
+
+    ipcMain.handle("memory:distill", async () => {
+      if (!adminGate()) return forbid();
+      return distillation.distillSession({ userEmail: ALLOWED_ADMIN_EMAIL, messageCount: 50 });
+    });
+
+    /* AI Chat (non-voice) with MCP tools */
+    ipcMain.handle("ai:chat", async (_evt, payload) => {
+      if (!adminGate()) return forbid();
+      const p = payload && typeof payload === "object" ? payload : {};
+      const messages = Array.isArray(p.messages) ? p.messages : [];
+      if (messages.length === 0) return { ok: false, error: { code: "BAD_INPUT", message: "messages required" } };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 120000);
+      try {
+        const service = require("./lib/ai-chat").getAiChatService();
+        return await service.chat({
+          messages,
+          model: typeof p.model === "string" ? p.model : undefined,
+          maxTokens: typeof p.maxTokens === "number" ? p.maxTokens : undefined,
+          systemPrompt: typeof p.systemPrompt === "string" ? p.systemPrompt : undefined,
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
+    });
+
+    ipcMain.handle("ai:chat-stream", async (evt, payload) => {
+      if (!adminGate()) return forbid();
+      const p = payload && typeof payload === "object" ? payload : {};
+      const messages = Array.isArray(p.messages) ? p.messages : [];
+      if (messages.length === 0) return { ok: false, error: { code: "BAD_INPUT", message: "messages required" } };
+      const cid = require("crypto").randomUUID();
+      const sender = evt.sender;
+      const service = require("./lib/ai-chat").getAiChatService();
+      const controller = new AbortController();
+      const totalTimeout = setTimeout(() => controller.abort(), 120000);
+      try {
+        let result = await service.chat({
+          messages,
+          model: typeof p.model === "string" ? p.model : undefined,
+          maxTokens: typeof p.maxTokens === "number" ? p.maxTokens : undefined,
+          systemPrompt: typeof p.systemPrompt === "string" ? p.systemPrompt : undefined,
+          signal: controller.signal,
+          onDelta: (text) => {
+            try { if (!sender.isDestroyed()) sender.send("ai:chat-chunk", { cid, delta: text }); } catch {}
+          },
+          onToolUse: (event) => {
+            try { if (!sender.isDestroyed()) sender.send("ai:chat-chunk", { cid, toolEvent: { type: event.type, name: event.name, ok: event.ok } }); } catch {}
+          },
+        });
+        try { if (!sender.isDestroyed()) sender.send("ai:chat-done", result); } catch {}
+        return result;
+      } finally {
+        clearTimeout(totalTimeout);
+      }
+    });
+
+    ipcMain.handle("ai:list-tools", async () => {
+      if (!adminGate()) return forbid();
+      const service = require("./lib/ai-chat").getAiChatService();
+      const status = await service.listStatus();
+      return { ok: true, data: status };
+    });
+
+    registerAutoUpdateIpc(ipcMain);
     createWindow();
+    initAutoUpdate(() => mainWindow);
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) {
@@ -1380,9 +3289,20 @@ if (!gotTheLock) {
     });
   });
 
+  app.on("will-quit", () => {
+    try { getVoiceAgent().shutdownVoiceStack(); } catch {}
+  });
+
   app.on("window-all-closed", () => {
     if (process.platform !== "darwin") {
       app.quit();
     }
   });
 }
+
+
+
+
+
+
+

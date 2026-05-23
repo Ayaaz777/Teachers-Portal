@@ -1,7 +1,7 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("authApi", {
-  hasAdmin: () => ipcRenderer.invoke("auth:has-admin"),
+  hasAdmin: (email) => ipcRenderer.invoke("auth:has-admin", email),
   allowedAdminEmail: () =>
     ipcRenderer.invoke("auth:allowed-admin-email"),
 });
@@ -19,6 +19,8 @@ contextBridge.exposeInMainWorld("notionApi", {
     ipcRenderer.invoke("notion:update-page-date", payload ?? {}),
   updatePageNumber: (payload) =>
     ipcRenderer.invoke("notion:update-page-number", payload ?? {}),
+  updatePageProperty: (payload) =>
+    ipcRenderer.invoke("notion:update-page-property", payload ?? {}),
 });
 
 contextBridge.exposeInMainWorld("payslipApi", {
@@ -27,7 +29,255 @@ contextBridge.exposeInMainWorld("payslipApi", {
 
 contextBridge.exposeInMainWorld("shellApi", {
   openUserDataFolder: () => ipcRenderer.invoke("shell:open-user-data"),
+  openExternalUrl: (url) => ipcRenderer.invoke("shell:open-external-url", url),
   relaunchApp: () => ipcRenderer.invoke("app:relaunch"),
+  quitApp: () => ipcRenderer.invoke("app:quit"),
+});
+
+contextBridge.exposeInMainWorld("appUpdateApi", {
+  status: () => ipcRenderer.invoke("app-update:status"),
+  check: () => ipcRenderer.invoke("app-update:check"),
+  quitAndInstall: () => ipcRenderer.invoke("app-update:quit-and-install"),
+  onDownloaded: (handler) => {
+    if (typeof handler !== "function") {
+      return () => {};
+    }
+    const listener = (_evt, detail) => {
+      handler(detail);
+    };
+    ipcRenderer.on("app-update:downloaded", listener);
+    return () => ipcRenderer.removeListener("app-update:downloaded", listener);
+  },
+});
+
+
+
+contextBridge.exposeInMainWorld("calendarNotificationApi", {
+  isSupported: () => ipcRenderer.invoke("calendar:notification-supported"),
+  /** Fire-and-forget — Windows toast is shown in main without blocking the renderer. */
+  showReminder: (payload) => {
+    ipcRenderer.send("calendar:show-reminder", payload ?? {});
+  },
+  flashAttention: () => ipcRenderer.invoke("calendar:flash-attention"),
+  /**
+   * When the user taps a snooze action on a main-process reminder notification.
+   * @param {(detail: { tag: string; preset: string }) => void} handler
+   * @returns {() => void}
+   */
+  onSnoozeFromOs: (handler) => {
+    const channel = "calendar:snooze-from-os";
+    const listener = (_event, detail) => {
+      try {
+        if (typeof handler === "function") handler(detail);
+      } catch {
+        /* ignore */
+      }
+    };
+    ipcRenderer.on(channel, listener);
+    return () => {
+      ipcRenderer.removeListener(channel, listener);
+    };
+  },
+});
+
+contextBridge.exposeInMainWorld("calendarStorageApi", {
+  /**
+   * Bind planner/Obsidian storage to the signed-in teacher (auth user id + profile).
+   * @param {{ userId: string; email?: string; firstName?: string; lastName?: string }} payload
+   */
+  setScope: (payload) => ipcRenderer.invoke("planner:set-scope", payload ?? {}),
+  isInitialized: () => ipcRenderer.invoke("planner:is-initialized"),
+  read: (key) => ipcRenderer.invoke("planner:read", key),
+  write: (key, content) =>
+    ipcRenderer.invoke("planner:write", { key, content }),
+  markInitialized: (meta) => ipcRenderer.invoke("planner:mark-initialized", meta),
+  storageInfo: () => ipcRenderer.invoke("planner:storage-info"),
+});
+
+contextBridge.exposeInMainWorld("keywordsApi", {
+  rebuild: (payload) => ipcRenderer.invoke("keywords:rebuild", payload),
+  syncVault: (payload) => ipcRenderer.invoke("keywords:sync-vault", payload),
+  getMentions: (filePath) =>
+    ipcRenderer.invoke("keywords:get-mentions", { filePath }),
+  getEdges: () => ipcRenderer.invoke("keywords:get-edges"),
+  getConfig: () => ipcRenderer.invoke("keywords:get-config"),
+  updateConfig: (partial) => ipcRenderer.invoke("keywords:update-config", partial),
+  promoteEdgesToggle: (enabled) =>
+    ipcRenderer.invoke("keywords:promote-edges-toggle", { enabled }),
+});
+
+// Turn 39 — Bridge for admin file-backed credential auto-sign-in on restart.
+// Main process gates by ALLOWED_ADMIN_EMAIL so non-admin callers cannot persist creds.
+contextBridge.exposeInMainWorld("adminCredsApi", {
+  save: (payload) => ipcRenderer.invoke("admin-creds:save", payload),
+  load: () => ipcRenderer.invoke("admin-creds:load"),
+  clear: () => ipcRenderer.invoke("admin-creds:clear"),
+});
+
+contextBridge.exposeInMainWorld("voiceApi", {
+  getStatus: () => ipcRenderer.invoke("voice:status"),
+  getSystemPrompt: () => ipcRenderer.invoke("voice:system-prompt"),
+  /**
+   * @param {Blob} blob
+   * @returns {Promise<{ ok: boolean; text?: string; error?: string }>}
+   */
+  transcribe: async (blob) => {
+    const audio =
+      blob instanceof Blob ? await blob.arrayBuffer() : /** @type {ArrayBuffer} */ (blob);
+    const mimeType =
+      blob instanceof Blob && blob.type ? blob.type : "audio/webm";
+    return ipcRenderer.invoke("voice:transcribe", { audio, mimeType });
+  },
+  /**
+   * @param {{ messages: { role: string; content: string }[]; system?: string; maxTokens?: number }} payload
+   */
+  askClaude: (payload) => ipcRenderer.invoke("voice:ask-claude", payload ?? {}),
+  warmTts: () => ipcRenderer.invoke("voice:warm-tts"),
+  /**
+   * Claude + sentence-streaming Cartesia TTS in one turn (main synthesizes per sentence).
+   * @param {{ messages: { role: string; content: string }[]; system?: string; maxTokens?: number }} payload
+   */
+  assistantTurn: (payload) =>
+    ipcRenderer.invoke("voice:assistant-turn", payload ?? {}),
+  /** @param {string} text */
+  speak: async (text) => {
+    const result = await ipcRenderer.invoke("voice:speak", {
+      text: String(text ?? ""),
+    });
+    if (!result || typeof result !== "object") {
+      return result;
+    }
+    if (result.ok && result.data && typeof result.data === "object") {
+      const d = /** @type {{
+        audioBase64?: string;
+        mimeType?: string;
+        chunks?: number;
+        bytes?: number;
+        durationMs?: number;
+        overlapMs?: number;
+        trimmedMs?: number;
+        speechMs?: number;
+      }} */ (result.data);
+      return {
+        ok: true,
+        mimeType: d.mimeType || "audio/wav",
+        audioBase64: d.audioBase64,
+        chunks: d.chunks,
+        bytes: d.bytes,
+        durationMs: d.durationMs,
+        overlapMs: d.overlapMs,
+        trimmedMs: d.trimmedMs,
+        speechMs: d.speechMs,
+      };
+    }
+    return result;
+  },
+  /**
+   * Streamed Claude text deltas from main while askClaude runs.
+   * @param {(detail: { text?: string }) => void} handler
+   * @returns {() => void}
+   */
+  onClaudeDelta: (handler) => {
+    const channel = "voice:claude-delta";
+    const listener = (_evt, detail) => {
+      try {
+        if (typeof handler === "function") handler(detail);
+      } catch {
+        /* ignore */
+      }
+    };
+    ipcRenderer.on(channel, listener);
+    return () => ipcRenderer.removeListener(channel, listener);
+  },
+  /**
+   * Ordered sentence WAV chunks during voice:assistant-turn.
+   * @param {(detail: { index?: number; text?: string; audioBase64?: string; mimeType?: string; durationMs?: number }) => void} handler
+   * @returns {() => void}
+   */
+  onTtsChunk: (handler) => {
+    const channel = "voice:tts-chunk";
+    const listener = (_evt, detail) => {
+      try {
+        if (typeof handler === "function") handler(detail);
+      } catch {
+        /* ignore */
+      }
+    };
+    ipcRenderer.on(channel, listener);
+    return () => ipcRenderer.removeListener(channel, listener);
+  },
+});
+
+contextBridge.exposeInMainWorld("mcpApi", {
+  status: () => ipcRenderer.invoke("mcp:status"),
+  callTool: (name, args) => ipcRenderer.invoke("mcp:call-tool", { name, args }),
+  onStatusChange: (handler) => {
+    if (typeof handler !== "function") return () => {};
+    const channel = "mcp:status-change";
+    const listener = (_evt, detail) => { try { handler(detail); } catch { } };
+    ipcRenderer.on(channel, listener);
+    return () => ipcRenderer.removeListener(channel, listener);
+  },
+});
+
+
+contextBridge.exposeInMainWorld("memoryApi", {
+  recall: (queryText, k) => ipcRenderer.invoke("memory:recall", { queryText, k }),
+  listFacts: () => ipcRenderer.invoke("memory:list-facts"),
+  forgetFact: (key) => ipcRenderer.invoke("memory:forget-fact", { key }),
+  storeFact: (key, value) => ipcRenderer.invoke("memory:store-fact", { key, value }),
+});
+
+contextBridge.exposeInMainWorld("aiApi", {
+  chat: (args) => ipcRenderer.invoke("ai:chat", args),
+  chatStream: (args, onChunk, onDone, onError) => {
+    if (typeof onChunk !== "function" && typeof onDone !== "function") return () => {};
+    const channel = "ai:chat-chunk";
+    const doneChannel = "ai:chat-done";
+    const listener = (_evt, detail) => {
+      try { if (typeof onChunk === "function" && detail.cid) onChunk(detail); } catch {}
+    };
+    const doneListener = (_evt, result) => {
+      try {
+        ipcRenderer.removeListener(channel, listener);
+        ipcRenderer.removeListener(doneChannel, doneListener);
+        if (typeof onDone === "function") onDone(result);
+      } catch {}
+    };
+    ipcRenderer.on(channel, listener);
+    ipcRenderer.on(doneChannel, doneListener);
+    ipcRenderer.invoke("ai:chat-stream", args).catch((e) => {
+      ipcRenderer.removeListener(channel, listener);
+      ipcRenderer.removeListener(doneChannel, doneListener);
+      if (typeof onError === "function") onError(e);
+    });
+    return () => {
+      ipcRenderer.removeListener(channel, listener);
+      ipcRenderer.removeListener(doneChannel, doneListener);
+    };
+  },
+  listTools: () => ipcRenderer.invoke("ai:list-tools"),
+});
+
+contextBridge.exposeInMainWorld("windowApi", {
+  minimize: () => ipcRenderer.invoke("window:minimize"),
+});
+
+contextBridge.exposeInMainWorld("devlogApi", {
+  read: () => ipcRenderer.invoke("devlog:read"),
+  clear: () => ipcRenderer.invoke("devlog:clear"),
+  onNew: (handler) => {
+    const channel = "devlog:new";
+    const listener = (_evt, detail) => {
+      try {
+        if (typeof handler === "function") handler(detail);
+      } catch {
+        /* ignore */
+      }
+    };
+    ipcRenderer.on(channel, listener);
+    return () => ipcRenderer.removeListener(channel, listener);
+  },
 });
 
 /** @type {import("@supabase/supabase-js").SupabaseClient | null} */
@@ -57,6 +307,28 @@ function loadCreateClient() {
   }
 }
 
+/** Turn opaque fetch/CSP failures into something actionable in the sign-in UI. */
+function mapAuthNetworkError(message) {
+  const m = String(message || "").trim();
+  if (!m) return m;
+  if (m === "not_configured") return m;
+  const lower = m.toLowerCase();
+  if (
+    lower === "failed to fetch" ||
+    lower.includes("networkerror") ||
+    lower.includes("network request failed") ||
+    lower.includes("load failed") ||
+    lower.includes("fetch failed")
+  ) {
+    return (
+      "Could not reach Supabase (network). In .env set SUPABASE_URL to your HTTPS project URL " +
+      "(for example https://xxxx.supabase.co) or http://127.0.0.1:54321 for the Supabase CLI. " +
+      "Check SUPABASE_ANON_KEY, VPN/firewall, and try again."
+    );
+  }
+  return m;
+}
+
 /** `'1'` = keep session in localStorage; `'0'` = this browser session only (sessionStorage). */
 const REMEMBER_ME_PREF_KEY = "recruit-auth-remember-me";
 
@@ -69,17 +341,22 @@ function rememberMePrefersPersistentSession() {
 }
 
 function getAuthPersistenceStorage() {
-  return rememberMePrefersPersistentSession()
-    ? window.localStorage
-    : window.sessionStorage;
+  // Turn 40 — Always use localStorage so the Supabase session survives every restart path
+  // (in-app Restart App, npm start, PC reboot). Combined with autoRefreshToken:true this
+  // keeps the admin signed in indefinitely until they explicitly sign out. The "Remember me"
+  // checkbox is effectively cosmetic for this single-user admin desktop app.
+  try {
+    return window.localStorage;
+  } catch {
+    return window.sessionStorage;
+  }
 }
 
-function setStoredRememberPreference(remember) {
+function setStoredRememberPreference(_remember) {
+  // Turn 40 — Always pin remember-me to "1" so the Supabase session persists in localStorage
+  // and survives every restart path. The checkbox cannot demote storage to sessionStorage.
   try {
-    window.localStorage.setItem(
-      REMEMBER_ME_PREF_KEY,
-      Boolean(remember) ? "1" : "0",
-    );
+    window.localStorage.setItem(REMEMBER_ME_PREF_KEY, "1");
   } catch {
     /* ignore */
   }
@@ -124,7 +401,7 @@ async function getSessionUser() {
     }
     const { data, error } = await client.auth.getSession();
     if (error) {
-      return { user: null, error: error.message };
+      return { user: null, error: mapAuthNetworkError(error.message) };
     }
     const u = data?.session?.user;
     if (!u) {
@@ -145,7 +422,7 @@ async function getSessionUser() {
   } catch (e) {
     return {
       user: null,
-      error: e instanceof Error ? e.message : String(e),
+      error: mapAuthNetworkError(e instanceof Error ? e.message : String(e)),
     };
   }
 }
@@ -161,14 +438,30 @@ async function signInWithEmail(email, password) {
     if (!client) {
       return { error: "Supabase is not configured." };
     }
+    const cleanEmail = String(email || "").trim();
+    const cleanPassword = String(password || "");
     const { error } = await client.auth.signInWithPassword({
-      email: String(email || "").trim(),
-      password: String(password || ""),
+      email: cleanEmail,
+      password: cleanPassword,
     });
-    return { error: error ? error.message : null };
+    // Turn 40 — Save creds for cross-restart admin auto-sign-in at the bedrock layer
+    // (receives email+password directly — no dependency on DOM submit/click events).
+    // Main.js gates by ALLOWED_ADMIN_EMAIL and silently no-ops for non-admin callers,
+    // so it is safe to always try.
+    if (!error && cleanEmail && cleanPassword) {
+      try {
+        await ipcRenderer.invoke("admin-creds:save", {
+          email: cleanEmail,
+          password: cleanPassword,
+        });
+      } catch {
+        /* non-fatal; sign-in still succeeded */
+      }
+    }
+    return { error: error ? mapAuthNetworkError(error.message) : null };
   } catch (e) {
     return {
-      error: e instanceof Error ? e.message : String(e),
+      error: mapAuthNetworkError(e instanceof Error ? e.message : String(e)),
     };
   }
 }
@@ -192,7 +485,10 @@ async function signUpWithEmail(email, password) {
       password: String(password || ""),
     });
     if (error) {
-      return { error: error.message, needsEmailConfirmation: false };
+      return {
+        error: mapAuthNetworkError(error.message),
+        needsEmailConfirmation: false,
+      };
     }
     if (data?.session) {
       return { error: null, needsEmailConfirmation: false };
@@ -203,8 +499,205 @@ async function signUpWithEmail(email, password) {
     return { error: null, needsEmailConfirmation: true };
   } catch (e) {
     return {
-      error: e instanceof Error ? e.message : String(e),
+      error: mapAuthNetworkError(e instanceof Error ? e.message : String(e)),
       needsEmailConfirmation: false,
+    };
+  }
+}
+
+/**
+ * Send a password-reset email. Supabase will email a recovery link; the user follows it
+ * (in their browser) to set a new password on the hosted reset page.
+ * @param {string} email
+ * @returns {Promise<{ error: string | null }>}
+ */
+async function requestPasswordReset(email) {
+  try {
+    const client = await ensureClient();
+    if (!client) {
+      return { error: "Supabase is not configured." };
+    }
+    const addr = String(email || "").trim();
+    if (!addr) {
+      return { error: "Enter the email address on your account." };
+    }
+    const { error } = await client.auth.resetPasswordForEmail(addr);
+    return { error: error ? mapAuthNetworkError(error.message) : null };
+  } catch (e) {
+    return {
+      error: mapAuthNetworkError(e instanceof Error ? e.message : String(e)),
+    };
+  }
+}
+
+/**
+ * Update the signed-in user's password. Requires an active session.
+ * @param {string} newPassword
+ * @returns {Promise<{ error: string | null }>}
+ */
+async function updatePassword(newPassword) {
+  try {
+    const client = await ensureClient();
+    if (!client) {
+      return { error: "Supabase is not configured." };
+    }
+    const pw = String(newPassword || "");
+    if (pw.length < 8) {
+      return { error: "New password must be at least 8 characters." };
+    }
+    const { data: authData, error: authErr } = await client.auth.getSession();
+    if (authErr) {
+      return { error: authErr.message };
+    }
+    if (!authData?.session?.user) {
+      return { error: "You are not signed in." };
+    }
+    const { error } = await client.auth.updateUser({ password: pw });
+    return { error: error ? error.message : null };
+  } catch (e) {
+    return {
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
+/**
+ * Start a change-email flow. Supabase will send a confirmation link to the NEW address;
+ * the email change only takes effect after the user clicks that link.
+ * @param {string} newEmail
+ * @returns {Promise<{ error: string | null; needsConfirmation: boolean }>}
+ */
+async function updateEmail(newEmail) {
+  try {
+    const client = await ensureClient();
+    if (!client) {
+      return {
+        error: "Supabase is not configured.",
+        needsConfirmation: false,
+      };
+    }
+    const addr = String(newEmail || "").trim();
+    if (!addr || !addr.includes("@")) {
+      return {
+        error: "Enter a valid email address.",
+        needsConfirmation: false,
+      };
+    }
+    const { data: authData, error: authErr } = await client.auth.getSession();
+    if (authErr) {
+      return { error: authErr.message, needsConfirmation: false };
+    }
+    const sessionUser = authData?.session?.user;
+    if (!sessionUser) {
+      return { error: "You are not signed in.", needsConfirmation: false };
+    }
+    if (
+      typeof sessionUser.email === "string" &&
+      sessionUser.email.toLowerCase() === addr.toLowerCase()
+    ) {
+      return {
+        error: "That's already your current email address.",
+        needsConfirmation: false,
+      };
+    }
+    const { error } = await client.auth.updateUser({ email: addr });
+    if (error) {
+      return { error: error.message, needsConfirmation: false };
+    }
+    return { error: null, needsConfirmation: true };
+  } catch (e) {
+    return {
+      error: e instanceof Error ? e.message : String(e),
+      needsConfirmation: false,
+    };
+  }
+}
+
+/**
+ * Completes a password reset after the user copies the recovery link from their email.
+ * Supports Supabase links that contain either a PKCE `code`, hash tokens, or `token_hash`.
+ * @param {string} recoveryLink
+ * @param {string} newPassword
+ * @returns {Promise<{ error: string | null }>}
+ */
+async function completePasswordResetFromLink(recoveryLink, newPassword) {
+  try {
+    const client = await ensureClient();
+    if (!client) {
+      return { error: "Supabase is not configured." };
+    }
+    const link = String(recoveryLink || "").trim();
+    const pw = String(newPassword || "");
+    if (!link) {
+      return { error: "Paste the full password reset link from your email." };
+    }
+    if (pw.length < 8) {
+      return { error: "New password must be at least 8 characters." };
+    }
+
+    let parsed;
+    try {
+      parsed = new URL(link);
+    } catch {
+      return { error: "That does not look like a valid reset link." };
+    }
+
+    const search = parsed.searchParams;
+    const hash = new URLSearchParams(
+      parsed.hash ? parsed.hash.replace(/^#/, "") : "",
+    );
+    const linkError =
+      search.get("error_description") ||
+      hash.get("error_description") ||
+      search.get("error") ||
+      hash.get("error");
+    if (linkError) {
+      return { error: linkError.replace(/\+/g, " ") };
+    }
+
+    const accessToken = hash.get("access_token") || search.get("access_token");
+    const refreshToken =
+      hash.get("refresh_token") || search.get("refresh_token");
+    const code = search.get("code") || hash.get("code");
+    const tokenHash =
+      search.get("token_hash") ||
+      hash.get("token_hash") ||
+      search.get("token") ||
+      hash.get("token");
+
+    if (accessToken && refreshToken) {
+      const { error } = await client.auth.setSession({
+        access_token: accessToken,
+        refresh_token: refreshToken,
+      });
+      if (error) {
+        return { error: error.message };
+      }
+    } else if (code) {
+      const { error } = await client.auth.exchangeCodeForSession(code);
+      if (error) {
+        return { error: error.message };
+      }
+    } else if (tokenHash) {
+      const { error } = await client.auth.verifyOtp({
+        type: "recovery",
+        token_hash: tokenHash,
+      });
+      if (error) {
+        return { error: error.message };
+      }
+    } else {
+      return {
+        error:
+          "This reset link is missing the recovery token. Copy the full link from the email and try again.",
+      };
+    }
+
+    const { error } = await client.auth.updateUser({ password: pw });
+    return { error: error ? error.message : null };
+  } catch (e) {
+    return {
+      error: e instanceof Error ? e.message : String(e),
     };
   }
 }
@@ -214,6 +707,14 @@ async function signUpWithEmail(email, password) {
  */
 async function signOutSupabase() {
   try {
+    clearTeacherProfileStateCache();
+    // Turn 40 — Always clear saved admin creds on sign-out so a different user signing in
+    // afterwards does not auto-sign-in as the previous admin on the next restart.
+    try {
+      await ipcRenderer.invoke("admin-creds:clear");
+    } catch {
+      /* ignore */
+    }
     const client = await ensureClient();
     if (!client) {
       return { error: null };
@@ -227,15 +728,26 @@ async function signOutSupabase() {
   }
 }
 
+/** Session cache for teachers row + auth metadata (avoids Supabase reads on every nav). */
+const TEACHER_PROFILE_CACHE_TTL_MS = 5 * 60 * 1000;
+/** @type {{ userId: string; fetchedAt: number; state: Record<string, unknown> } | null} */
+let teacherProfileStateCache = null;
+
+function clearTeacherProfileStateCache() {
+  teacherProfileStateCache = null;
+}
+
 /**
+ * @param {{ force?: boolean }} [opts]
  * @returns {Promise<
  *   | { kind: "not_configured" }
  *   | { kind: "auth_error"; message: string }
  *   | { kind: "not_signed_in" }
- *   | { kind: "ok"; email: string; user_metadata: Record<string, unknown>; row: Record<string, unknown> | null; rowError: string | null }
+ *   | { kind: "ok"; email: string; user_metadata: Record<string, unknown>; row: Record<string, unknown> | null; rowError: string | null; fromCache?: boolean }
  * >}
  */
-async function getTeacherProfileState() {
+async function getTeacherProfileState(opts) {
+  const force = Boolean(opts?.force);
   const client = await ensureClient();
   if (!client) {
     return { kind: "not_configured" };
@@ -246,8 +758,23 @@ async function getTeacherProfileState() {
   }
   const sessionUser = data?.session?.user;
   if (!sessionUser) {
+    clearTeacherProfileStateCache();
     return { kind: "not_signed_in" };
   }
+  const userId = String(sessionUser.id || "").trim();
+  if (
+    !force &&
+    userId &&
+    teacherProfileStateCache &&
+    teacherProfileStateCache.userId === userId &&
+    Date.now() - teacherProfileStateCache.fetchedAt < TEACHER_PROFILE_CACHE_TTL_MS
+  ) {
+    return /** @type {ReturnType<typeof getTeacherProfileState> extends Promise<infer T> ? T : never} */ ({
+      ...teacherProfileStateCache.state,
+      fromCache: true,
+    });
+  }
+
   const meta =
     sessionUser.user_metadata &&
     typeof sessionUser.user_metadata === "object"
@@ -266,13 +793,53 @@ async function getTeacherProfileState() {
     ? JSON.parse(JSON.stringify(row))
     : null;
 
-  return {
+  /** @type {{ kind: "ok"; email: string; user_metadata: Record<string, unknown>; row: Record<string, unknown> | null; rowError: string | null }} */
+  const result = {
     kind: "ok",
     email,
     user_metadata: meta,
     row: safeRow,
     rowError: rowErr ? rowErr.message : null,
   };
+  if (userId) {
+    teacherProfileStateCache = {
+      userId,
+      fetchedAt: Date.now(),
+      state: result,
+    };
+  }
+  return result;
+}
+
+/**
+ * Resolves Notion person/page id from admin payslip_notion_person_links by matching
+ * teachers.first_name / last_name (via security definer RPC). Returns "" if none.
+ * @returns {Promise<{ ok: boolean; id: string; message?: string }>}
+ */
+async function fetchTeacherNotionPersonRecordId() {
+  try {
+    const client = await ensureClient();
+    if (!client) {
+      return { ok: false, id: "", message: "Supabase is not configured." };
+    }
+    const { data, error } = await client.rpc("get_my_notion_person_record_id");
+    if (error) {
+      return { ok: false, id: "", message: error.message };
+    }
+    const id =
+      typeof data === "string"
+        ? data.trim()
+        : data != null
+          ? String(data).trim()
+          : "";
+    return { ok: true, id };
+  } catch (e) {
+    return {
+      ok: false,
+      id: "",
+      message: e instanceof Error ? e.message : String(e),
+    };
+  }
 }
 
 /**
@@ -342,6 +909,9 @@ async function updateTeacherProfile(payload) {
       .from("teachers")
       .update(patch)
       .eq("id", u.id);
+    if (!error) {
+      clearTeacherProfileStateCache();
+    }
     return { error: error ? error.message : null };
   } catch (e) {
     return {
@@ -423,6 +993,9 @@ async function uploadTeacherAvatar(payload) {
       .from("teachers")
       .update({ avatar_url: publicUrl })
       .eq("id", u.id);
+    if (!dbErr) {
+      clearTeacherProfileStateCache();
+    }
     return { error: dbErr ? dbErr.message : null };
   } catch (e) {
     return {
@@ -873,6 +1446,45 @@ async function touchTeacherPresence() {
   }
 }
 
+/**
+ * Curated background images for the app chrome (`payslip_app_backgrounds`).
+ * @returns {Promise<
+ *   | { ok: true; rows: { id: string; label: string | null; sort_order: number; image_url: string }[]; error: null }
+ *   | { ok: false; rows: []; error: string }
+ * >}
+ */
+async function fetchPayslipAppBackgrounds() {
+  try {
+    const client = await ensureClient();
+    if (!client) {
+      return { ok: false, rows: [], error: "Supabase is not configured." };
+    }
+    const { data: authData, error: authErr } = await client.auth.getSession();
+    if (authErr) {
+      return { ok: false, rows: [], error: authErr.message };
+    }
+    if (!authData?.session?.user?.id) {
+      return { ok: false, rows: [], error: "You are not signed in." };
+    }
+    const { data, error } = await client
+      .from("payslip_app_backgrounds")
+      .select("id,label,sort_order,image_url")
+      .eq("is_active", true)
+      .order("sort_order", { ascending: true });
+    if (error) {
+      return { ok: false, rows: [], error: error.message };
+    }
+    const rows = Array.isArray(data) ? data : [];
+    return { ok: true, rows, error: null };
+  } catch (e) {
+    return {
+      ok: false,
+      rows: [],
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
 contextBridge.exposeInMainWorld("teacherAuth", {
   loadPublicConfig,
   resetSupabaseClient,
@@ -882,7 +1494,13 @@ contextBridge.exposeInMainWorld("teacherAuth", {
   signInWithEmail,
   signUpWithEmail,
   signOutSupabase,
+  requestPasswordReset,
+  completePasswordResetFromLink,
+  updatePassword,
+  updateEmail,
   getTeacherProfileState,
+  clearTeacherProfileStateCache,
+  fetchTeacherNotionPersonRecordId,
   updateTeacherProfile,
   uploadTeacherAvatar,
   listTeachersForAdmin,
@@ -891,6 +1509,8 @@ contextBridge.exposeInMainWorld("teacherAuth", {
   syncPayslipNotionPersonLinksForAdmin,
   fetchPayslipAppUserState,
   mergePayslipAppUserState,
+  fetchPayslipAppBackgrounds,
   fetchPayslipWorkspaceDatabases,
   upsertPayslipWorkspaceDatabase,
 });
+

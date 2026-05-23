@@ -3,6 +3,7 @@ const path = require("path");
 const Jimp = require("jimp");
 
 const src = path.join(__dirname, "..", "assets", "rme-logo.png");
+const dest = path.join(__dirname, "..", "assets", "rme-logo-transparent.png");
 
 (async () => {
   const img = await Jimp.read(src);
@@ -21,5 +22,5 @@ const src = path.join(__dirname, "..", "assets", "rme-logo.png");
       (max < 22 && chroma < 35);
     this.bitmap.data[idx + 3] = remove ? 0 : 255;
   });
-  await img.writeAsync(src);
+  await img.writeAsync(dest);
 })();

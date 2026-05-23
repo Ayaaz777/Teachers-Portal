@@ -1,24 +1,39 @@
 {
   "name": "recruit-my-english",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Recruit My English — simple desktop app",
   "main": "main.js",
   "scripts": {
+    "test": "vitest run",
+    "sync:app-backgrounds": "node scripts/sync-app-backgrounds-to-supabase.cjs",
+    "setup:voice": "powershell -ExecutionPolicy Bypass -File scripts/setup-voice-stack.ps1 -WriteEnv",
+    "setup:ffmpeg": "powershell -ExecutionPolicy Bypass -File scripts/setup-voice-stack.ps1 -FfmpegOnly -WriteEnv",
+    "setup:voice-env": "powershell -ExecutionPolicy Bypass -File scripts/patch-voice-env.ps1",
     "start": "electron .",
-    "dist": "electron-builder --win",
-    "dist:seq": "electron-builder --win nsis && electron-builder --win portable",
-    "dist:dir": "electron-builder --win --dir"
+    "dist": "node scripts/bake-supabase-public-env.cjs && electron-builder --win nsis --publish never",
+    "dist:portable": "node scripts/bake-supabase-public-env.cjs && electron-builder --win portable --publish never",
+    "dist:dir": "node scripts/bake-supabase-public-env.cjs && electron-builder --win --dir --publish never",
+    "release": "node scripts/bake-supabase-public-env.cjs && electron-builder --win nsis --publish always",
+    "release:win": "node scripts/bake-supabase-public-env.cjs && electron-builder --win nsis --publish always"
   },
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.98.0",
     "@supabase/supabase-js": "^2.105.1",
+    "@xenova/transformers": "^2.17.2",
     "dotenv": "^16.4.7",
-    "jspdf": "^2.5.2"
+    "electron-updater": "^6.8.3",
+    "ffmpeg-static": "^5.3.0",
+    "jspdf": "^4.2.1",
+    "koffi": "^2.16.2",
+    "number-to-words": "1.2.4",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
-    "electron": "^34.0.0",
-    "electron-builder": "^25.1.8"
+    "electron": "^42.1.0",
+    "electron-builder": "^26.8.1",
+    "vitest": "^3.2.4"
   },
   "build": {
     "appId": "com.recruitmyenglish.app",
@@ -29,6 +44,7 @@
     "files": [
       "package.json",
       "*.js",
+      "lib/**/*.js",
       "*.html",
       "assets/**/*",
       "node_modules/dotenv/**/*",
@@ -39,23 +55,57 @@
       "node_modules/fflate/**/*",
       "node_modules/@babel/runtime/**/*",
       "node_modules/atob/**/*",
-      "node_modules/btoa/**/*"
+      "node_modules/btoa/**/*",
+      "node_modules/koffi/**/*",
+      "node_modules/@xenova/**/*",
+      "node_modules/onnxruntime-node/**/*",
+      "node_modules/ffmpeg-static/**/*",
+      "lib/voice-agent.js",
+      "lib/voice-agent/**/*.js",
+      "lib/voice/**/*.js",
+      "lib/voice-env-resolve.js",
+      "lib/tts/cartesia.js",
+      "lib/tts/index.js",
+      "lib/tts/normalize.js",
+      "lib/tts/chunk.js",
+      "lib/log.js",
+      "node_modules/number-to-words/**/*",
+      "node_modules/electron-updater/**/*",
+      "node_modules/builder-util-runtime/**/*",
+      "node_modules/fs-extra/**/*",
+      "node_modules/js-yaml/**/*",
+      "node_modules/lazy-val/**/*",
+      "node_modules/lodash.escaperegexp/**/*",
+      "node_modules/lodash.isequal/**/*",
+      "node_modules/semver/**/*",
+      "node_modules/tiny-typed-emitter/**/*",
+      "auto-update.js",
+      "win-efficiency-mode.js"
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Ayaaz777",
+        "repo": "Teachers-Portal"
+      }
     ],
     "extraResources": [
       {
         "from": ".env.example",
         "to": ".env.example"
+      },
+      {
+        "from": "supabase.public.env",
+        "to": "supabase.public.env"
       }
     ],
     "win": {
-      "target": [
-        "nsis",
-        "portable"
-      ]
+      "target": "nsis"
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "differentialPackage": true
     }
   }
 }

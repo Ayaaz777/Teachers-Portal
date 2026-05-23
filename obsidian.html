@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en" class="theme-dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Planner Vault</title>
+    <link rel="stylesheet" href="obsidian.css" />
+  </head>
+  <body>
+    <div id="obsidianApp" class="obs-app">
+      <aside class="obs-ribbon" aria-label="Ribbon">
+        <button type="button" class="obs-ribbon-btn obs-ribbon-btn--on" data-view="files" title="Files">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
+        </button>
+        <button type="button" class="obs-ribbon-btn" data-view="search" title="Search">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4.3-4.3"/></svg>
+        </button>
+        <button type="button" class="obs-ribbon-btn" data-view="graph" title="Graph view">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="2.2"/><circle cx="18" cy="8" r="2.2"/><circle cx="10" cy="18" r="2.2"/><path d="M7.6 7.4 15.8 9M8.2 16.2 16 9.8"/></svg>
+        </button>
+        <div class="obs-ribbon-spacer"></div>
+        <button type="button" class="obs-ribbon-btn" id="obsRefreshBtn" title="Reload from planner">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+        </button>
+      </aside>
+
+      <aside class="obs-sidebar obs-sidebar--left" id="obsLeftSidebar">
+        <div class="obs-sidebar-head">
+          <span class="obs-sidebar-title" id="obsSidebarTitle">Files</span>
+        </div>
+        <div class="obs-sidebar-body" id="obsFileTree"></div>
+        <div class="obs-sidebar-body obs-sidebar-body--hidden" id="obsSearchPanel">
+          <input type="search" class="obs-search-input" id="obsSearchInput" placeholder="Search vault…" />
+          <div class="obs-search-results" id="obsSearchResults"></div>
+        </div>
+      </aside>
+
+      <main class="obs-workspace">
+        <header class="obs-tab-bar" id="obsTabBar">
+          <button type="button" class="obs-tab obs-tab--active" data-tab="editor">
+            <span id="obsActiveTabLabel">Welcome</span>
+          </button>
+        </header>
+        <div class="obs-main-stack">
+          <section class="obs-pane obs-pane--editor" id="obsEditorPane">
+            <div class="obs-editor-toolbar">
+              <button type="button" class="obs-chip obs-chip--on" data-mode="edit">Edit</button>
+              <button type="button" class="obs-chip" data-mode="preview">Preview</button>
+              <button type="button" class="obs-chip" data-mode="split">Split</button>
+            </div>
+            <div class="obs-editor-split" id="obsEditorSplit">
+              <textarea class="obs-source" id="obsSource" spellcheck="true" placeholder="Start writing…"></textarea>
+              <div class="obs-preview obs-preview--hidden" id="obsPreview"></div>
+            </div>
+          </section>
+          <section class="obs-pane obs-pane--graph obs-pane--hidden" id="obsGraphPane">
+            <canvas id="obsGraphCanvas" aria-label="Graph view"></canvas>
+            <div class="obs-graph-controls">
+              <button type="button" class="obs-graph-btn" id="obsGraphZoomIn" title="Zoom in">+</button>
+              <button type="button" class="obs-graph-btn" id="obsGraphZoomOut" title="Zoom out">−</button>
+              <button type="button" class="obs-graph-btn" id="obsGraphFit" title="Fit graph">Fit</button>
+            </div>
+            <div class="obs-graph-settings" id="obsGraphSettings">
+              <h3>Graph settings</h3>
+              <label class="obs-graph-row"><span>Center force</span><input type="range" id="obsForceCenter" min="0" max="1" step="0.05" value="0.35" /></label>
+              <label class="obs-graph-row"><span>Repel force</span><input type="range" id="obsForceRepel" min="0" max="800" step="20" value="320" /></label>
+              <label class="obs-graph-row"><span>Link force</span><input type="range" id="obsForceLink" min="0" max="1" step="0.05" value="0.55" /></label>
+              <label class="obs-graph-row"><span>Link distance</span><input type="range" id="obsForceDist" min="20" max="260" step="5" value="110" /></label>
+              <label class="obs-graph-row obs-graph-check"><input type="checkbox" id="obsShowTags" checked /> Tags</label>
+              <label class="obs-graph-row obs-graph-check"><input type="checkbox" id="obsShowOrphans" checked /> Orphans</label>
+            </div>
+            <p class="obs-graph-hint" id="obsGraphHint">Circles are notes · lines are links · size reflects connections</p>
+          </section>
+        </div>
+      </main>
+
+      <aside class="obs-sidebar obs-sidebar--right" id="obsRightSidebar">
+        <div class="obs-sidebar-head"><span class="obs-sidebar-title">Backlinks</span></div>
+        <div class="obs-sidebar-body" id="obsBacklinks"></div>
+        <div class="obs-sidebar-head obs-sidebar-head--sub"><span class="obs-sidebar-title">Outline</span></div>
+        <div class="obs-sidebar-body obs-outline" id="obsOutline"></div>
+      </aside>
+
+      <footer class="obs-statusbar">
+        <span id="obsStatusVault">Planner vault</span>
+        <span id="obsStatusNote"></span>
+        <span id="obsStatusLinks"></span>
+      </footer>
+    </div>
+    <script src="obsidian-renderer.js"></script>
+  </body>
+</html>

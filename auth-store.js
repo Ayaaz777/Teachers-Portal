@@ -7,11 +7,16 @@
 const ALLOWED_ADMIN_EMAIL = "inforecruitmyenglish@gmail.com";
 
 /**
- * @param {string} _userDataPath
+ * Returns true when the signed-in email matches ALLOWED_ADMIN_EMAIL (case-insensitive).
+ * The renderer passes the email from the live Supabase session — this module has no
+ * direct access to it. Real protection lives in Supabase RLS; this check only gates UI.
+ * @param {string} signedInEmail
  * @returns {boolean}
  */
-function hasAdmin(_userDataPath) {
-  return true;
+function hasAdmin(signedInEmail) {
+  const a = String(signedInEmail || "").trim().toLowerCase();
+  const b = String(ALLOWED_ADMIN_EMAIL || "").trim().toLowerCase();
+  return a !== "" && a === b;
 }
 
 module.exports = {

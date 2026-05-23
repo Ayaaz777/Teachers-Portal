@@ -1,3 +1,8109 @@
+// === RME Turn 63 — Hide bottom dashboard cards (broader selector + deepest match) ===
+// Turn 62 used a narrow candidate selector (button, [role='button'],
+// .notion-ws-subpage-link, article) which did not match the actual bottom
+// dashboard cards — they render as plain <div>s, so nothing got hidden. This
+// pass widens the candidate set to include <div> and <section>, but stays
+// safe by:
+//   1. Skipping any element that is, contains, or is inside a .rme-stat-card.
+//   2. Skipping any element that contains a top-row [data-card='...'] node.
+//   3. Excluding the top "Pay Slips on File" card by name fingerprint.
+//   4. Picking the deepest matching element so we never hide a parent grid
+//      that wraps both rows.
+(function rmeHideBottomDashboardCardsV4() {
+	return; // neutralized in Turn 64 — V4 skipped #rmeNavCardsGrid tiles because they reuse .rme-stat-card without [data-card]; replaced by rmeHideBottomDashboardCardsV5
+	const STYLE_ID = "rmeHideBottomDashboardCardsV4Styles";
+	const CLASS_NAME = "rme-hide-bottom-dashboard-card-v4";
+	const TICK_MS = 350;
+	const TOP_CARD_KEYS = ["totalTeachers", "payslipsThisMonth", "schools", "monthlyRevenue", "onlineNow", "newThisWeek", "active24h"];
+	let rootObserverAttached = false;
+
+	function ensureStyles() {
+		if (document.getElementById(STYLE_ID)) return;
+		const style = document.createElement("style");
+		style.id = STYLE_ID;
+		style.textContent =
+			"." + CLASS_NAME + " {" +
+			" display: none !important;" +
+			" visibility: hidden !important;" +
+			" height: 0 !important;" +
+			" min-height: 0 !important;" +
+			" max-height: 0 !important;" +
+			" width: 0 !important;" +
+			" margin: 0 !important;" +
+			" padding: 0 !important;" +
+			" border: 0 !important;" +
+			" overflow: hidden !important;" +
+			" pointer-events: none !important;" +
+			" }";
+		(document.head || document.documentElement).appendChild(style);
+	}
+
+	function norm(v) {
+		return String(v ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+	}
+
+	function authScreenIsActive() {
+		const authGate = document.getElementById("authGate");
+		if (!(authGate instanceof HTMLElement) || authGate.hidden) return false;
+		const s = window.getComputedStyle(authGate);
+		return s.display !== "none" && s.visibility !== "hidden";
+	}
+
+	function dashboardRoot() {
+		if (authScreenIsActive()) return null;
+		const homeContent = document.getElementById("homeContent");
+		if (homeContent instanceof HTMLElement && !homeContent.hidden) return homeContent;
+		const pageHome = document.getElementById("pageHome");
+		if (pageHome instanceof HTMLElement && !pageHome.hidden) return pageHome;
+		return null;
+	}
+
+	function overlapsTopRow(el) {
+		if (!(el instanceof HTMLElement)) return false;
+		if (el.classList.contains("rme-stat-card")) return true;
+		if (el.closest(".rme-stat-card")) return true;
+		if (el.querySelector && el.querySelector(".rme-stat-card")) return true;
+		const dataCard = el.getAttribute && el.getAttribute("data-card");
+		if (dataCard && TOP_CARD_KEYS.indexOf(dataCard) !== -1) return true;
+		for (const key of TOP_CARD_KEYS) {
+			if (el.querySelector && el.querySelector("[data-card='" + key + "']")) return true;
+		}
+		return false;
+	}
+
+	function matchesPaySlipsBottomCard(text) {
+		if (!text.includes("teacher pay slips")) return false;
+		// Exclude the top "PAY SLIPS ON FILE" card by its unique label.
+		if (text.includes("pay slips on file")) return false;
+		return (
+			text.includes("slips on file") ||
+			text.includes("tap to open") ||
+			text.includes("teacher pay slip pages")
+		);
+	}
+
+	function matchesRowIdsBottomCard(text) {
+		const hasLabel =
+			text.includes("names & notion row ids") ||
+			text.includes("names and notion row ids") ||
+			text.includes("notion row ids");
+		const hasFootnote =
+			text.includes("tap for ids") ||
+			text.includes("rows — tap") ||
+			text.includes("rows - tap") ||
+			/\b\d+\s+rows\b/.test(text);
+		return hasLabel && hasFootnote;
+	}
+
+	function findDeepestMatches(root, predicate) {
+		const out = [];
+		const all = root.querySelectorAll("div, section, article, button, [role='button']");
+		all.forEach((el) => {
+			if (!(el instanceof HTMLElement)) return;
+			if (overlapsTopRow(el)) return;
+			const text = norm(el.textContent);
+			if (!text || text.length > 400) return;
+			if (!predicate(text)) return;
+			// Deepest match: skip if a non-top-row descendant also matches.
+			let hasMatchingChild = false;
+			const kids = el.querySelectorAll("div, section, article, button, [role='button']");
+			for (const child of kids) {
+				if (!(child instanceof HTMLElement)) continue;
+				if (overlapsTopRow(child)) continue;
+				const childText = norm(child.textContent);
+				if (childText && childText.length < text.length && childText.length <= 400 && predicate(childText)) {
+					hasMatchingChild = true;
+					break;
+				}
+			}
+			if (!hasMatchingChild) out.push(el);
+		});
+		return out;
+	}
+
+	function hideBottomCards() {
+		try {
+			const root = dashboardRoot();
+			if (!(root instanceof HTMLElement)) return;
+			const pay = findDeepestMatches(root, matchesPaySlipsBottomCard);
+			const ids = findDeepestMatches(root, matchesRowIdsBottomCard);
+			const victims = pay.concat(ids);
+			victims.forEach((el) => {
+				if (!(el instanceof HTMLElement)) return;
+				if (el.classList.contains(CLASS_NAME)) return;
+				if (overlapsTopRow(el)) return;
+				el.classList.add(CLASS_NAME);
+				el.setAttribute("aria-hidden", "true");
+				el.setAttribute("tabindex", "-1");
+			});
+		} catch (e) {
+			// swallow — never break the dashboard
+		}
+	}
+
+	function attachRootObserver() {
+		if (rootObserverAttached) return;
+		const target = document.body;
+		if (!(target instanceof HTMLElement)) return;
+		const obs = new MutationObserver(() => hideBottomCards());
+		obs.observe(target, { childList: true, subtree: true });
+		rootObserverAttached = true;
+	}
+
+	function start() {
+		ensureStyles();
+		hideBottomCards();
+		window.setInterval(hideBottomCards, TICK_MS);
+		window.addEventListener("focus", hideBottomCards);
+		window.addEventListener("hashchange", hideBottomCards);
+		window.addEventListener("popstate", hideBottomCards);
+		attachRootObserver();
+	}
+
+	window.rmeHideBottomDashboardCardsV4 = hideBottomCards;
+
+	if (document.readyState === "loading") {
+		document.addEventListener("DOMContentLoaded", start, { once: true });
+	} else {
+		window.setTimeout(start, 0);
+	}
+})();
+// === RME Turn 62 — Completely hide the two bottom dashboard cards ===============
+// User decision: stop trying to fix the "6 vs 33" count race — just remove the
+// bottom "Teacher Pay Slips" and "Names & Notion Row IDs" cards from the
+// dashboard entirely. Approach:
+//   1. Inject a single CSS class (.rme-hide-bottom-dashboard-card-v3) that
+//      hard-hides any element it lands on.
+//   2. Find the two bottom cards by their unique text fingerprints, never
+//      arbitrary divs. Top stat row (.rme-stat-card) is explicitly skipped.
+//   3. Re-apply via MutationObserver on the dashboard subtree + fast interval
+//      backstop, so dashboard re-renders cannot bring the cards back.
+(function rmeHideBottomDashboardCardsV3() {
+	return; // neutralized in Turn 63 — selector was too narrow; replaced by rmeHideBottomDashboardCardsV4
+	const STYLE_ID = "rmeHideBottomDashboardCardsV3Styles";
+	const CLASS_NAME = "rme-hide-bottom-dashboard-card-v3";
+	const TICK_MS = 350;
+	let rootObserverAttached = false;
+
+	function ensureStyles() {
+		if (document.getElementById(STYLE_ID)) return;
+		const style = document.createElement("style");
+		style.id = STYLE_ID;
+		style.textContent =
+			"." + CLASS_NAME + " {" +
+			" display: none !important;" +
+			" visibility: hidden !important;" +
+			" height: 0 !important;" +
+			" min-height: 0 !important;" +
+			" max-height: 0 !important;" +
+			" width: 0 !important;" +
+			" margin: 0 !important;" +
+			" padding: 0 !important;" +
+			" border: 0 !important;" +
+			" overflow: hidden !important;" +
+			" pointer-events: none !important;" +
+			" }";
+		(document.head || document.documentElement).appendChild(style);
+	}
+
+	function norm(v) {
+		return String(v ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+	}
+
+	function authScreenIsActive() {
+		const authGate = document.getElementById("authGate");
+		if (!(authGate instanceof HTMLElement) || authGate.hidden) return false;
+		const s = window.getComputedStyle(authGate);
+		return s.display !== "none" && s.visibility !== "hidden";
+	}
+
+	function dashboardRoot() {
+		if (authScreenIsActive()) return null;
+		const homeContent = document.getElementById("homeContent");
+		if (homeContent instanceof HTMLElement && !homeContent.hidden) return homeContent;
+		const pageHome = document.getElementById("pageHome");
+		if (pageHome instanceof HTMLElement && !pageHome.hidden) return pageHome;
+		return null;
+	}
+
+	function isTopStatCard(el) {
+		if (!(el instanceof HTMLElement)) return false;
+		if (el.classList.contains("rme-stat-card")) return true;
+		if (el.closest(".rme-stat-card")) return true;
+		if (el.querySelector && el.querySelector(".rme-stat-card")) return true;
+		const dataCard = el.getAttribute && el.getAttribute("data-card");
+		if (dataCard && ["totalTeachers", "payslipsThisMonth", "schools", "monthlyRevenue", "onlineNow", "newThisWeek", "active24h"].indexOf(dataCard) !== -1) return true;
+		return false;
+	}
+
+	function matchesPaySlipsBottomCard(text) {
+		return text.includes("teacher pay slips") &&
+			(text.includes("slips on file") || text.includes("tap to open") || text.includes("teacher pay slip pages"));
+	}
+
+	function matchesRowIdsBottomCard(text) {
+		const hasLabel =
+			text.includes("names & notion row ids") ||
+			text.includes("names and notion row ids") ||
+			text.includes("notion row ids");
+		const hasFootnote = text.includes("tap for ids") || /\bteachers\b/.test(text);
+		return hasLabel && hasFootnote;
+	}
+
+	function isBottomCardElement(el) {
+		if (!(el instanceof HTMLElement)) return false;
+		if (isTopStatCard(el)) return false;
+		const text = norm(el.textContent);
+		if (!text || text.length > 400) return false;
+		return matchesPaySlipsBottomCard(text) || matchesRowIdsBottomCard(text);
+	}
+
+	function hideBottomCards() {
+		try {
+			const root = dashboardRoot();
+			if (!(root instanceof HTMLElement)) return;
+			// Narrow candidate set: only card-shaped clickable elements, never arbitrary divs.
+			const candidates = root.querySelectorAll(
+				"button, [role='button'], a.notion-ws-subpage-link, .notion-ws-subpage-link, article"
+			);
+			candidates.forEach((el) => {
+				if (!(el instanceof HTMLElement)) return;
+				if (el.classList.contains(CLASS_NAME)) return;
+				if (isBottomCardElement(el)) {
+					el.classList.add(CLASS_NAME);
+					el.setAttribute("aria-hidden", "true");
+					el.setAttribute("tabindex", "-1");
+				}
+			});
+		} catch (e) {
+			// swallow — don't break the dashboard if anything goes sideways
+		}
+	}
+
+	function attachRootObserver() {
+		if (rootObserverAttached) return;
+		const target = document.body;
+		if (!(target instanceof HTMLElement)) return;
+		const obs = new MutationObserver(() => hideBottomCards());
+		obs.observe(target, { childList: true, subtree: true });
+		rootObserverAttached = true;
+	}
+
+	function start() {
+		ensureStyles();
+		hideBottomCards();
+		window.setInterval(hideBottomCards, TICK_MS);
+		window.addEventListener("focus", hideBottomCards);
+		window.addEventListener("hashchange", hideBottomCards);
+		window.addEventListener("popstate", hideBottomCards);
+		attachRootObserver();
+	}
+
+	window.rmeHideBottomDashboardCardsV3 = hideBottomCards;
+
+	if (document.readyState === "loading") {
+		document.addEventListener("DOMContentLoaded", start, { once: true });
+	} else {
+		window.setTimeout(start, 0);
+	}
+})();
+// === RME Turn 61 — Sticky pay-slips card count survives dashboard re-renders ===
+// Turn 60 patched the card text correctly on boot, but the dashboard's own
+// render loop kept overwriting it back to "6" between ticks, so the user saw
+// the right number flash and then revert. This version:
+//   1. Caches the last known teacher total so a momentarily-empty registry
+//      cannot drop the card back to 6.
+//   2. Ticks fast (220ms) as a backstop.
+//   3. Attaches a MutationObserver directly to the card so any text
+//      overwrite re-patches synchronously, before the user can see "6".
+//   4. Re-finds and re-attaches when the dashboard swaps the card element.
+(function rmeDashboardTeacherPaySlipsCardCountSticky() {
+	return; // neutralized in Turn 62 — bottom cards are being hidden entirely instead
+	const TICK_MS = 220;
+	const state = {
+		lastKnownCount: null,
+		cardObserver: null,
+		observedCard: null,
+	};
+
+	function norm(v) {
+		return String(v ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+	}
+
+	function authScreenIsActive() {
+		const authGate = document.getElementById("authGate");
+		if (!(authGate instanceof HTMLElement) || authGate.hidden) {
+			return false;
+		}
+		const style = window.getComputedStyle(authGate);
+		return style.display !== "none" && style.visibility !== "hidden";
+	}
+
+	function dashboardRoot() {
+		if (authScreenIsActive()) {
+			return null;
+		}
+		const homeContent = document.getElementById("homeContent");
+		if (homeContent instanceof HTMLElement && !homeContent.hidden) {
+			return homeContent;
+		}
+		const pageHome = document.getElementById("pageHome");
+		if (pageHome instanceof HTMLElement && !pageHome.hidden) {
+			return pageHome;
+		}
+		return null;
+	}
+
+	function readRegistryCount() {
+		try {
+			if (typeof window.rmeAssignTeacherPaySlipPageIds === "function") {
+				window.rmeAssignTeacherPaySlipPageIds();
+			}
+		} catch (e) {
+			// ignore registry refresh errors
+		}
+		const reg = window.rmeTeacherPaySlipPageIdRegistry;
+		if (reg && Array.isArray(reg.ids)) {
+			const n = reg.ids.filter(Boolean).length;
+			if (n > 0) return n;
+		}
+		if (reg && typeof reg.count === "number" && reg.count > 0) {
+			return reg.count;
+		}
+		return null;
+	}
+
+	function teacherTotal() {
+		const fresh = readRegistryCount();
+		if (typeof fresh === "number" && fresh > 0) {
+			state.lastKnownCount = fresh;
+			return fresh;
+		}
+		// Fall back to the cached value so the card cannot snap back to 6
+		// during brief windows where the registry has not been populated yet.
+		return state.lastKnownCount;
+	}
+
+	function findCard(root) {
+		if (!(root instanceof HTMLElement)) {
+			return null;
+		}
+		const candidates = Array.from(
+			root.querySelectorAll("button, article, a, [role='button']"),
+		);
+		return (
+			candidates.find((el) => {
+				if (!(el instanceof HTMLElement)) return false;
+				if (el.closest(".rme-stat-card")) return false;
+				const text = norm(el.textContent);
+				if (!text || text.length > 320) return false;
+				return (
+					text.includes("teacher pay slips") &&
+					(text.includes("slips on file") || text.includes("tap to open"))
+				);
+			}) || null
+		);
+	}
+
+	function patchCardText(card, count) {
+		if (!(card instanceof HTMLElement)) return false;
+		if (typeof count !== "number" || count <= 0) return false;
+		const walker = document.createTreeWalker(card, NodeFilter.SHOW_TEXT, null);
+		const nodes = [];
+		let n;
+		while ((n = walker.nextNode())) {
+			nodes.push(n);
+		}
+		let changed = false;
+		for (const node of nodes) {
+			const raw = node.nodeValue;
+			if (!raw) continue;
+			const trimmed = raw.trim();
+			// 1) Bare number text node (the big "6" on the card).
+			if (/^\d+$/.test(trimmed) && trimmed !== String(count)) {
+				node.nodeValue = raw.replace(/\d+/, String(count));
+				changed = true;
+				continue;
+			}
+			// 2) "<n> slips on file ..." combined into a single text node.
+			if (/\d+\s+slips on file/i.test(raw)) {
+				const phrase =
+					count === 1
+						? "1 teacher pay slip page"
+						: count + " teacher pay slip pages";
+				node.nodeValue = raw.replace(/\d+\s+slips on file/i, phrase);
+				changed = true;
+				continue;
+			}
+			// 3) Already in our phrasing but with the wrong number.
+			if (/\d+\s+teacher pay slip pages?/i.test(raw) && !raw.includes(String(count))) {
+				const phrase =
+					count === 1
+						? "1 teacher pay slip page"
+						: count + " teacher pay slip pages";
+				node.nodeValue = raw.replace(/\d+\s+teacher pay slip pages?/i, phrase);
+				changed = true;
+				continue;
+			}
+			// 4) "slips on file" wording with the number in a sibling text node.
+			if (/\bslips on file\b/i.test(raw)) {
+				node.nodeValue = raw.replace(/\bslips on file\b/i, "teacher pay slip pages");
+				changed = true;
+			}
+		}
+		if (changed) {
+			card.dataset.rmeTpsCardTotalSource = "teacher-pay-slip-page-ids";
+		}
+		return changed;
+	}
+
+	function onCardMutated() {
+		const count = teacherTotal();
+		if (typeof count !== "number" || count <= 0) return;
+		const card = state.observedCard;
+		if (!(card instanceof HTMLElement) || !card.isConnected) return;
+		patchCardText(card, count);
+	}
+
+	function attachCardObserver(card) {
+		if (!(card instanceof HTMLElement)) return;
+		if (state.observedCard === card && state.cardObserver) return;
+		if (state.cardObserver) {
+			state.cardObserver.disconnect();
+			state.cardObserver = null;
+		}
+		state.observedCard = card;
+		const obs = new MutationObserver(onCardMutated);
+		obs.observe(card, {
+			childList: true,
+			subtree: true,
+			characterData: true,
+		});
+		state.cardObserver = obs;
+	}
+
+	function tick() {
+		const root = dashboardRoot();
+		if (!root) {
+			return;
+		}
+		const card = findCard(root);
+		if (!card) {
+			return;
+		}
+		if (state.observedCard && state.observedCard !== card) {
+			// Dashboard recreated the card element — rewire the observer.
+			if (state.cardObserver) {
+				state.cardObserver.disconnect();
+				state.cardObserver = null;
+			}
+			state.observedCard = null;
+		}
+		const count = teacherTotal();
+		if (typeof count === "number" && count > 0) {
+			patchCardText(card, count);
+		}
+		attachCardObserver(card);
+	}
+
+	window.rmeSyncDashboardTeacherPaySlipsCard = tick;
+
+	function start() {
+		tick();
+		window.setInterval(tick, TICK_MS);
+		window.addEventListener("focus", tick);
+		window.addEventListener("rme:teacher-pay-slip-page-ids", tick);
+		window.addEventListener("hashchange", tick);
+		window.addEventListener("popstate", tick);
+	}
+
+	if (document.readyState === "loading") {
+		document.addEventListener("DOMContentLoaded", start, { once: true });
+	} else {
+		window.setTimeout(start, 0);
+	}
+})();
+// === RME Turn 60 — Dashboard "Teacher Pay Slips" card uses grouped teacher total ===
+// The base dashboard renders the Teacher Pay Slips card with the count of the
+// six school-container child pages (6). The actual teacher total lives in the
+// Teacher Pay Slips page's grouped view (33 teacher pages). This IIFE patches
+// ONLY the visible text on that one card to match the grouped total. It does
+// not remove or rewrite the card, and it never touches the top stat row.
+(function rmeDashboardTeacherPaySlipsCardUseGroupedTotal() {
+  return; // neutralized in Turn 61 — replaced by rmeDashboardTeacherPaySlipsCardCountSticky
+  const REFRESH_MS = 900;
+
+  function norm(v) {
+    return String(v ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  function authScreenIsActive() {
+    const authGate = document.getElementById("authGate");
+    if (!(authGate instanceof HTMLElement) || authGate.hidden) {
+      return false;
+    }
+    const style = window.getComputedStyle(authGate);
+    return style.display !== "none" && style.visibility !== "hidden";
+  }
+
+  function dashboardRoot() {
+    if (authScreenIsActive()) {
+      return null;
+    }
+    const homeContent = document.getElementById("homeContent");
+    if (homeContent instanceof HTMLElement && !homeContent.hidden) {
+      return homeContent;
+    }
+    const pageHome = document.getElementById("pageHome");
+    if (pageHome instanceof HTMLElement && !pageHome.hidden) {
+      return pageHome;
+    }
+    return null;
+  }
+
+  function teacherTotal() {
+    try {
+      if (typeof window.rmeAssignTeacherPaySlipPageIds === "function") {
+        window.rmeAssignTeacherPaySlipPageIds();
+      }
+    } catch (e) {
+      // ignore
+    }
+    const reg = window.rmeTeacherPaySlipPageIdRegistry;
+    if (reg && Array.isArray(reg.ids) && reg.ids.length) {
+      return reg.ids.filter(Boolean).length;
+    }
+    if (reg && typeof reg.count === "number" && reg.count > 0) {
+      return reg.count;
+    }
+    return null;
+  }
+
+  function findTeacherPaySlipsCard(root) {
+    if (!(root instanceof HTMLElement)) {
+      return null;
+    }
+    const candidates = Array.from(root.querySelectorAll("button, article, a, [role='button']"));
+    return candidates.find((el) => {
+      if (!(el instanceof HTMLElement)) {
+        return false;
+      }
+      if (el.closest(".rme-stat-card")) {
+        return false;
+      }
+      const text = norm(el.textContent);
+      if (!text || text.length > 320) {
+        return false;
+      }
+      const isCard = text.includes("teacher pay slips") &&
+        (text.includes("slips on file") || text.includes("tap to open"));
+      return isCard;
+    }) || null;
+  }
+
+  function patchCardText(card, count) {
+    if (!(card instanceof HTMLElement) || typeof count !== "number" || count <= 0) {
+      return;
+    }
+    const key = "tps-grouped-total-" + count;
+    if (card.dataset.rmeTpsCardTotalKey === key && norm(card.textContent).includes(String(count))) {
+      return;
+    }
+
+    const walker = document.createTreeWalker(card, NodeFilter.SHOW_TEXT, null);
+    const nodes = [];
+    let n;
+    while ((n = walker.nextNode())) {
+      nodes.push(n);
+    }
+
+    let changedAny = false;
+    for (const node of nodes) {
+      const raw = node.nodeValue;
+      if (!raw) {
+        continue;
+      }
+      const trimmed = raw.trim();
+      // 1) Bare number text node (the big "6" on the card).
+      if (/^\d+$/.test(trimmed) && trimmed !== String(count)) {
+        node.nodeValue = raw.replace(/\d+/, String(count));
+        changedAny = true;
+        continue;
+      }
+      // 2) "<n> slips on file ..." combined into a single text node.
+      if (/\d+\s+slips on file/i.test(raw)) {
+        const phrase = count === 1 ? "1 teacher pay slip page" : count + " teacher pay slip pages";
+        node.nodeValue = raw.replace(/\d+\s+slips on file/i, phrase);
+        changedAny = true;
+        continue;
+      }
+      // 3) "slips on file" wording where the number lives in a sibling node.
+      if (/\bslips on file\b/i.test(raw)) {
+        node.nodeValue = raw.replace(/\bslips on file\b/i, "teacher pay slip pages");
+        changedAny = true;
+      }
+    }
+
+    if (changedAny) {
+      card.dataset.rmeTpsCardTotalKey = key;
+      card.dataset.rmeTpsCardTotalSource = "teacher-pay-slip-page-ids";
+    }
+  }
+
+  function tick() {
+    const count = teacherTotal();
+    if (typeof count !== "number" || count <= 0) {
+      return;
+    }
+    const root = dashboardRoot();
+    const card = findTeacherPaySlipsCard(root);
+    if (card) {
+      patchCardText(card, count);
+    }
+  }
+
+  window.rmeSyncDashboardTeacherPaySlipsCard = tick;
+
+  function start() {
+    tick();
+    window.setInterval(tick, REFRESH_MS);
+    window.addEventListener("focus", tick);
+    window.addEventListener("rme:teacher-pay-slip-page-ids", tick);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start, { once: true });
+  } else {
+    window.setTimeout(start, 0);
+  }
+})();
+// === RME Turn 59 — Hard-remove bottom dashboard cards =============================
+// Admin request: completely remove ONLY the two lower dashboard cards from Home:
+// - Teacher Pay Slips
+// - Names & Notion Row IDs
+// Leave the top stat row/cards untouched.
+(function rmeHardRemoveBottomDashboardCardsBoot() {
+  // Neutralized in Turn 60 — this hard-remove pass was also stripping the top
+  // stat row when its wrappers didn't carry the literal .rme-stat-card class,
+  // leaving the dashboard with only the "Dashboard" toggle and no cards.
+  // Returning early restores every dashboard card. Future bottom-card removal
+  // must target the actual subpage button class (.rme-tps-teacher-link or the
+  // dashboard subpage mount), not text-substring matching that collides with
+  // the top "Pay Slips on File" label.
+  return;
+  const TARGETS = [
+    {
+      key: "teacher-pay-slips",
+      matches(text) {
+        return (
+          text.includes("teacher pay slips") ||
+          text.includes("teach a pay slip") ||
+          text.includes("slips on file") ||
+          (text.includes("pay slip") && text.includes("tap to open"))
+        );
+      },
+    },
+    {
+      key: "notion-row-ids",
+      matches(text) {
+        return (
+          text.includes("names & notion row ids") ||
+          text.includes("names and notion row ids") ||
+          text.includes("names") && text.includes("notion") && text.includes("row") ||
+          text.includes("notion row id") ||
+          text.includes("tap for ids")
+        );
+      },
+    },
+  ];
+
+  function norm(value) {
+    return String(value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  function authScreenIsActive() {
+    const authGate = document.getElementById("authGate");
+    const appMain = document.getElementById("appMain");
+    const authVisible =
+      authGate instanceof HTMLElement &&
+      !authGate.hidden &&
+      window.getComputedStyle(authGate).display !== "none" &&
+      window.getComputedStyle(authGate).visibility !== "hidden";
+    const appHidden = appMain instanceof HTMLElement && appMain.hidden;
+    return authVisible || appHidden;
+  }
+
+  function dashboardRoot() {
+    if (authScreenIsActive()) {
+      return null;
+    }
+    const roots = [
+      document.getElementById("homeContent"),
+      document.getElementById("pageHome"),
+    ];
+    return roots.find((root) =>
+      root instanceof HTMLElement &&
+      !root.hidden &&
+      window.getComputedStyle(root).display !== "none"
+    ) || null;
+  }
+
+  function isTopStatCard(el) {
+    return Boolean(
+      el.closest(".rme-stat-card") ||
+      el.closest("[data-card='totalTeachers']") ||
+      el.closest("[data-card='payslipsThisMonth']") ||
+      el.closest("[data-card='schools']") ||
+      el.closest("[data-card='monthlyRevenue']")
+    );
+  }
+
+  function isUnsafeArea(el) {
+    return Boolean(
+      el.closest("#notionWorkspace") ||
+      el.closest("#notionEditorSidebar") ||
+      el.closest("#notionWorkspacePageList") ||
+      el.closest("#rmeOperationsInteractiveTables") ||
+      el.closest("#notionWsPaneRmeOperations") ||
+      el.closest("#authGate")
+    );
+  }
+
+  function cardCandidateFrom(el) {
+    if (!(el instanceof HTMLElement) || isTopStatCard(el) || isUnsafeArea(el)) {
+      return null;
+    }
+
+    const text = norm(el.textContent);
+    if (!text || text.length > 260) {
+      return null;
+    }
+
+    const matchedTargets = TARGETS.filter((target) => target.matches(text));
+    if (matchedTargets.length !== 1) {
+      return null;
+    }
+
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 120 || rect.height < 24 || rect.height > 220) {
+      return null;
+    }
+
+    // Pick the deepest matching card-like node, not the whole dashboard row/grid.
+    const matchingChild = Array.from(el.children).some((child) => {
+      if (!(child instanceof HTMLElement)) {
+        return false;
+      }
+      const childText = norm(child.textContent);
+      return childText && childText.length < text.length && matchedTargets[0].matches(childText);
+    });
+    if (matchingChild) {
+      return null;
+    }
+
+    return el;
+  }
+
+  function removeEmptyWrapper(el) {
+    const parent = el?.parentElement;
+    if (!(parent instanceof HTMLElement) || isUnsafeArea(parent) || parent.id === "homeContent" || parent.id === "pageHome") {
+      return;
+    }
+    window.setTimeout(() => {
+      if (!(parent instanceof HTMLElement) || !parent.isConnected) {
+        return;
+      }
+      const visibleChildren = Array.from(parent.children).filter((child) => {
+        if (!(child instanceof HTMLElement)) {
+          return false;
+        }
+        const style = window.getComputedStyle(child);
+        return style.display !== "none" && style.visibility !== "hidden" && norm(child.textContent);
+      });
+      if (visibleChildren.length === 0) {
+        parent.remove();
+      }
+    }, 0);
+  }
+
+  function removeBottomDashboardCards() {
+    const root = dashboardRoot();
+    if (!(root instanceof HTMLElement)) {
+      return;
+    }
+
+    const selector = [
+      "button",
+      "article",
+      "section",
+      "div",
+      "[role='button']",
+      "[class*='card']",
+      "[class*='Card']",
+      "[class*='metric']",
+      "[class*='Metric']",
+      ".dashboard-card",
+      ".home-card",
+      ".quick-card",
+      ".metric-card",
+      ".rme-dashboard-card",
+      ".rme-replacement-dashboard-card",
+      ".rme-two-card-source-owned",
+      ".rme-dashboard-source-firewall-card",
+      ".rme-dashboard-authoritative-card",
+      ".rme-dashboard-true-count-card",
+    ].join(",");
+
+    const cards = Array.from(root.querySelectorAll(selector))
+      .map(cardCandidateFrom)
+      .filter(Boolean);
+
+    for (const card of cards) {
+      removeEmptyWrapper(card);
+      card.remove();
+    }
+  }
+
+  function start() {
+    removeBottomDashboardCards();
+    window.setInterval(removeBottomDashboardCards, 250);
+    window.addEventListener("focus", removeBottomDashboardCards);
+
+    if (typeof MutationObserver === "function") {
+      const observer = new MutationObserver(() => {
+        window.requestAnimationFrame(removeBottomDashboardCards);
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    }
+  }
+
+  window.rmeHardRemoveBottomDashboardCards = removeBottomDashboardCards;
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start, { once: true });
+  } else {
+    window.setTimeout(start, 0);
+  }
+})();
+// === RME Turn 58 — Remove lower dashboard cards + Supabase teacher total ===========
+// Narrow dashboard-only cleanup requested by admin:
+// - Completely remove/hide ONLY the two lower dashboard cards:
+//   Teacher Pay Slips and Names & Notion Row IDs.
+// - Keep the Total Teachers stat synced from Supabase teacher accounts.
+// - Never rewrite dashboard containers and never touch auth, side panel, or panes.
+(function rmeRemoveLowerCardsAndSupabaseTeacherTotalBoot() {
+  // Neutralized in Turn 60 — was hiding dashboard cards via display:none and
+  // contributing to the blank-dashboard regression. Counts are recomputed by
+  // other IIFEs; this hider is no longer needed.
+  return;
+  const STYLE_ID = "rmeRemoveLowerCardsAndSupabaseTeacherTotalStyles";
+  const REFRESH_MS = 1200;
+  const state = {
+    totalTeachers: null,
+    fetchingTeachers: false,
+    lastTeacherFetchAt: 0,
+  };
+
+  function norm(v) {
+    return String(v ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  function authScreenIsActive() {
+    const authGate = document.getElementById("authGate");
+    const appMain = document.getElementById("appMain");
+    const authVisible =
+      authGate instanceof HTMLElement &&
+      !authGate.hidden &&
+      window.getComputedStyle(authGate).display !== "none" &&
+      window.getComputedStyle(authGate).visibility !== "hidden";
+    const appHidden = appMain instanceof HTMLElement && appMain.hidden;
+    return authVisible || appHidden;
+  }
+
+  function dashboardRoot() {
+    if (authScreenIsActive()) {
+      return null;
+    }
+    const homeContent = document.getElementById("homeContent");
+    if (homeContent instanceof HTMLElement && !homeContent.hidden) {
+      return homeContent;
+    }
+    const pageHome = document.getElementById("pageHome");
+    if (pageHome instanceof HTMLElement && !pageHome.hidden) {
+      return pageHome;
+    }
+    return null;
+  }
+
+  function injectStyles() {
+    if (document.getElementById(STYLE_ID)) {
+      return;
+    }
+    const style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = [
+      ".rme-remove-lower-dashboard-card {",
+      "  display: none !important;",
+      "}",
+    ].join("\n");
+    document.head.appendChild(style);
+  }
+
+  function activeTeacherRows(rows) {
+    const list = Array.isArray(rows) ? rows : [];
+    return list.filter((row) => {
+      if (!row || typeof row !== "object") {
+        return false;
+      }
+      if (row.disabled === true || row.archived === true || row.deleted === true) {
+        return false;
+      }
+      if (row.is_active === false || row.active === false) {
+        return false;
+      }
+      return true;
+    });
+  }
+
+  async function refreshSupabaseTeacherTotal() {
+    const now = Date.now();
+    if (state.fetchingTeachers || now - state.lastTeacherFetchAt < 2200) {
+      return;
+    }
+    state.fetchingTeachers = true;
+    state.lastTeacherFetchAt = now;
+    try {
+      const api = window.teacherAuth;
+      if (typeof api?.listTeachersForAdmin !== "function") {
+        return;
+      }
+      const res = await api.listTeachersForAdmin();
+      const rows =
+        Array.isArray(res?.teachers) ? res.teachers :
+        Array.isArray(res?.rows) ? res.rows :
+        Array.isArray(res?.data) ? res.data :
+        Array.isArray(res) ? res :
+        [];
+      state.totalTeachers = activeTeacherRows(rows).length;
+    } catch (e) {
+      console.warn("Total Teachers Supabase count:", e);
+    } finally {
+      state.fetchingTeachers = false;
+    }
+  }
+
+  function setTotalTeachersCard() {
+    if (typeof state.totalTeachers !== "number") {
+      return;
+    }
+    const card = document.querySelector(".rme-stat-card[data-card='totalTeachers']");
+    if (!(card instanceof HTMLElement)) {
+      return;
+    }
+    const value = card.querySelector(".rme-stat-value");
+    if (value instanceof HTMLElement) {
+      value.textContent = String(state.totalTeachers);
+      value.classList.remove("rme-stat-value--loading");
+    }
+    const meta = card.querySelector(".rme-stat-meta");
+    if (meta instanceof HTMLElement) {
+      meta.textContent = state.totalTeachers === 1
+        ? "1 Supabase teacher account"
+        : state.totalTeachers + " Supabase teacher accounts";
+    }
+  }
+
+  function isExactLowerCard(el) {
+    if (!(el instanceof HTMLElement)) {
+      return false;
+    }
+    if (
+      el.closest(".rme-stat-card") ||
+      el.closest("#notionWorkspace") ||
+      el.closest("#notionEditorSidebar") ||
+      el.closest("#notionWsPanes") ||
+      el.closest("#notionWorkspacePageList") ||
+      el.closest("#rmeOperationsInteractiveTables") ||
+      el.closest("#notionWsPaneRmeOperations")
+    ) {
+      return false;
+    }
+
+    const text = norm(el.textContent);
+    if (!text || text.length > 240) {
+      return false;
+    }
+
+    const hasPay =
+      text.includes("teacher pay slips") ||
+      text.includes("teach a pay slip") ||
+      text.includes("slips on file") ||
+      (text.includes("pay slip") && text.includes("tap to open"));
+    const hasIds =
+      (text.includes("names") && (text.includes("notion") || text.includes("notions")) && text.includes("row")) ||
+      text.includes("notion row id") ||
+      text.includes("tap for ids");
+
+    // Never hide a row/container that contains both cards.
+    if ((hasPay && hasIds) || (!hasPay && !hasIds)) {
+      return false;
+    }
+
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 150 || rect.height < 35 || rect.height > 190) {
+      return false;
+    }
+
+    const root = dashboardRoot();
+    if (root instanceof HTMLElement) {
+      const rootRect = root.getBoundingClientRect();
+      const rootArea = Math.max(rootRect.width * rootRect.height, 1);
+      const cardArea = Math.max(rect.width * rect.height, 1);
+      if (cardArea > rootArea * 0.28) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  function removeLowerCards() {
+    const root = dashboardRoot();
+    if (!(root instanceof HTMLElement)) {
+      return;
+    }
+    const candidates = Array.from(root.querySelectorAll("button, article, [role='button'], .dashboard-card, .home-card, .quick-card, .metric-card, .rme-dashboard-card"));
+    for (const el of candidates) {
+      if (!(el instanceof HTMLElement) || !isExactLowerCard(el)) {
+        continue;
+      }
+      el.classList.add("rme-remove-lower-dashboard-card");
+      el.setAttribute("aria-hidden", "true");
+      el.dataset.rmeRemovedLowerDashboardCard = "true";
+    }
+  }
+
+  function tick() {
+    if (authScreenIsActive()) {
+      return;
+    }
+    injectStyles();
+    removeLowerCards();
+    setTotalTeachersCard();
+    void refreshSupabaseTeacherTotal().then(setTotalTeachersCard);
+  }
+
+  window.rmeRemoveLowerCardsAndSyncTeacherTotal = tick;
+
+  function start() {
+    tick();
+    window.setInterval(tick, REFRESH_MS);
+    window.addEventListener("focus", tick);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start, { once: true });
+  } else {
+    window.setTimeout(start, 0);
+  }
+})();
+// Replaces the two unstable built-in lower dashboard cards with two independent
+// cards. This block never rewrites dashboard containers and never watches the
+// whole document. It only creates/updates its own mount and hides the old two
+// small cards when it can identify them safely.
+(function rmeReplacementDashboardCardsBoot() {
+  // Disabled immediately: even replacement-card mounting can interfere with the
+  // dashboard after sign-in in this app. Keep the dashboard visible/clickable.
+  // Do not run post-render dashboard card replacement from here.
+  return;
+  const MOUNT_ID = "rmeReplacementDashboardCards";
+  const STYLE_ID = "rmeReplacementDashboardCardsStyles";
+  const REFRESH_MS = 700;
+  const state = {
+    rowIdRows: null,
+    rowFetchBusy: false,
+    lastRowFetchAt: 0,
+  };
+
+  function norm(v) {
+    return String(v ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  function esc(v) {
+    return String(v ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function authScreenIsActive() {
+    const authGate = document.getElementById("authGate");
+    const appMain = document.getElementById("appMain");
+    const authVisible =
+      authGate instanceof HTMLElement &&
+      !authGate.hidden &&
+      window.getComputedStyle(authGate).display !== "none" &&
+      window.getComputedStyle(authGate).visibility !== "hidden";
+    const appHidden = appMain instanceof HTMLElement && appMain.hidden;
+    return authVisible || appHidden;
+  }
+
+  function dashboardRoot() {
+    if (authScreenIsActive()) {
+      return null;
+    }
+    const homeContent = document.getElementById("homeContent");
+    if (homeContent instanceof HTMLElement && !homeContent.hidden) {
+      return homeContent;
+    }
+    const pageHome = document.getElementById("pageHome");
+    if (pageHome instanceof HTMLElement && !pageHome.hidden) {
+      return pageHome;
+    }
+    return null;
+  }
+
+  function pagesState() {
+    try {
+      return Array.isArray(notionWorkspacePagesState) ? notionWorkspacePagesState : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function isSchoolContainer(titleRaw) {
+    const title = norm(titleRaw);
+    return /^(talking global|magic english|speak english|nice ?kid|nicekid|sky ?line|skyline)(\s+\d+|\s+sa|\s+america|\s+europe|\s+3\.5)?$/.test(title);
+  }
+
+  function isRowIdsTitle(titleRaw) {
+    const title = norm(titleRaw);
+    return title.includes("names") && (title.includes("notion") || title.includes("notions")) && title.includes("row");
+  }
+
+  function findTeacherPaySlipsPage() {
+    return pagesState().find((page) => {
+      const title = norm(page?.title);
+      return page && page.kind !== "trash" && (title === "teacher pay slips" || title.includes("teacher pay slips"));
+    }) || null;
+  }
+
+  function findNamesRowIdsPage() {
+    return pagesState().find((page) => page && page.kind !== "trash" && isRowIdsTitle(page.title)) ||
+      pagesState().find((page) => page && page.id === "__vaultNotionLinks") ||
+      null;
+  }
+
+  function countTeacherPaySlipPages() {
+    try {
+      if (typeof window.rmeAssignWorkspacePageIds === "function") {
+        window.rmeAssignWorkspacePageIds();
+      }
+      if (typeof window.rmeAssignTeacherPaySlipPageIds === "function") {
+        window.rmeAssignTeacherPaySlipPageIds();
+      }
+    } catch (e) {
+      console.warn("replacement cards assign page IDs:", e);
+    }
+
+    const registryIds = new Set(
+      Array.isArray(window.rmeTeacherPaySlipPageIdRegistry?.ids)
+        ? window.rmeTeacherPaySlipPageIdRegistry.ids.filter(Boolean).map(String)
+        : [],
+    );
+    if (registryIds.size) {
+      return registryIds.size;
+    }
+
+    const marked = pagesState().filter((page) =>
+      page &&
+      page.kind !== "trash" &&
+      (
+        page.rmeTeacherPaySlipCountable === true ||
+        page.rmeTeacherPaySlipPageId ||
+        page.teacherPaySlipPageId ||
+        page.tpsPageId
+      )
+    );
+    if (marked.length) {
+      return new Set(marked.map((page) => String(page.rmeTeacherPaySlipPageId || page.teacherPaySlipPageId || page.tpsPageId || page.id))).size;
+    }
+
+    const root = findTeacherPaySlipsPage();
+    if (!root?.id) {
+      return null;
+    }
+
+    const byParent = new Map();
+    for (const page of pagesState()) {
+      if (!page || page.kind === "trash") {
+        continue;
+      }
+      const parentId = String(page.parentId ?? "");
+      if (!parentId) {
+        continue;
+      }
+      if (!byParent.has(parentId)) {
+        byParent.set(parentId, []);
+      }
+      byParent.get(parentId).push(page);
+    }
+
+    const rootId = String(root.id);
+    const queue = [...(byParent.get(rootId) || [])];
+    const seen = new Set([rootId]);
+    const descendants = [];
+
+    while (queue.length) {
+      const page = queue.shift();
+      const id = String(page?.id ?? "");
+      if (!id || seen.has(id) || page.kind === "trash") {
+        continue;
+      }
+      seen.add(id);
+      const title = norm(page.title);
+      if (!title || title === "teacher pay slips" || isRowIdsTitle(title)) {
+        continue;
+      }
+      descendants.push(page);
+      queue.push(...(byParent.get(id) || []));
+    }
+
+    const teacherLeaves = descendants.filter((page) => {
+      const id = String(page.id ?? "");
+      const title = norm(page.title);
+      if (!title || isSchoolContainer(title) || isRowIdsTitle(title)) {
+        return false;
+      }
+      const children = (byParent.get(id) || []).filter((child) =>
+        child && child.kind !== "trash" && norm(child.title) && !isRowIdsTitle(child.title)
+      );
+      return children.length === 0;
+    });
+
+    return teacherLeaves.length || null;
+  }
+
+  async function refreshRowIdRows() {
+    const now = Date.now();
+    if (state.rowFetchBusy || now - state.lastRowFetchAt < 1400) {
+      return;
+    }
+    state.rowFetchBusy = true;
+    state.lastRowFetchAt = now;
+    try {
+      const api = window.teacherAuth;
+      if (typeof api?.fetchPayslipNotionPersonLinksForAdmin === "function") {
+        const res = await api.fetchPayslipNotionPersonLinksForAdmin();
+        if (Array.isArray(res?.rows)) {
+          state.rowIdRows = res.rows.length;
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn("replacement cards row-ID source:", e);
+    } finally {
+      state.rowFetchBusy = false;
+    }
+  }
+
+  function injectStyles() {
+    if (document.getElementById(STYLE_ID)) {
+      return;
+    }
+    const style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = [
+      ".rme-replacement-dashboard-cards {",
+      "  display: grid;",
+      "  grid-template-columns: repeat(2, minmax(0, 1fr));",
+      "  row-gap: 0.88rem;",
+      "  column-gap: clamp(1.25rem, 4vw, 2.5rem);",
+      "  margin: 1.6rem 0 1rem;",
+      "  width: 100%;",
+      "}",
+      ".rme-replacement-dashboard-card {",
+      "  appearance: none;",
+      "  display: grid;",
+      "  grid-template-columns: auto minmax(0, 1fr) auto;",
+      "  align-items: stretch;",
+      "  gap: 0.75rem;",
+      "  min-height: 5.1rem;",
+      "  width: 100%;",
+      "  padding: 0.9rem 0.95rem;",
+      "  border: 1px solid var(--border-subtle);",
+      "  border-radius: 16px;",
+      "  background: color-mix(in srgb, var(--surface) 94%, var(--bg));",
+      "  color: var(--text);",
+      "  text-align: left;",
+      "  cursor: pointer;",
+      "  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.045);",
+      "}",
+      ".rme-replacement-dashboard-card:hover {",
+      "  transform: translateY(-1px);",
+      "  border-color: color-mix(in srgb, var(--pill-dot, #3b82f6) 34%, var(--border-subtle));",
+      "}",
+      ".rme-replacement-dashboard-card__icon {",
+      "  width: 2rem;",
+      "  height: 2rem;",
+      "  display: inline-flex;",
+      "  align-items: center;",
+      "  justify-content: center;",
+      "  border-radius: 10px;",
+      "  background: color-mix(in srgb, var(--pill-dot, #3b82f6) 18%, transparent);",
+      "}",
+      ".rme-replacement-dashboard-card__body {",
+      "  min-width: 0;",
+      "  min-height: 4.6rem;",
+      "  display: flex;",
+      "  flex-direction: column;",
+      "}",
+      ".rme-replacement-dashboard-card__label {",
+      "  margin: 0 0 0.14rem;",
+      "  color: var(--th-label);",
+      "  font-size: 0.62rem;",
+      "  font-weight: 850;",
+      "  letter-spacing: 0.075em;",
+      "  text-transform: uppercase;",
+      "}",
+      ".rme-replacement-dashboard-card__number {",
+      "  margin: 0;",
+      "  color: var(--text);",
+      "  font-size: clamp(2.75rem, 5.6vw, 4rem);",
+      "  font-weight: 930;",
+      "  line-height: 0.9;",
+      "  letter-spacing: -0.065em;",
+      "  font-variant-numeric: tabular-nums;",
+      "}",
+      ".rme-replacement-dashboard-card__meta {",
+      "  margin: auto 0 0;",
+      "  color: var(--text-muted);",
+      "  font-size: 0.58rem;",
+      "  line-height: 1.18;",
+      "  opacity: 0.84;",
+      "  white-space: nowrap;",
+      "  overflow: hidden;",
+      "  text-overflow: ellipsis;",
+      "}",
+      ".rme-replacement-dashboard-card__arrow {",
+      "  align-self: center;",
+      "  color: var(--pill-text);",
+      "  font-size: 1rem;",
+      "  font-weight: 900;",
+      "}",
+      ".rme-old-dashboard-card-hidden {",
+      "  display: none !important;",
+      "}",
+      "@media (max-width: 760px) {",
+      "  .rme-replacement-dashboard-cards { grid-template-columns: 1fr; }",
+      "}",
+    ].join("\n");
+    document.head.appendChild(style);
+  }
+
+  function cardHtml(kind, icon, label, value, meta) {
+    return (
+      "<button type=\"button\" class=\"rme-replacement-dashboard-card\" data-rme-replacement-card=\"" + esc(kind) + "\">" +
+        "<span class=\"rme-replacement-dashboard-card__icon\" aria-hidden=\"true\">" + esc(icon) + "</span>" +
+        "<span class=\"rme-replacement-dashboard-card__body\">" +
+          "<span class=\"rme-replacement-dashboard-card__label\">" + esc(label) + "</span>" +
+          "<span class=\"rme-replacement-dashboard-card__number\">" + esc(value) + "</span>" +
+          "<span class=\"rme-replacement-dashboard-card__meta\">" + esc(meta) + "</span>" +
+        "</span>" +
+        "<span class=\"rme-replacement-dashboard-card__arrow\" aria-hidden=\"true\">›</span>" +
+      "</button>"
+    );
+  }
+
+  function ensureMount() {
+    const root = dashboardRoot();
+    if (!root) {
+      return null;
+    }
+    let mount = document.getElementById(MOUNT_ID);
+    if (!(mount instanceof HTMLElement)) {
+      mount = document.createElement("section");
+      mount.id = MOUNT_ID;
+      mount.className = "rme-replacement-dashboard-cards";
+      mount.setAttribute("aria-label", "Replacement dashboard cards");
+
+      const oldCardsRow = findOldCards().sort(sortVisual)[0];
+      if (oldCardsRow?.parentElement instanceof HTMLElement) {
+        oldCardsRow.parentElement.insertBefore(mount, oldCardsRow);
+      } else {
+        const firstGoodChild = Array.from(root.children).find((child) =>
+          child instanceof HTMLElement && child.id !== MOUNT_ID
+        );
+        if (firstGoodChild) {
+          root.insertBefore(mount, firstGoodChild);
+        } else {
+          root.appendChild(mount);
+        }
+      }
+    }
+    return mount;
+  }
+
+  function sortVisual(a, b) {
+    const ar = a.getBoundingClientRect();
+    const br = b.getBoundingClientRect();
+    if (Math.abs(ar.top - br.top) > 12) {
+      return ar.top - br.top;
+    }
+    return ar.left - br.left;
+  }
+
+  function oldCardMatches(el) {
+    if (!(el instanceof HTMLElement) || el.id === MOUNT_ID || el.closest("#" + MOUNT_ID)) {
+      return false;
+    }
+    const text = norm(el.textContent);
+    if (!text || text.length > 220) {
+      return false;
+    }
+    const hasPay =
+      text.includes("teacher pay slips") ||
+      text.includes("teach a pay slip") ||
+      text.includes("slips on file") ||
+      (text.includes("slip") && text.includes("tap to open"));
+    const hasIds =
+      (text.includes("names") && (text.includes("notion") || text.includes("notions")) && text.includes("row")) ||
+      text.includes("tap for ids") ||
+      text.includes("notion row id");
+    if (!(hasPay || hasIds) || (hasPay && hasIds)) {
+      return false;
+    }
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 180 || rect.height < 40 || rect.height > 190) {
+      return false;
+    }
+    return true;
+  }
+
+  function findOldCards() {
+    const root = dashboardRoot();
+    if (!root) {
+      return [];
+    }
+    return Array.from(root.querySelectorAll("button, article, [role='button'], .dashboard-card, .home-card, .quick-card, .metric-card, .rme-dashboard-card"))
+      .filter(oldCardMatches);
+  }
+
+  function hideOldCards() {
+    for (const card of findOldCards()) {
+      card.classList.add("rme-old-dashboard-card-hidden");
+      card.setAttribute("aria-hidden", "true");
+    }
+  }
+
+  function openTeacherPaySlipsPage() {
+    const page = findTeacherPaySlipsPage();
+    const id = page?.id ? String(page.id) : "";
+    try {
+      if (id && typeof activateNotionWorkspacePage === "function") {
+        activateNotionWorkspacePage(id);
+      }
+    } catch (e) {
+      console.warn("open replacement Teacher Pay Slips card:", e);
+    }
+  }
+
+  function openNamesRowIdsPage() {
+    const page = findNamesRowIdsPage();
+    const id = page?.id ? String(page.id) : "__vaultNotionLinks";
+    try {
+      if (id && typeof activateNotionWorkspacePage === "function") {
+        activateNotionWorkspacePage(id);
+      }
+    } catch (e) {
+      console.warn("open replacement Names & Notion Row IDs card:", e);
+    }
+  }
+
+  function bindClicks(mount) {
+    if (!(mount instanceof HTMLElement) || mount.dataset.rmeReplacementCardsBound === "1") {
+      return;
+    }
+    mount.dataset.rmeReplacementCardsBound = "1";
+    mount.addEventListener("click", (ev) => {
+      const card = ev.target instanceof Element
+        ? ev.target.closest("[data-rme-replacement-card]")
+        : null;
+      if (!(card instanceof HTMLElement)) {
+        return;
+      }
+      const kind = card.dataset.rmeReplacementCard || "";
+      if (kind === "teacher-pay-slips") {
+        openTeacherPaySlipsPage();
+      } else if (kind === "row-ids") {
+        openNamesRowIdsPage();
+      }
+    });
+  }
+
+  function render() {
+    if (authScreenIsActive()) {
+      return;
+    }
+    injectStyles();
+    const mount = ensureMount();
+    if (!(mount instanceof HTMLElement)) {
+      return;
+    }
+
+    const teacherPages = countTeacherPaySlipPages();
+    const rowIdRows = state.rowIdRows;
+    const teacherMeta = typeof teacherPages === "number"
+      ? (teacherPages === 1 ? "1 total teacher page · tap to open" : teacherPages + " total teacher pages · tap to open")
+      : "Reading Teacher Pay Slips pages…";
+    const rowMeta = typeof rowIdRows === "number"
+      ? (rowIdRows === 1 ? "1 total row · tap for IDs" : rowIdRows + " total rows · tap for IDs")
+      : "Reading Names & Notion Row IDs table…";
+    const key = teacherPages + "::" + rowIdRows + "::" + teacherMeta + "::" + rowMeta;
+    if (mount.dataset.rmeReplacementCardsKey !== key) {
+      mount.dataset.rmeReplacementCardsKey = key;
+      mount.innerHTML =
+        cardHtml("teacher-pay-slips", "📄", "Teacher Pay Slips", teacherPages ?? "—", teacherMeta) +
+        cardHtml("row-ids", "🆔", "Names & Notion Row IDs", rowIdRows ?? "—", rowMeta);
+      mount.dataset.rmeReplacementCardsBound = "";
+      bindClicks(mount);
+    } else {
+      bindClicks(mount);
+    }
+
+    hideOldCards();
+  }
+
+  function tick() {
+    render();
+    void refreshRowIdRows().then(render);
+  }
+
+  window.rmeRenderReplacementDashboardCards = tick;
+
+  function start() {
+    tick();
+    window.setInterval(tick, REFRESH_MS);
+    window.addEventListener("focus", tick);
+    window.addEventListener("rme:teacher-pay-slip-page-ids", tick);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start, { once: true });
+  } else {
+    window.setTimeout(start, 0);
+  }
+})();
+// Safe, narrow owner for ONLY the two lower dashboard cards.
+// It does not watch the whole document, does not touch the auth screen,
+// does not touch side panels, and does not block clicks.
+// Source rules:
+// - Teacher Pay Slips = real countable teacher pages/IDs under Teacher Pay Slips.
+// - Names & Notion Row IDs = rows from payslip_notion_person_links via preload.
+(function rmeTwoDashboardCardsOnlyBoot() {
+  // Permanently disabled: this post-render card owner can select the wrong
+  // dashboard ancestor after sign-in hydration and make the dashboard blank /
+  // unclickable. Do not re-enable this block. Future fixes must patch the
+  // original dashboard card source, not rewrite rendered dashboard containers.
+  return;
+  const STYLE_ID = "rmeTwoDashboardCardsOnlyStyles";
+  const REFRESH_MS = 300;
+
+  const state = {
+    rowIdRows: null,
+    rowFetchBusy: false,
+    lastRowFetchAt: 0,
+  };
+
+  function norm(v) {
+    return String(v ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  function esc(v) {
+    return String(v ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function authScreenIsActive() {
+    const authGate = document.getElementById("authGate");
+    const appMain = document.getElementById("appMain");
+    const authVisible =
+      authGate instanceof HTMLElement &&
+      !authGate.hidden &&
+      window.getComputedStyle(authGate).display !== "none" &&
+      window.getComputedStyle(authGate).visibility !== "hidden";
+    const appHidden = appMain instanceof HTMLElement && appMain.hidden;
+    return authVisible || appHidden;
+  }
+
+  function dashboardRoot() {
+    if (authScreenIsActive()) {
+      return null;
+    }
+    const pageHome = document.getElementById("pageHome");
+    if (pageHome instanceof HTMLElement && !pageHome.hidden) {
+      return pageHome;
+    }
+    const homeContent = document.getElementById("homeContent");
+    if (homeContent instanceof HTMLElement && !homeContent.hidden) {
+      return homeContent;
+    }
+    return null;
+  }
+
+  function pagesState() {
+    try {
+      return Array.isArray(notionWorkspacePagesState) ? notionWorkspacePagesState : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function isSchoolContainer(titleRaw) {
+    const title = norm(titleRaw);
+    return /^(talking global|magic english|speak english|nice ?kid|nicekid|sky ?line|skyline)(\s+\d+|\s+sa|\s+america|\s+europe|\s+3\.5)?$/.test(title);
+  }
+
+  function isRowIdsPage(titleRaw) {
+    const title = norm(titleRaw);
+    return title.includes("names") && (title.includes("notion") || title.includes("notions")) && title.includes("row");
+  }
+
+  function findTeacherPaySlipsPage() {
+    return pagesState().find((page) => {
+      const title = norm(page?.title);
+      return page && page.kind !== "trash" && (title === "teacher pay slips" || title.includes("teacher pay slips"));
+    }) || null;
+  }
+
+  function countTeacherPaySlipPages() {
+    try {
+      if (typeof window.rmeAssignWorkspacePageIds === "function") {
+        window.rmeAssignWorkspacePageIds();
+      }
+      if (typeof window.rmeAssignTeacherPaySlipPageIds === "function") {
+        window.rmeAssignTeacherPaySlipPageIds();
+      }
+    } catch (e) {
+      console.warn("two-card count page IDs:", e);
+    }
+
+    const registryIds = new Set(
+      Array.isArray(window.rmeTeacherPaySlipPageIdRegistry?.ids)
+        ? window.rmeTeacherPaySlipPageIdRegistry.ids.filter(Boolean).map(String)
+        : [],
+    );
+    if (registryIds.size) {
+      return registryIds.size;
+    }
+
+    const marked = pagesState().filter((page) =>
+      page &&
+      page.kind !== "trash" &&
+      (
+        page.rmeTeacherPaySlipCountable === true ||
+        page.rmeTeacherPaySlipPageId ||
+        page.teacherPaySlipPageId ||
+        page.tpsPageId
+      )
+    );
+    if (marked.length) {
+      return new Set(marked.map((page) => String(page.rmeTeacherPaySlipPageId || page.teacherPaySlipPageId || page.tpsPageId || page.id))).size;
+    }
+
+    const root = findTeacherPaySlipsPage();
+    if (!root?.id) {
+      return null;
+    }
+
+    const byParent = new Map();
+    for (const page of pagesState()) {
+      if (!page || page.kind === "trash") {
+        continue;
+      }
+      const parentId = String(page.parentId ?? "");
+      if (!parentId) {
+        continue;
+      }
+      if (!byParent.has(parentId)) {
+        byParent.set(parentId, []);
+      }
+      byParent.get(parentId).push(page);
+    }
+
+    const rootId = String(root.id);
+    const queue = [...(byParent.get(rootId) || [])];
+    const seen = new Set([rootId]);
+    const descendants = [];
+
+    while (queue.length) {
+      const page = queue.shift();
+      const id = String(page?.id ?? "");
+      if (!id || seen.has(id) || page.kind === "trash") {
+        continue;
+      }
+      seen.add(id);
+      const title = norm(page.title);
+      if (!title || title === "teacher pay slips" || isRowIdsPage(title)) {
+        continue;
+      }
+      descendants.push(page);
+      queue.push(...(byParent.get(id) || []));
+    }
+
+    const teacherLeaves = descendants.filter((page) => {
+      const id = String(page.id ?? "");
+      const title = norm(page.title);
+      if (!title || isSchoolContainer(title) || isRowIdsPage(title)) {
+        return false;
+      }
+      const children = (byParent.get(id) || []).filter((child) =>
+        child && child.kind !== "trash" && norm(child.title) && !isRowIdsPage(child.title)
+      );
+      return children.length === 0;
+    });
+
+    return teacherLeaves.length || null;
+  }
+
+  async function refreshRowIdRows() {
+    const now = Date.now();
+    if (state.rowFetchBusy || now - state.lastRowFetchAt < 1200) {
+      return;
+    }
+    state.rowFetchBusy = true;
+    state.lastRowFetchAt = now;
+    try {
+      const api = window.teacherAuth;
+      if (typeof api?.fetchPayslipNotionPersonLinksForAdmin === "function") {
+        const res = await api.fetchPayslipNotionPersonLinksForAdmin();
+        if (Array.isArray(res?.rows)) {
+          state.rowIdRows = res.rows.length;
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn("two-card row ID source:", e);
+    } finally {
+      state.rowFetchBusy = false;
+    }
+  }
+
+  function injectStyles() {
+    if (document.getElementById(STYLE_ID)) {
+      return;
+    }
+    const style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = [
+      ".rme-two-card-source-owned .rme-admin-bottom-metric-repair {",
+      "  display: grid !important;",
+      "  grid-template-columns: auto minmax(0, 1fr) auto !important;",
+      "  align-items: stretch !important;",
+      "  gap: 0.75rem !important;",
+      "  width: 100% !important;",
+      "  height: 100% !important;",
+      "  pointer-events: none !important;",
+      "}",
+      ".rme-two-card-source-owned {",
+      "  pointer-events: auto !important;",
+      "}",
+      ".rme-two-card-source-owned .rme-admin-bottom-metric-repair__icon {",
+      "  width: 2rem !important;",
+      "  height: 2rem !important;",
+      "  display: inline-flex !important;",
+      "  align-items: center !important;",
+      "  justify-content: center !important;",
+      "  border-radius: 10px !important;",
+      "  background: color-mix(in srgb, var(--pill-dot, #3b82f6) 18%, transparent) !important;",
+      "}",
+      ".rme-two-card-source-owned .rme-admin-bottom-metric-repair__body {",
+      "  min-width: 0 !important;",
+      "  min-height: 4.8rem !important;",
+      "  display: flex !important;",
+      "  flex-direction: column !important;",
+      "}",
+      ".rme-two-card-source-owned .rme-admin-bottom-metric-repair__label {",
+      "  margin: 0 0 0.14rem !important;",
+      "  color: var(--th-label) !important;",
+      "  font-size: 0.62rem !important;",
+      "  font-weight: 850 !important;",
+      "  letter-spacing: 0.075em !important;",
+      "  text-transform: uppercase !important;",
+      "}",
+      ".rme-two-card-source-owned .rme-admin-bottom-metric-repair__number {",
+      "  margin: 0 !important;",
+      "  color: var(--text) !important;",
+      "  font-size: clamp(2.75rem, 5.6vw, 4rem) !important;",
+      "  font-weight: 930 !important;",
+      "  line-height: 0.9 !important;",
+      "  letter-spacing: -0.065em !important;",
+      "  font-variant-numeric: tabular-nums !important;",
+      "}",
+      ".rme-two-card-source-owned .rme-admin-bottom-metric-repair__meta {",
+      "  margin: auto 0 0 !important;",
+      "  color: var(--text-muted) !important;",
+      "  font-size: 0.58rem !important;",
+      "  line-height: 1.18 !important;",
+      "  opacity: 0.82 !important;",
+      "  white-space: nowrap !important;",
+      "  overflow: hidden !important;",
+      "  text-overflow: ellipsis !important;",
+      "}",
+      ".rme-two-card-source-owned .rme-admin-bottom-metric-repair__arrow {",
+      "  color: var(--pill-text) !important;",
+      "  font-size: 1rem !important;",
+      "  font-weight: 800 !important;",
+      "  align-self: center !important;",
+      "}",
+    ].join("\n");
+    document.head.appendChild(style);
+  }
+
+  function visibleDashboardCards() {
+    const root = dashboardRoot();
+    if (!root) {
+      return [];
+    }
+    const rootRect = root.getBoundingClientRect();
+    const rootArea = Math.max(rootRect.width * rootRect.height, 1);
+    return Array.from(root.querySelectorAll("button, article, [role='button'], .dashboard-card, .home-card, .quick-card, .metric-card, .rme-dashboard-card"))
+      .filter((el) => {
+        if (!(el instanceof HTMLElement) || el === root) {
+          return false;
+        }
+        if (
+          el.closest(".rme-stat-card") ||
+          el.closest("#notionWorkspace") ||
+          el.closest("#notionEditorSidebar") ||
+          el.closest("#notionWsPanes") ||
+          el.closest("#notionWorkspacePageList") ||
+          el.closest("#rmeOperationsInteractiveTables") ||
+          el.closest("#notionWsPaneRmeOperations")
+        ) {
+          return false;
+        }
+
+        const rect = el.getBoundingClientRect();
+        const area = rect.width * rect.height;
+        if (rect.width < 180 || rect.height < 44 || rect.height > 190 || area > rootArea * 0.35) {
+          return false;
+        }
+
+        const text = norm(el.textContent);
+        if (!text || text.length > 220) {
+          return false;
+        }
+
+        const hasPay =
+          text.includes("teacher pay slips") ||
+          text.includes("teach a pay slip") ||
+          text.includes("slips on file") ||
+          (text.includes("slip") && text.includes("tap to open"));
+        const hasIds =
+          (text.includes("names") && (text.includes("notion") || text.includes("notions")) && text.includes("row")) ||
+          text.includes("tap for ids") ||
+          text.includes("notion row id");
+
+        // This is the key safety rule: a real card has one card's wording.
+        // A row/container holding both lower cards has both labels and must not
+        // ever receive innerHTML replacement.
+        if (hasPay && hasIds) {
+          return false;
+        }
+
+        return hasPay || hasIds;
+      });
+  }
+
+  function deepestMatching(predicate) {
+    return visibleDashboardCards().filter((el) => {
+      const text = norm(el.textContent);
+      if (!predicate(text)) {
+        return false;
+      }
+      return !Array.from(el.children).some((child) => {
+        if (!(child instanceof HTMLElement)) {
+          return false;
+        }
+        const childText = norm(child.textContent);
+        return childText && childText.length < text.length && predicate(childText);
+      });
+    });
+  }
+
+  function findTargets() {
+    const payMatches = deepestMatching((text) =>
+      text.includes("teacher pay slips") ||
+      text.includes("teach a pay slip") ||
+      text.includes("slips on file") ||
+      (text.includes("slip") && text.includes("tap to open"))
+    );
+    const idMatches = deepestMatching((text) =>
+      (text.includes("names") && (text.includes("notion") || text.includes("notions")) && text.includes("row")) ||
+      text.includes("tap for ids") ||
+      text.includes("notion row id")
+    );
+
+    const sortVisual = (a, b) => {
+      const ar = a.getBoundingClientRect();
+      const br = b.getBoundingClientRect();
+      if (Math.abs(ar.top - br.top) > 12) {
+        return ar.top - br.top;
+      }
+      return ar.left - br.left;
+    };
+
+    payMatches.sort(sortVisual);
+    idMatches.sort(sortVisual);
+
+    return {
+      pay: payMatches[0] || null,
+      ids: idMatches[0] || null,
+    };
+  }
+
+  function renderCard(el, label, icon, value, meta, source) {
+    if (!(el instanceof HTMLElement)) {
+      return;
+    }
+    const key = "v56-two-cards::" + label + "::" + value + "::" + meta;
+    const text = norm(el.textContent);
+    const correct =
+      text.includes(norm(label)) &&
+      text.includes(norm(value)) &&
+      text.includes(norm(meta).slice(0, Math.min(26, norm(meta).length)));
+    if (el.dataset.rmeTwoCardSourceKey === key && correct) {
+      return;
+    }
+
+    el.dataset.rmeTwoCardSourceKey = key;
+    el.dataset.rmeTwoCardSource = source;
+    el.classList.add("rme-two-card-source-owned");
+    el.innerHTML =
+      "<div class=\"rme-admin-bottom-metric-repair\">" +
+        "<span class=\"rme-admin-bottom-metric-repair__icon\" aria-hidden=\"true\">" + esc(icon) + "</span>" +
+        "<div class=\"rme-admin-bottom-metric-repair__body\">" +
+          "<p class=\"rme-admin-bottom-metric-repair__label\">" + esc(label) + "</p>" +
+          "<p class=\"rme-admin-bottom-metric-repair__number\">" + esc(value) + "</p>" +
+          "<p class=\"rme-admin-bottom-metric-repair__meta\">" + esc(meta) + "</p>" +
+        "</div>" +
+        "<span class=\"rme-admin-bottom-metric-repair__arrow\" aria-hidden=\"true\">›</span>" +
+      "</div>";
+  }
+
+  function repairTwoCards() {
+    if (authScreenIsActive()) {
+      return;
+    }
+    injectStyles();
+
+    const teacherPages = countTeacherPaySlipPages();
+    const rowIdRows = state.rowIdRows;
+    const targets = findTargets();
+
+    if (targets.pay) {
+      renderCard(
+        targets.pay,
+        "Teacher Pay Slips",
+        "📄",
+        teacherPages ?? "—",
+        typeof teacherPages === "number"
+          ? (teacherPages === 1 ? "1 total page in Teacher Pay Slips" : teacherPages + " total pages in Teacher Pay Slips")
+          : "Reading Teacher Pay Slips pages…",
+        "teacher-pay-slip-page-ids",
+      );
+    }
+
+    if (targets.ids) {
+      renderCard(
+        targets.ids,
+        "Names & Notion Row IDs",
+        "🆔",
+        rowIdRows ?? "—",
+        typeof rowIdRows === "number"
+          ? (rowIdRows === 1 ? "1 total row in Names & Notion Row IDs" : rowIdRows + " total rows in Names & Notion Row IDs")
+          : "Reading Names & Notion Row IDs table…",
+        "payslip-notion-person-links",
+      );
+    }
+  }
+
+  function tick() {
+    repairTwoCards();
+    void refreshRowIdRows().then(repairTwoCards);
+  }
+
+  window.rmeRepairOnlyTwoDashboardCards = tick;
+
+  function start() {
+    tick();
+    window.setInterval(tick, REFRESH_MS);
+    window.addEventListener("focus", tick);
+    window.addEventListener("rme:teacher-pay-slip-page-ids", tick);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start, { once: true });
+  } else {
+    window.setTimeout(start, 0);
+  }
+})();
+
+// === RME Turn 55 — Dashboard stale-card source firewall ============================
+// Root cause fixed here: the base Home/Dashboard render runs again after auth/app-state
+// hydration and can repaint the lower dashboard cards from old local dashboard counters.
+// Those old counters are:
+// - Teacher Pay Slips = six direct school/group wrappers.
+// - Names & Notion Row IDs = the two supervised teacher accounts.
+// This firewall owns the Home cards from the source side and re-applies the real counts
+// whenever the dashboard is rebuilt, including when #homeContent itself is replaced.
+(function rmeDashboardStaleCardSourceFirewallBoot() {
+  // Disabled: this dashboard firewall was too aggressive after login and could
+  // leave the dashboard blank/unresponsive. Keep the safer Turn 52 card owner.
+  return;
+  const STYLE_ID = "rmeDashboardStaleCardSourceFirewallStyles";
+  const REFRESH_MS = 260;
+
+  const state = {
+    rowIdRows: null,
+    rowFetchBusy: false,
+    lastRowFetchAt: 0,
+  };
+
+  function norm(v) {
+    return String(v ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  function esc(v) {
+    return String(v ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function pagesState() {
+    try {
+      return Array.isArray(notionWorkspacePagesState) ? notionWorkspacePagesState : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function authScreenIsActive() {
+    const authGate = document.getElementById("authGate");
+    const appMain = document.getElementById("appMain");
+    const authVisible =
+      authGate instanceof HTMLElement &&
+      !authGate.hidden &&
+      window.getComputedStyle(authGate).display !== "none" &&
+      window.getComputedStyle(authGate).visibility !== "hidden";
+    const appHidden = appMain instanceof HTMLElement && appMain.hidden;
+    return authVisible || appHidden;
+  }
+
+  function dashboardRoot() {
+    if (authScreenIsActive()) {
+      return null;
+    }
+    const pageHome = document.getElementById("pageHome");
+    if (pageHome instanceof HTMLElement && !pageHome.hidden) {
+      return pageHome;
+    }
+    const homeContent = document.getElementById("homeContent");
+    return homeContent instanceof HTMLElement ? homeContent : null;
+  }
+
+  function titleLooksLikeSchoolContainer(titleRaw) {
+    const title = norm(titleRaw);
+    return /^(talking global|magic english|speak english|nice ?kid|nicekid|sky ?line|skyline)(\s+\d+|\s+sa|\s+america|\s+europe|\s+3\.5)?$/.test(title);
+  }
+
+  function titleLooksLikeRowIds(titleRaw) {
+    const title = norm(titleRaw);
+    return title.includes("names") && (title.includes("notion") || title.includes("notions")) && title.includes("row");
+  }
+
+  function findTeacherPaySlipsPage() {
+    return pagesState().find((p) => {
+      const title = norm(p?.title);
+      return p && p.kind !== "trash" && (title === "teacher pay slips" || title.includes("teacher pay slips"));
+    }) || null;
+  }
+
+  function countTeacherPaySlipPages() {
+    try {
+      if (typeof window.rmeAssignWorkspacePageIds === "function") {
+        window.rmeAssignWorkspacePageIds();
+      }
+      if (typeof window.rmeAssignTeacherPaySlipPageIds === "function") {
+        window.rmeAssignTeacherPaySlipPageIds();
+      }
+    } catch (e) {
+      console.warn("dashboard source firewall assign page IDs:", e);
+    }
+
+    const registryIds = new Set(
+      Array.isArray(window.rmeTeacherPaySlipPageIdRegistry?.ids)
+        ? window.rmeTeacherPaySlipPageIdRegistry.ids.filter(Boolean).map(String)
+        : [],
+    );
+    if (registryIds.size) {
+      return registryIds.size;
+    }
+
+    const marked = pagesState().filter((page) =>
+      page &&
+      page.kind !== "trash" &&
+      (
+        page.rmeTeacherPaySlipCountable === true ||
+        page.rmeTeacherPaySlipPageId ||
+        page.teacherPaySlipPageId ||
+        page.tpsPageId
+      )
+    );
+    if (marked.length) {
+      return new Set(marked.map((page) => String(page.rmeTeacherPaySlipPageId || page.teacherPaySlipPageId || page.tpsPageId || page.id))).size;
+    }
+
+    const root = findTeacherPaySlipsPage();
+    if (!root?.id) {
+      return null;
+    }
+
+    const byParent = new Map();
+    for (const page of pagesState()) {
+      if (!page || page.kind === "trash") {
+        continue;
+      }
+      const parentId = String(page.parentId ?? "");
+      if (!parentId) {
+        continue;
+      }
+      if (!byParent.has(parentId)) {
+        byParent.set(parentId, []);
+      }
+      byParent.get(parentId).push(page);
+    }
+
+    const queue = [...(byParent.get(String(root.id)) || [])];
+    const seen = new Set([String(root.id)]);
+    const descendants = [];
+    while (queue.length) {
+      const page = queue.shift();
+      const id = String(page?.id ?? "");
+      if (!id || seen.has(id) || page.kind === "trash") {
+        continue;
+      }
+      seen.add(id);
+      const title = norm(page.title);
+      if (!title || title === "teacher pay slips" || titleLooksLikeRowIds(title)) {
+        continue;
+      }
+      descendants.push(page);
+      queue.push(...(byParent.get(id) || []));
+    }
+
+    const leafTeachers = descendants.filter((page) => {
+      const id = String(page.id ?? "");
+      const title = norm(page.title);
+      if (!title || titleLooksLikeSchoolContainer(title)) {
+        return false;
+      }
+      const children = (byParent.get(id) || []).filter((child) =>
+        child && child.kind !== "trash" && norm(child.title) && !titleLooksLikeRowIds(child.title)
+      );
+      return children.length === 0;
+    });
+
+    return leafTeachers.length || null;
+  }
+
+  async function refreshRowIdRows() {
+    const now = Date.now();
+    if (state.rowFetchBusy || now - state.lastRowFetchAt < 900) {
+      return;
+    }
+    state.rowFetchBusy = true;
+    state.lastRowFetchAt = now;
+    try {
+      const api = window.teacherAuth;
+      if (typeof api?.fetchPayslipNotionPersonLinksForAdmin === "function") {
+        const res = await api.fetchPayslipNotionPersonLinksForAdmin();
+        if (Array.isArray(res?.rows)) {
+          state.rowIdRows = res.rows.length;
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn("dashboard source firewall row IDs:", e);
+    } finally {
+      state.rowFetchBusy = false;
+    }
+  }
+
+  function injectStyles() {
+    if (document.getElementById(STYLE_ID)) {
+      return;
+    }
+    const style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = [
+      ".rme-dashboard-source-firewall-card .rme-admin-bottom-metric-repair {",
+      "  display: grid !important;",
+      "  grid-template-columns: auto minmax(0, 1fr) auto !important;",
+      "  align-items: stretch !important;",
+      "  gap: 0.75rem !important;",
+      "  width: 100% !important;",
+      "  height: 100% !important;",
+      "}",
+      ".rme-dashboard-source-firewall-card .rme-admin-bottom-metric-repair__icon {",
+      "  width: 2rem !important;",
+      "  height: 2rem !important;",
+      "  display: inline-flex !important;",
+      "  align-items: center !important;",
+      "  justify-content: center !important;",
+      "  border-radius: 10px !important;",
+      "  background: color-mix(in srgb, var(--pill-dot, #3b82f6) 18%, transparent) !important;",
+      "}",
+      ".rme-dashboard-source-firewall-card .rme-admin-bottom-metric-repair__body {",
+      "  min-width: 0 !important;",
+      "  min-height: 4.8rem !important;",
+      "  display: flex !important;",
+      "  flex-direction: column !important;",
+      "}",
+      ".rme-dashboard-source-firewall-card .rme-admin-bottom-metric-repair__label {",
+      "  margin: 0 0 0.14rem !important;",
+      "  color: var(--th-label) !important;",
+      "  font-size: 0.62rem !important;",
+      "  font-weight: 850 !important;",
+      "  letter-spacing: 0.075em !important;",
+      "  text-transform: uppercase !important;",
+      "}",
+      ".rme-dashboard-source-firewall-card .rme-admin-bottom-metric-repair__number {",
+      "  margin: 0 !important;",
+      "  color: var(--text) !important;",
+      "  font-size: clamp(2.75rem, 5.6vw, 4rem) !important;",
+      "  font-weight: 930 !important;",
+      "  line-height: 0.9 !important;",
+      "  letter-spacing: -0.065em !important;",
+      "  font-variant-numeric: tabular-nums !important;",
+      "}",
+      ".rme-dashboard-source-firewall-card .rme-admin-bottom-metric-repair__meta {",
+      "  margin: auto 0 0 !important;",
+      "  color: var(--text-muted) !important;",
+      "  font-size: 0.58rem !important;",
+      "  line-height: 1.18 !important;",
+      "  opacity: 0.82 !important;",
+      "  white-space: nowrap !important;",
+      "  overflow: hidden !important;",
+      "  text-overflow: ellipsis !important;",
+      "}",
+      ".rme-dashboard-source-firewall-card .rme-admin-bottom-metric-repair__arrow {",
+      "  color: var(--pill-text) !important;",
+      "  font-size: 1rem !important;",
+      "  font-weight: 800 !important;",
+      "  align-self: center !important;",
+      "}",
+    ].join("\n");
+    document.head.appendChild(style);
+  }
+
+  function visibleCandidates() {
+    const root = dashboardRoot();
+    if (!root) {
+      return [];
+    }
+    return Array.from(root.querySelectorAll("article, button, section, div"))
+      .filter((el) => {
+        if (!(el instanceof HTMLElement)) {
+          return false;
+        }
+        if (
+          el.closest(".rme-stat-card") ||
+          el.closest("#notionWorkspace") ||
+          el.closest("#notionEditorSidebar") ||
+          el.closest("#notionWsPanes") ||
+          el.closest("#notionWorkspacePageList") ||
+          el.closest("#rmeOperationsInteractiveTables") ||
+          el.closest("#notionWsPaneRmeOperations")
+        ) {
+          return false;
+        }
+        const rect = el.getBoundingClientRect();
+        if (rect.width < 150 || rect.height < 28) {
+          return false;
+        }
+        const text = norm(el.textContent);
+        if (!text || text.length > 420) {
+          return false;
+        }
+        return true;
+      });
+  }
+
+  function deepestMatching(predicate) {
+    return visibleCandidates().filter((el) => {
+      const text = norm(el.textContent);
+      if (!predicate(text)) {
+        return false;
+      }
+      return !Array.from(el.children).some((child) => {
+        if (!(child instanceof HTMLElement)) {
+          return false;
+        }
+        const childText = norm(child.textContent);
+        return childText && childText.length < text.length && predicate(childText);
+      });
+    });
+  }
+
+  function targetCards() {
+    const cards = deepestMatching((text) =>
+      text.includes("teacher pay slips") ||
+      text.includes("teach a pay slip") ||
+      text.includes("slips on file") ||
+      text.includes("tap to open") && text.includes("slip") ||
+      text.includes("names") && (text.includes("notion") || text.includes("notions")) && text.includes("row") ||
+      text.includes("tap for ids") ||
+      text.includes("notion row id")
+    ).sort((a, b) => {
+      const ar = a.getBoundingClientRect();
+      const br = b.getBoundingClientRect();
+      if (Math.abs(ar.top - br.top) > 12) {
+        return ar.top - br.top;
+      }
+      return ar.left - br.left;
+    });
+
+    const pay = cards.find((card) => {
+      const text = norm(card.textContent);
+      return text.includes("teacher pay slips") || text.includes("teach a pay slip") || text.includes("slips on file") || (text.includes("slip") && text.includes("tap to open"));
+    }) || cards[0] || null;
+
+    const ids = cards.find((card) => {
+      if (card === pay) {
+        return false;
+      }
+      const text = norm(card.textContent);
+      return (text.includes("names") && (text.includes("notion") || text.includes("notions")) && text.includes("row")) ||
+        text.includes("tap for ids") ||
+        text.includes("notion row id");
+    }) || cards.find((card) => card !== pay) || null;
+
+    return { pay, ids };
+  }
+
+  function renderCard(el, label, icon, value, meta) {
+    if (!(el instanceof HTMLElement)) {
+      return;
+    }
+    const key = "v56::" + label + "::" + value + "::" + meta;
+    const text = norm(el.textContent);
+    const visibleIsCorrect =
+      text.includes(norm(label)) &&
+      text.includes(norm(value)) &&
+      text.includes(norm(meta).slice(0, Math.min(28, norm(meta).length)));
+    if (el.dataset.rmeDashboardSourceFirewallKey === key && visibleIsCorrect) {
+      return;
+    }
+    el.dataset.rmeDashboardSourceFirewallKey = key;
+    el.dataset.rmeDashboardCardSource = label === "Teacher Pay Slips" ? "teacher-pay-slip-page-ids" : "payslip-notion-person-links";
+    el.classList.add("rme-dashboard-source-firewall-card");
+    el.innerHTML =
+      "<div class=\"rme-admin-bottom-metric-repair\">" +
+        "<span class=\"rme-admin-bottom-metric-repair__icon\" aria-hidden=\"true\">" + esc(icon) + "</span>" +
+        "<div class=\"rme-admin-bottom-metric-repair__body\">" +
+          "<p class=\"rme-admin-bottom-metric-repair__label\">" + esc(label) + "</p>" +
+          "<p class=\"rme-admin-bottom-metric-repair__number\">" + esc(value) + "</p>" +
+          "<p class=\"rme-admin-bottom-metric-repair__meta\">" + esc(meta) + "</p>" +
+        "</div>" +
+        "<span class=\"rme-admin-bottom-metric-repair__arrow\" aria-hidden=\"true\">›</span>" +
+      "</div>";
+  }
+
+  function setTopPaySlipStat(count) {
+    const card = document.querySelector(".rme-stat-card[data-card='payslipsThisMonth']");
+    if (!(card instanceof HTMLElement) || typeof count !== "number") {
+      return;
+    }
+    const value = card.querySelector(".rme-stat-value");
+    if (value instanceof HTMLElement) {
+      value.textContent = String(count);
+      value.classList.remove("rme-stat-value--loading");
+    }
+    const meta = card.querySelector(".rme-stat-meta");
+    if (meta instanceof HTMLElement) {
+      meta.textContent = count === 1 ? "1 Teacher Pay Slips page ID" : count + " Teacher Pay Slips page IDs";
+    }
+  }
+
+  function render() {
+    injectStyles();
+    const teacherPages = countTeacherPaySlipPages();
+    if (typeof teacherPages === "number") {
+      setTopPaySlipStat(teacherPages);
+    }
+
+    const { pay, ids } = targetCards();
+    if (pay) {
+      renderCard(
+        pay,
+        "Teacher Pay Slips",
+        "📄",
+        teacherPages ?? "—",
+        typeof teacherPages === "number"
+          ? (teacherPages === 1 ? "1 total page in Teacher Pay Slips" : teacherPages + " total pages in Teacher Pay Slips")
+          : "Reading Teacher Pay Slips pages…",
+      );
+    }
+
+    if (ids) {
+      const rows = state.rowIdRows;
+      renderCard(
+        ids,
+        "Names & Notion Row IDs",
+        "🆔",
+        rows ?? "—",
+        typeof rows === "number"
+          ? (rows === 1 ? "1 total row in Names & Notion Row IDs" : rows + " total rows in Names & Notion Row IDs")
+          : "Reading Names & Notion Row IDs table…",
+      );
+    }
+  }
+
+  function tick() {
+    if (authScreenIsActive()) {
+      return;
+    }
+    render();
+    void refreshRowIdRows().then(render);
+  }
+
+  let observedDashboardRoot = null;
+  let dashboardObserver = null;
+
+  function observeDashboardRoot() {
+    if (authScreenIsActive() || typeof MutationObserver !== "function") {
+      return;
+    }
+    const root = dashboardRoot();
+    if (!(root instanceof HTMLElement) || root === observedDashboardRoot) {
+      return;
+    }
+    if (dashboardObserver) {
+      dashboardObserver.disconnect();
+    }
+    dashboardObserver = new MutationObserver(() => {
+      if (authScreenIsActive()) {
+        return;
+      }
+      window.requestAnimationFrame(tick);
+    });
+    dashboardObserver.observe(root, { childList: true, subtree: true, characterData: true });
+    observedDashboardRoot = root;
+  }
+
+  function start() {
+    tick();
+
+    // Burst only after the user is inside the app. Do not touch the auth screen:
+    // it must stay clickable and must keep saved email/password fields intact.
+    for (let i = 1; i <= 80; i += 1) {
+      window.setTimeout(tick, i * 60);
+    }
+
+    window.setInterval(() => {
+      observeDashboardRoot();
+      tick();
+    }, REFRESH_MS);
+
+    observeDashboardRoot();
+    window.addEventListener("rme:teacher-pay-slip-page-ids", tick);
+    window.addEventListener("focus", tick);
+  }
+
+  window.rmeRepairDashboardCardSources = tick;
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start, { once: true });
+  } else {
+    window.setTimeout(start, 0);
+  }
+})();
+
+// === RME Turn 54 — Global workspace page unique IDs ===============================
+// Every workspace page gets one stable unique ID. New pages are picked up
+// automatically, saved, and exposed for dashboard/card readers.
+(function rmeGlobalWorkspacePageUniqueIdsBoot() {
+  const WORKSPACE_PAGES_KEY = "recruit-notion-workspace-pages-v2";
+  const REFRESH_MS = 700;
+
+  function norm(v) {
+    return String(v ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  function pagesState() {
+    try {
+      return Array.isArray(notionWorkspacePagesState) ? notionWorkspacePagesState : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function makePageUid(page, index) {
+    const existing =
+      page?.rmePageUid ||
+      page?.workspacePageUid ||
+      page?.uniquePageId ||
+      "";
+    if (existing) {
+      return String(existing);
+    }
+
+    const raw = String(page?.id || page?.url || page?.title || "page-" + index);
+    const clean = raw
+      .replace(/[^a-zA-Z0-9_-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 80);
+    return "rme-page-" + (clean || Date.now().toString(36) + "-" + index);
+  }
+
+  function persistPages() {
+    const pages = pagesState();
+    if (!pages.length) {
+      return;
+    }
+    try {
+      const json = JSON.stringify(pages);
+      if (typeof payslipAppStateSetItem === "function") {
+        payslipAppStateSetItem(WORKSPACE_PAGES_KEY, json);
+      }
+      window.localStorage.setItem(WORKSPACE_PAGES_KEY, json);
+    } catch (e) {
+      console.warn("persist global page IDs:", e);
+    }
+  }
+
+  function assignGlobalPageIds() {
+    const pages = pagesState();
+    const used = new Set();
+    let changed = false;
+
+    pages.forEach((page, index) => {
+      if (!page || typeof page !== "object" || page.kind === "trash") {
+        return;
+      }
+
+      let uid = makePageUid(page, index);
+      if (used.has(uid)) {
+        const base = uid.replace(/-\d+$/, "");
+        let suffix = 2;
+        while (used.has(base + "-" + suffix)) {
+          suffix += 1;
+        }
+        uid = base + "-" + suffix;
+      }
+      used.add(uid);
+
+      if (page.rmePageUid !== uid) {
+        page.rmePageUid = uid;
+        changed = true;
+      }
+      if (page.workspacePageUid !== uid) {
+        page.workspacePageUid = uid;
+        changed = true;
+      }
+      if (page.uniquePageId !== uid) {
+        page.uniquePageId = uid;
+        changed = true;
+      }
+    });
+
+    const registry = {
+      count: used.size,
+      ids: Array.from(used),
+      pages: pages.filter((page) => page && page.kind !== "trash"),
+    };
+    window.rmeWorkspacePageIdRegistry = registry;
+    if (changed) {
+      persistPages();
+      window.dispatchEvent(new CustomEvent("rme:workspace-page-ids", { detail: registry }));
+    }
+    return registry;
+  }
+
+  function start() {
+    assignGlobalPageIds();
+    window.setInterval(assignGlobalPageIds, REFRESH_MS);
+  }
+
+  window.rmeAssignWorkspacePageIds = assignGlobalPageIds;
+  window.rmeWorkspacePageIdRegistry = window.rmeWorkspacePageIdRegistry || { count: 0, ids: [], pages: [] };
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start, { once: true });
+  } else {
+    window.setTimeout(start, 0);
+  }
+})();
+
+// === RME Turn 53 — Teacher Pay Slips page IDs =====================================
+// Adds a stable countable ID to every real teacher page inside Teacher Pay Slips.
+// Dashboard cards count these IDs instead of counting visible school/group wrappers.
+(function rmeTeacherPaySlipPageIdsBoot() {
+  const STYLE_ID = "rmeTeacherPaySlipPageIdsStylesV2";
+  const WORKSPACE_PAGES_KEY = "recruit-notion-workspace-pages-v2";
+  const REFRESH_MS = 950;
+
+  function norm(v) {
+    return String(v ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  function cssEscape(v) {
+    if (window.CSS && typeof window.CSS.escape === "function") {
+      return window.CSS.escape(String(v));
+    }
+    return String(v).replace(/["\\]/g, "\\$&");
+  }
+
+  function pagesState() {
+    try {
+      return Array.isArray(notionWorkspacePagesState) ? notionWorkspacePagesState : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function findTeacherPaySlipsPage() {
+    return pagesState().find((p) => {
+      const title = norm(p?.title);
+      return p && p.kind !== "trash" && (title === "teacher pay slips" || title.includes("teacher pay slips"));
+    }) || null;
+  }
+
+  function isRowIdsPage(page) {
+    const title = norm(page?.title);
+    return title.includes("names") && (title.includes("notion") || title.includes("notions")) && title.includes("row");
+  }
+
+  function isSchoolContainer(page) {
+    const title = norm(page?.title);
+    return /^(talking global|magic english|speak english|nice ?kid|nicekid|sky ?line|skyline)(\s+\d+|\s+sa|\s+america|\s+europe|\s+3\.5)?$/.test(title);
+  }
+
+  function stableTeacherPageId(page, index) {
+    const existing =
+      page?.rmeTeacherPaySlipPageId ||
+      page?.teacherPaySlipPageId ||
+      page?.tpsPageId ||
+      "";
+    if (existing) {
+      return String(existing);
+    }
+    const raw = String(page?.id || page?.url || page?.title || "teacher-" + index);
+    return "tps-page-" + raw
+      .replace(/[^a-zA-Z0-9_-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 72);
+  }
+
+  function descendantTeacherPages() {
+    const root = findTeacherPaySlipsPage();
+    if (!root?.id) {
+      return [];
+    }
+
+    const byParent = new Map();
+    for (const page of pagesState()) {
+      if (!page || page.kind === "trash") {
+        continue;
+      }
+      const parentId = String(page.parentId ?? "");
+      if (!parentId) {
+        continue;
+      }
+      if (!byParent.has(parentId)) {
+        byParent.set(parentId, []);
+      }
+      byParent.get(parentId).push(page);
+    }
+
+    const queue = [...(byParent.get(String(root.id)) || [])];
+    const seen = new Set([String(root.id)]);
+    const descendants = [];
+    while (queue.length) {
+      const page = queue.shift();
+      const id = String(page?.id ?? "");
+      if (!id || seen.has(id) || page.kind === "trash") {
+        continue;
+      }
+      seen.add(id);
+      if (isRowIdsPage(page)) {
+        continue;
+      }
+      descendants.push(page);
+      queue.push(...(byParent.get(id) || []));
+    }
+
+    return descendants.filter((page) => {
+      if (!page || isRowIdsPage(page) || isSchoolContainer(page)) {
+        return false;
+      }
+      const id = String(page.id ?? "");
+      const children = (byParent.get(id) || []).filter((child) =>
+        child && child.kind !== "trash" && norm(child.title) && !isRowIdsPage(child)
+      );
+      return children.length === 0;
+    });
+  }
+
+  function persistPagesState() {
+    const pages = pagesState();
+    if (!pages.length) {
+      return;
+    }
+    try {
+      const json = JSON.stringify(pages);
+      if (typeof payslipAppStateSetItem === "function") {
+        payslipAppStateSetItem(WORKSPACE_PAGES_KEY, json);
+      }
+      window.localStorage.setItem(WORKSPACE_PAGES_KEY, json);
+    } catch (e) {
+      console.warn("persist Teacher Pay Slips page IDs:", e);
+    }
+  }
+
+  function ensureStyles() {
+    if (document.getElementById(STYLE_ID)) {
+      return;
+    }
+    const style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = [
+      ".rme-tps-teacher-link[data-rme-tps-page-id] {",
+      "  grid-template-columns: auto minmax(6.5rem, 1fr) minmax(7.5rem, 30%) auto !important;",
+      "  align-items: start;",
+      "}",
+      ".rme-tps-teacher-page-id {",
+      "  justify-self: stretch;",
+      "  align-self: center;",
+      "  max-width: none;",
+      "  width: 100%;",
+      "  min-width: 0;",
+      "  box-sizing: border-box;",
+      "  padding: 0.14rem 0.42rem;",
+      "  border-radius: 999px;",
+      "  background: color-mix(in srgb, var(--text) 8%, transparent);",
+      "  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);",
+      "  color: var(--text-muted);",
+      "  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;",
+      "  font-size: 0.58rem;",
+      "  font-weight: 650;",
+      "  letter-spacing: 0.02em;",
+      "  text-transform: none;",
+      "  white-space: nowrap;",
+      "  overflow: hidden;",
+      "  text-overflow: ellipsis;",
+      "}",
+      "html[data-theme=\"dark\"] .rme-tps-teacher-page-id {",
+      "  background: rgba(15, 23, 42, 0.75);",
+      "  border-color: rgba(255, 255, 255, 0.1);",
+      "  color: #a8b0bd;",
+      "}",
+    ].join("\n");
+    document.head.appendChild(style);
+  }
+
+  function decorateTeacherButtons(registry) {
+    ensureStyles();
+    for (const page of registry.pages) {
+      const pageId = String(page.id ?? "");
+      const tpsId = String(page.rmeTeacherPaySlipPageId || "");
+      if (!pageId || !tpsId) {
+        continue;
+      }
+      document.querySelectorAll("[data-rme-tps-teacher-id=\"" + cssEscape(pageId) + "\"]").forEach((btn) => {
+        if (!(btn instanceof HTMLElement)) {
+          return;
+        }
+        btn.dataset.rmeTpsPageId = tpsId;
+        btn.dataset.rmeTpsCountablePage = "true";
+        let badge = btn.querySelector(".rme-tps-teacher-page-id");
+        if (!(badge instanceof HTMLElement)) {
+          badge = document.createElement("span");
+          badge.className = "rme-tps-teacher-page-id";
+          const arrow = btn.querySelector(".rme-tps-teacher-arrow");
+          if (arrow?.parentElement === btn) {
+            btn.insertBefore(badge, arrow);
+          } else {
+            btn.appendChild(badge);
+          }
+        }
+        badge.textContent = "ID " + tpsId.replace(/^tps-page-/, "");
+        badge.title = tpsId;
+      });
+    }
+  }
+
+  function assignTeacherPageIds() {
+    try {
+      if (typeof window.rmeAssignWorkspacePageIds === "function") {
+        window.rmeAssignWorkspacePageIds();
+      }
+    } catch (e) {
+      console.warn("assign global page IDs before Teacher Pay Slips IDs:", e);
+    }
+
+    const teacherPages = descendantTeacherPages();
+    let changed = false;
+    teacherPages.forEach((page, index) => {
+      const baseUid =
+        page.rmePageUid ||
+        page.workspacePageUid ||
+        page.uniquePageId ||
+        stableTeacherPageId(page, index);
+      const tpsId = String(baseUid).startsWith("tps-page-")
+        ? String(baseUid)
+        : "tps-page-" + String(baseUid).replace(/^rme-page-/, "");
+      if (page.rmeTeacherPaySlipPageId !== tpsId) {
+        page.rmeTeacherPaySlipPageId = tpsId;
+        changed = true;
+      }
+      if (page.teacherPaySlipPageId !== tpsId) {
+        page.teacherPaySlipPageId = tpsId;
+        changed = true;
+      }
+      if (page.tpsPageId !== tpsId) {
+        page.tpsPageId = tpsId;
+        changed = true;
+      }
+      if (page.rmeTeacherPaySlipCountable !== true) {
+        page.rmeTeacherPaySlipCountable = true;
+        changed = true;
+      }
+    });
+
+    const ids = Array.from(new Set(teacherPages.map((page) => String(page.rmeTeacherPaySlipPageId || page.teacherPaySlipPageId || page.tpsPageId || "")).filter(Boolean)));
+    const registry = {
+      count: ids.length,
+      ids,
+      pages: teacherPages,
+    };
+    window.rmeTeacherPaySlipPageIdRegistry = registry;
+    decorateTeacherButtons(registry);
+    if (changed) {
+      persistPagesState();
+    }
+    window.dispatchEvent(new CustomEvent("rme:teacher-pay-slip-page-ids", { detail: registry }));
+    return registry;
+  }
+
+  window.rmeAssignTeacherPaySlipPageIds = assignTeacherPageIds;
+  window.rmeTeacherPaySlipPageIdRegistry = window.rmeTeacherPaySlipPageIdRegistry || { count: 0, ids: [], pages: [] };
+
+  function start() {
+    assignTeacherPageIds();
+    window.setInterval(assignTeacherPageIds, REFRESH_MS);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start, { once: true });
+  } else {
+    window.setTimeout(start, 0);
+  }
+})();
+
+// === RME Turn 52 — Authoritative dashboard card sources ===========================
+// Final card source owner:
+// - Total Teachers reads Supabase teacher accounts.
+// - Teacher Pay Slips reads all teacher pages under the Teacher Pay Slips page.
+// - Names & Notion Row IDs reads the admin Names ↔ Notion row-ID table row total.
+// This block also rewrites the existing lower cards in place so no stale 6 / 2
+// values can remain on screen while async data loads.
+(function rmeDashboardAuthoritativeCardSourcesBoot() {
+  // Permanently disabled: this post-render dashboard card owner can target a
+  // dashboard ancestor and replace live dashboard content after sign-in. Keep
+  // the dashboard visible/clickable. Future count fixes must patch the original
+  // dashboard source/render function directly, not repair rendered containers.
+  return;
+  const STYLE_ID = "rmeDashboardAuthoritativeCardSourcesStyles";
+  const REFRESH_MS = 600;
+
+  const state = {
+    totalTeachers: null,
+    teacherPaySlipPages: null,
+    teacherPaySlipAllPages: null,
+    rowIdRows: null,
+    busy: false,
+  };
+
+  function norm(v) {
+    return String(v ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  function esc(v) {
+    return String(v ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function pagesState() {
+    try {
+      return Array.isArray(notionWorkspacePagesState) ? notionWorkspacePagesState : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function dashboardRoot() {
+    const root =
+      document.getElementById("pageHome") ||
+      document.getElementById("homeContent") ||
+      null;
+    return root instanceof HTMLElement ? root : null;
+  }
+
+  function injectStyles() {
+    if (document.getElementById(STYLE_ID)) {
+      return;
+    }
+    const style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = [
+      ".rme-dashboard-authoritative-card {",
+      "  min-height: 5rem !important;",
+      "}",
+      ".rme-dashboard-authoritative-card .rme-admin-bottom-metric-repair {",
+      "  display: grid !important;",
+      "  grid-template-columns: auto 1fr auto !important;",
+      "  align-items: stretch !important;",
+      "  gap: 0.75rem !important;",
+      "  width: 100% !important;",
+      "  height: 100% !important;",
+      "}",
+      ".rme-dashboard-authoritative-card .rme-admin-bottom-metric-repair__icon {",
+      "  width: 2rem !important;",
+      "  height: 2rem !important;",
+      "  display: inline-flex !important;",
+      "  align-items: center !important;",
+      "  justify-content: center !important;",
+      "  border-radius: 10px !important;",
+      "  background: color-mix(in srgb, var(--pill-dot, #3b82f6) 18%, transparent) !important;",
+      "  color: var(--pill-text, #60a5fa) !important;",
+      "}",
+      ".rme-dashboard-authoritative-card .rme-admin-bottom-metric-repair__body {",
+      "  min-width: 0 !important;",
+      "  min-height: 4.8rem !important;",
+      "  display: flex !important;",
+      "  flex-direction: column !important;",
+      "}",
+      ".rme-dashboard-authoritative-card .rme-admin-bottom-metric-repair__label {",
+      "  margin: 0 0 0.15rem !important;",
+      "  color: var(--th-label) !important;",
+      "  font-size: 0.62rem !important;",
+      "  font-weight: 850 !important;",
+      "  letter-spacing: 0.075em !important;",
+      "  text-transform: uppercase !important;",
+      "}",
+      ".rme-dashboard-authoritative-card .rme-admin-bottom-metric-repair__number {",
+      "  margin: 0 !important;",
+      "  color: var(--text) !important;",
+      "  font-size: clamp(2.7rem, 5.4vw, 3.9rem) !important;",
+      "  font-weight: 920 !important;",
+      "  line-height: 0.9 !important;",
+      "  letter-spacing: -0.065em !important;",
+      "  font-variant-numeric: tabular-nums !important;",
+      "}",
+      ".rme-dashboard-authoritative-card .rme-admin-bottom-metric-repair__meta {",
+      "  margin: auto 0 0 !important;",
+      "  color: var(--text-muted) !important;",
+      "  font-size: 0.58rem !important;",
+      "  line-height: 1.18 !important;",
+      "  opacity: 0.82 !important;",
+      "  white-space: nowrap !important;",
+      "  overflow: hidden !important;",
+      "  text-overflow: ellipsis !important;",
+      "}",
+      ".rme-dashboard-authoritative-card .rme-admin-bottom-metric-repair__arrow {",
+      "  color: var(--pill-text) !important;",
+      "  font-size: 1rem !important;",
+      "  font-weight: 800 !important;",
+      "  align-self: center !important;",
+      "}",
+    ].join("\n");
+    document.head.appendChild(style);
+  }
+
+  function activeTeacherRows(rows) {
+    const list = Array.isArray(rows) ? rows : [];
+    return list.filter((row) => {
+      if (!row || typeof row !== "object") {
+        return false;
+      }
+      if (row.disabled === true || row.archived === true || row.deleted === true) {
+        return false;
+      }
+      if (row.is_active === false || row.active === false) {
+        return false;
+      }
+      return true;
+    });
+  }
+
+  async function readSupabaseTeacherAccounts() {
+    const api = window.teacherAuth;
+    if (typeof api?.listTeachersForAdmin !== "function") {
+      return null;
+    }
+    try {
+      const res = await api.listTeachersForAdmin();
+      const rows =
+        Array.isArray(res?.teachers) ? res.teachers :
+        Array.isArray(res?.rows) ? res.rows :
+        Array.isArray(res?.data) ? res.data :
+        Array.isArray(res) ? res :
+        [];
+      return activeTeacherRows(rows).length;
+    } catch (e) {
+      console.warn("dashboard total teachers source:", e);
+      return null;
+    }
+  }
+
+  async function readNamesNotionRowIdRows() {
+    const api = window.teacherAuth;
+    if (typeof api?.fetchPayslipNotionPersonLinksForAdmin !== "function") {
+      return null;
+    }
+    try {
+      const res = await api.fetchPayslipNotionPersonLinksForAdmin();
+      if (res?.ok && Array.isArray(res.rows)) {
+        return res.rows.length;
+      }
+      if (Array.isArray(res?.rows)) {
+        return res.rows.length;
+      }
+    } catch (e) {
+      console.warn("dashboard row-ID source:", e);
+    }
+    return null;
+  }
+
+  function findWorkspacePageByTitle(testFn) {
+    return pagesState().find((p) => p && p.kind !== "trash" && testFn(norm(p.title))) || null;
+  }
+
+  function titleLooksLikeSchoolContainer(titleRaw) {
+    const title = norm(titleRaw);
+    return /^(talking global|magic english|speak english|nice ?kid|nicekid|sky ?line|skyline)(\s+\d+|\s+sa|\s+america|\s+europe|\s+3\.5)?$/.test(title);
+  }
+
+  function teacherPaySlipPageCounts() {
+    try {
+      if (typeof window.rmeAssignTeacherPaySlipPageIds === "function") {
+        window.rmeAssignTeacherPaySlipPageIds();
+      }
+    } catch (e) {
+      console.warn("assign Teacher Pay Slips page IDs before count:", e);
+    }
+
+    const registry = window.rmeTeacherPaySlipPageIdRegistry;
+    const registryIds = new Set(Array.isArray(registry?.ids) ? registry.ids.filter(Boolean).map(String) : []);
+    if (registryIds.size) {
+      return {
+        teacherPages: registryIds.size,
+        allPages: registryIds.size,
+      };
+    }
+
+    const markedPages = pagesState().filter((page) =>
+      page &&
+      page.kind !== "trash" &&
+      (
+        page.rmeTeacherPaySlipCountable === true ||
+        page.rmeTeacherPaySlipPageId ||
+        page.teacherPaySlipPageId ||
+        page.tpsPageId
+      )
+    );
+    if (markedPages.length) {
+      return {
+        teacherPages: new Set(markedPages.map((page) => String(page.rmeTeacherPaySlipPageId || page.teacherPaySlipPageId || page.tpsPageId || page.id))).size,
+        allPages: markedPages.length,
+      };
+    }
+
+    const domIds = new Set();
+    document.querySelectorAll("#rmeTeacherPaySlipsSchoolGroups [data-rme-tps-page-id], #rmeTeacherPaySlipsSchoolGroups [data-rme-tps-countable-page='true']").forEach((btn) => {
+      if (!(btn instanceof HTMLElement)) {
+        return;
+      }
+      const id = btn.getAttribute("data-rme-tps-page-id") || btn.getAttribute("data-rme-tps-teacher-id") || "";
+      if (id) {
+        domIds.add(id);
+      }
+    });
+    if (domIds.size) {
+      return {
+        teacherPages: domIds.size,
+        allPages: domIds.size,
+      };
+    }
+
+    const parent = findWorkspacePageByTitle((title) =>
+      title === "teacher pay slips" || title.includes("teacher pay slips")
+    );
+    if (!parent?.id) {
+      return { teacherPages: null, allPages: null };
+    }
+
+    const byParent = new Map();
+    for (const page of pagesState()) {
+      if (!page || page.kind === "trash") {
+        continue;
+      }
+      const pid = String(page.parentId ?? "");
+      if (!pid) {
+        continue;
+      }
+      if (!byParent.has(pid)) {
+        byParent.set(pid, []);
+      }
+      byParent.get(pid).push(page);
+    }
+
+    const startId = String(parent.id);
+    const seen = new Set([startId]);
+    const descendants = [];
+    const queue = [...(byParent.get(startId) || [])];
+
+    while (queue.length) {
+      const page = queue.shift();
+      const id = String(page?.id ?? "");
+      if (!id || seen.has(id) || page.kind === "trash") {
+        continue;
+      }
+      seen.add(id);
+      const title = norm(page.title);
+      if (!title || title === "teacher pay slips" || (title.includes("names") && title.includes("notion") && title.includes("row"))) {
+        continue;
+      }
+      descendants.push(page);
+      queue.push(...(byParent.get(id) || []));
+    }
+
+    const leafTeachers = descendants.filter((page) => {
+      const id = String(page.id ?? "");
+      const title = norm(page.title);
+      if (!title || titleLooksLikeSchoolContainer(title)) {
+        return false;
+      }
+      const children = (byParent.get(id) || []).filter((child) => child && child.kind !== "trash" && norm(child.title));
+      return children.length === 0;
+    });
+
+    return {
+      teacherPages: leafTeachers.length,
+      allPages: descendants.length,
+    };
+  }
+
+  function countRowsInNamesDomOnly() {
+    const directTbody = document.getElementById("payslipNotionLinksTbody");
+    const roots = [];
+    if (directTbody?.parentElement) {
+      roots.push(directTbody.parentElement);
+    }
+    const page = findWorkspacePageByTitle((title) =>
+      title.includes("names") && title.includes("notion") && title.includes("row")
+    );
+    if (page?.id) {
+      document.querySelectorAll(".notion-ws-pane[data-workspace-id='" + String(page.id).replace(/'/g, "\\'") + "']").forEach((el) => {
+        if (el instanceof HTMLElement) {
+          roots.push(el);
+        }
+      });
+    }
+    let best = 0;
+    for (const root of roots) {
+      const rows = Array.from(root.querySelectorAll("tbody tr, .floating-draft-data-row, .canvas-local-db-table tbody tr, .payslip-notion-links-table tbody tr"))
+        .filter((row) => row instanceof HTMLElement && norm(row.textContent));
+      best = Math.max(best, rows.length);
+    }
+    return best || null;
+  }
+
+  async function refreshData() {
+    if (state.busy) {
+      return;
+    }
+    state.busy = true;
+    try {
+      const [teacherCount, rowIdCount] = await Promise.all([
+        readSupabaseTeacherAccounts(),
+        readNamesNotionRowIdRows(),
+      ]);
+
+      if (typeof teacherCount === "number") {
+        state.totalTeachers = teacherCount;
+      }
+      if (typeof rowIdCount === "number") {
+        state.rowIdRows = rowIdCount;
+      } else {
+        const domRows = countRowsInNamesDomOnly();
+        if (typeof domRows === "number") {
+          state.rowIdRows = domRows;
+        }
+      }
+
+      const payCounts = teacherPaySlipPageCounts();
+      if (typeof payCounts.teacherPages === "number") {
+        state.teacherPaySlipPages = payCounts.teacherPages;
+      }
+      if (typeof payCounts.allPages === "number") {
+        state.teacherPaySlipAllPages = payCounts.allPages;
+      }
+    } finally {
+      state.busy = false;
+    }
+  }
+
+  function setTopStat(cardId, value, meta) {
+    const card = document.querySelector(".rme-stat-card[data-card='" + cardId + "']");
+    if (!(card instanceof HTMLElement) || value == null) {
+      return;
+    }
+    const valueEl = card.querySelector(".rme-stat-value");
+    if (valueEl instanceof HTMLElement) {
+      valueEl.textContent = String(value);
+      valueEl.classList.remove("rme-stat-value--loading");
+    }
+    const metaEl = card.querySelector(".rme-stat-meta");
+    if (metaEl instanceof HTMLElement) {
+      metaEl.textContent = meta;
+    }
+  }
+
+  function visibleBottomCards() {
+    const root = dashboardRoot();
+    if (!root) {
+      return [];
+    }
+    return Array.from(root.querySelectorAll("article, button, section, div"))
+      .filter((el) => {
+        if (!(el instanceof HTMLElement)) {
+          return false;
+        }
+        if (
+          el.closest(".rme-stat-card") ||
+          el.closest("#notionWorkspace") ||
+          el.closest("#notionEditorSidebar") ||
+          el.closest("#notionWsPanes") ||
+          el.closest("#notionWorkspacePageList") ||
+          el.closest("#rmeOperationsInteractiveTables") ||
+          el.closest("#notionWsPaneRmeOperations")
+        ) {
+          return false;
+        }
+        const rect = el.getBoundingClientRect();
+        if (rect.width < 170 || rect.height < 32) {
+          return false;
+        }
+        const text = norm(el.textContent);
+        if (!text || text.length > 360) {
+          return false;
+        }
+        return true;
+      });
+  }
+
+  function deepestCardsMatching(predicate) {
+    return visibleBottomCards().filter((el) => {
+      const text = norm(el.textContent);
+      if (!predicate(text)) {
+        return false;
+      }
+      return !Array.from(el.children).some((child) => {
+        if (!(child instanceof HTMLElement)) {
+          return false;
+        }
+        const childText = norm(child.textContent);
+        return childText && childText.length < text.length && predicate(childText);
+      });
+    });
+  }
+
+  function findBottomCardTargets() {
+    const cards = deepestCardsMatching((text) =>
+      text.includes("teacher pay slips") ||
+      text.includes("teach a pay slip") ||
+      text.includes("slips on file") ||
+      text.includes("pay slip pages") ||
+      (text.includes("pay slip") && text.includes("open")) ||
+      (text.includes("names") && text.includes("notion") && text.includes("row")) ||
+      (text.includes("names") && text.includes("notions") && text.includes("row")) ||
+      text.includes("notion row id table rows") ||
+      text.includes("notions row id")
+    );
+
+    cards.sort((a, b) => {
+      const ar = a.getBoundingClientRect();
+      const br = b.getBoundingClientRect();
+      if (Math.abs(ar.top - br.top) > 12) {
+        return ar.top - br.top;
+      }
+      return ar.left - br.left;
+    });
+
+    const pay = cards.find((card) => {
+      const text = norm(card.textContent);
+      return text.includes("teacher pay slips") || text.includes("teach a pay slip") || text.includes("slips on file") || text.includes("pay slip pages");
+    }) || cards[0] || null;
+
+    const rowIds = cards.find((card) => {
+      if (card === pay) {
+        return false;
+      }
+      const text = norm(card.textContent);
+      return (text.includes("names") && (text.includes("notion") || text.includes("notions")) && text.includes("row")) ||
+        text.includes("notion row id") ||
+        text.includes("notions row id");
+    }) || cards.find((card) => card !== pay) || null;
+
+    return { pay, rowIds };
+  }
+
+  function renderBottomCard(el, label, icon, value, meta) {
+    if (!(el instanceof HTMLElement)) {
+      return;
+    }
+    const key = "v55::" + label + "::" + value + "::" + meta;
+    const text = norm(el.textContent);
+    const expectedValue = norm(value);
+    const expectedMeta = norm(meta);
+    const stillCorrect =
+      text.includes(norm(label)) &&
+      (!expectedValue || text.includes(expectedValue)) &&
+      (!expectedMeta || text.includes(expectedMeta.slice(0, Math.min(28, expectedMeta.length))));
+    // The base dashboard can repaint the same card element after startup and leave
+    // our dataset marker behind. Only skip when the visible text is still correct.
+    if (el.dataset.rmeAuthoritativeCardKey === key && stillCorrect) {
+      return;
+    }
+    el.dataset.rmeAuthoritativeCardKey = key;
+    el.dataset.rmeTeacherPaySlipSource = label === "Teacher Pay Slips" ? "page-total" : "row-source";
+    el.classList.add("rme-dashboard-authoritative-card");
+    el.innerHTML =
+      "<div class=\"rme-admin-bottom-metric-repair\">" +
+        "<span class=\"rme-admin-bottom-metric-repair__icon\" aria-hidden=\"true\">" + esc(icon) + "</span>" +
+        "<div class=\"rme-admin-bottom-metric-repair__body\">" +
+          "<p class=\"rme-admin-bottom-metric-repair__label\">" + esc(label) + "</p>" +
+          "<p class=\"rme-admin-bottom-metric-repair__number\">" + esc(value) + "</p>" +
+          "<p class=\"rme-admin-bottom-metric-repair__meta\">" + esc(meta) + "</p>" +
+        "</div>" +
+        "<span class=\"rme-admin-bottom-metric-repair__arrow\" aria-hidden=\"true\">›</span>" +
+      "</div>";
+  }
+
+  function renderCards() {
+    injectStyles();
+
+    if (typeof state.totalTeachers === "number") {
+      setTopStat(
+        "totalTeachers",
+        state.totalTeachers,
+        state.totalTeachers === 1
+          ? "1 Supabase teacher account"
+          : state.totalTeachers + " Supabase teacher accounts",
+      );
+    }
+
+    if (typeof state.teacherPaySlipPages === "number") {
+      setTopStat(
+        "payslipsThisMonth",
+        state.teacherPaySlipPages,
+        state.teacherPaySlipPages === 1
+          ? "1 Teacher Pay Slips ID"
+          : state.teacherPaySlipPages + " Teacher Pay Slips IDs",
+      );
+    }
+
+    const { pay, rowIds } = findBottomCardTargets();
+    const teacherPages = state.teacherPaySlipPages;
+    const allPages = state.teacherPaySlipAllPages;
+    const rowIdRows = state.rowIdRows;
+
+    if (pay) {
+      renderBottomCard(
+        pay,
+        "Teacher Pay Slips",
+        "📄",
+        teacherPages ?? "—",
+        teacherPages == null
+          ? "Calculating pages in Teacher Pay Slips…"
+          : (teacherPages === 1 ? "1 total page" : teacherPages + " total pages") +
+            " in Teacher Pay Slips",
+      );
+    }
+
+    if (rowIds) {
+      renderBottomCard(
+        rowIds,
+        "Names & Notion Row IDs",
+        "🆔",
+        rowIdRows ?? "—",
+        rowIdRows == null
+          ? "Reading Names & Notion Row IDs table…"
+          : rowIdRows === 1
+            ? "1 total row in Names & Notion Row IDs"
+            : rowIdRows + " total rows in Names & Notion Row IDs",
+      );
+    }
+  }
+
+  function tick() {
+    renderCards();
+    void refreshData().then(renderCards);
+  }
+
+  function start() {
+    tick();
+    window.setInterval(tick, REFRESH_MS);
+
+    const root = dashboardRoot();
+    if (root && typeof MutationObserver === "function") {
+      const observer = new MutationObserver(() => {
+        window.requestAnimationFrame(() => {
+          renderCards();
+          void refreshData().then(renderCards);
+        });
+      });
+      observer.observe(root, { childList: true, subtree: true, characterData: true });
+    }
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start, { once: true });
+  } else {
+    window.setTimeout(start, 0);
+  }
+})();
+// Owns the two lower dashboard cards and prevents old loops from writing stale 6 / 2.
+// - Teacher Pay Slips counts teacher pages nested inside the Teacher Pay Slips page,
+//   not the six school/group containers.
+// - Names & Notion Row IDs counts rows from the admin row-ID mapping table in
+//   Supabase first, then uses a table-only fallback.
+(function rmeDashboardCardTrueSourceOwnerBoot() {
+  // Disabled by Turn 52. Counts now come from the three explicit authoritative sources.
+  return;
+  const STYLE_ID = "rmeDashboardCardTrueSourceOwnerStyles";
+  const REFRESH_MS = 1400;
+  const FLOATING_DRAFTS_KEY = "recruit-notion-workspace-page-floating-drafts-v1";
+  const CANVAS_DRAFTS_KEY = "recruit-notion-workspace-canvas-drafts-v1";
+
+  const state = {
+    lastPayCount: null,
+    lastIdCount: null,
+    fetchingIds: false,
+  };
+
+  function norm(v) {
+    return String(v ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  function esc(v) {
+    return String(v ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function pagesState() {
+    try {
+      return Array.isArray(notionWorkspacePagesState) ? notionWorkspacePagesState : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function dashboardRoot() {
+    const root =
+      document.getElementById("pageHome") ||
+      document.getElementById("homeContent") ||
+      null;
+    return root instanceof HTMLElement ? root : null;
+  }
+
+  function readJson(key) {
+    try {
+      const raw = typeof payslipAppStateGetItem === "function"
+        ? payslipAppStateGetItem(key)
+        : window.localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function injectStyles() {
+    if (document.getElementById(STYLE_ID)) {
+      return;
+    }
+    const style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = [
+      ".rme-dashboard-true-count-card {",
+      "  min-height: 4.95rem !important;",
+      "}",
+      ".rme-dashboard-true-count-card .rme-admin-bottom-metric-repair {",
+      "  display: grid !important;",
+      "  grid-template-columns: auto 1fr auto !important;",
+      "  align-items: stretch !important;",
+      "  gap: 0.75rem !important;",
+      "  width: 100% !important;",
+      "  height: 100% !important;",
+      "  min-width: 0 !important;",
+      "}",
+      ".rme-dashboard-true-count-card .rme-admin-bottom-metric-repair__icon {",
+      "  width: 2rem !important;",
+      "  height: 2rem !important;",
+      "  display: inline-flex !important;",
+      "  align-items: center !important;",
+      "  justify-content: center !important;",
+      "  border-radius: 10px !important;",
+      "  background: color-mix(in srgb, var(--pill-dot, #3b82f6) 18%, transparent) !important;",
+      "  color: var(--pill-text, #60a5fa) !important;",
+      "}",
+      ".rme-dashboard-true-count-card .rme-admin-bottom-metric-repair__body {",
+      "  min-width: 0 !important;",
+      "  min-height: 4.8rem !important;",
+      "  display: flex !important;",
+      "  flex-direction: column !important;",
+      "}",
+      ".rme-dashboard-true-count-card .rme-admin-bottom-metric-repair__label {",
+      "  margin: 0 0 0.15rem !important;",
+      "  color: var(--th-label) !important;",
+      "  font-size: 0.62rem !important;",
+      "  font-weight: 850 !important;",
+      "  letter-spacing: 0.075em !important;",
+      "  text-transform: uppercase !important;",
+      "}",
+      ".rme-dashboard-true-count-card .rme-admin-bottom-metric-repair__number {",
+      "  margin: 0 !important;",
+      "  color: var(--text) !important;",
+      "  font-size: clamp(2.7rem, 5.4vw, 3.9rem) !important;",
+      "  font-weight: 920 !important;",
+      "  line-height: 0.9 !important;",
+      "  letter-spacing: -0.065em !important;",
+      "  font-variant-numeric: tabular-nums !important;",
+      "}",
+      ".rme-dashboard-true-count-card .rme-admin-bottom-metric-repair__meta {",
+      "  margin: auto 0 0 !important;",
+      "  color: var(--text-muted) !important;",
+      "  font-size: 0.58rem !important;",
+      "  line-height: 1.18 !important;",
+      "  opacity: 0.82 !important;",
+      "  white-space: nowrap !important;",
+      "  overflow: hidden !important;",
+      "  text-overflow: ellipsis !important;",
+      "}",
+      ".rme-dashboard-true-count-card .rme-admin-bottom-metric-repair__arrow {",
+      "  color: var(--pill-text) !important;",
+      "  font-size: 1rem !important;",
+      "  font-weight: 800 !important;",
+      "  align-self: center !important;",
+      "}",
+    ].join("\n");
+    document.head.appendChild(style);
+  }
+
+  function findWorkspacePageByTitle(testFn) {
+    return pagesState().find((p) => p && p.kind !== "trash" && testFn(norm(p.title))) || null;
+  }
+
+  function childPagesOf(parentId) {
+    const pid = String(parentId ?? "");
+    if (!pid) {
+      return [];
+    }
+    return pagesState().filter((p) =>
+      p &&
+      p.kind !== "trash" &&
+      String(p.parentId ?? "") === pid &&
+      norm(p.title)
+    );
+  }
+
+  function teacherPaySlipTeacherPageCount() {
+    const root = findWorkspacePageByTitle((title) =>
+      title === "teacher pay slips" || title.includes("teacher pay slips")
+    );
+    if (!root?.id) {
+      return null;
+    }
+
+    const pages = pagesState();
+    const byParent = new Map();
+    for (const page of pages) {
+      if (!page || page.kind === "trash") {
+        continue;
+      }
+      const pid = String(page.parentId ?? "");
+      if (!pid) {
+        continue;
+      }
+      if (!byParent.has(pid)) {
+        byParent.set(pid, []);
+      }
+      byParent.get(pid).push(page);
+    }
+
+    const rootId = String(root.id);
+    const descendants = [];
+    const stack = [...(byParent.get(rootId) || [])];
+    const seen = new Set([rootId]);
+    while (stack.length) {
+      const page = stack.shift();
+      const id = String(page?.id ?? "");
+      if (!id || seen.has(id)) {
+        continue;
+      }
+      seen.add(id);
+      const title = norm(page.title);
+      if (!title || title === "teacher pay slips" || (title.includes("names") && title.includes("notion") && title.includes("row"))) {
+        continue;
+      }
+      descendants.push(page);
+      const kids = byParent.get(id) || [];
+      stack.push(...kids);
+    }
+
+    if (!descendants.length) {
+      return 0;
+    }
+
+    const leafTeachers = descendants.filter((page) => {
+      const id = String(page.id ?? "");
+      const kids = (byParent.get(id) || []).filter((child) => child && child.kind !== "trash" && norm(child.title));
+      if (kids.length > 0) {
+        return false;
+      }
+      const title = norm(page.title);
+      if (/^(talking global|magic english|speak english|nice ?kid|nicekid|sky ?line|skyline)(\s+\d+|\s+sa|\s+america|\s+europe)?$/.test(title)) {
+        return false;
+      }
+      return true;
+    });
+
+    return leafTeachers.length || descendants.length;
+  }
+
+  function rowsFromDraftBlob(page) {
+    if (!page?.id) {
+      return null;
+    }
+    const blobs = [
+      readJson(FLOATING_DRAFTS_KEY),
+      readJson(CANVAS_DRAFTS_KEY),
+    ];
+    let best = 0;
+    for (const blob of blobs) {
+      const pageBlob = blob && typeof blob === "object" ? blob[page.id] : null;
+      const candidates = Array.isArray(pageBlob)
+        ? pageBlob
+        : pageBlob && typeof pageBlob === "object"
+          ? Object.values(pageBlob)
+          : [];
+      for (const item of candidates) {
+        const rows =
+          Array.isArray(item?.rows) ? item.rows :
+          Array.isArray(item?.shadow?.rows) ? item.shadow.rows :
+          Array.isArray(item?.snapshot?.rows) ? item.snapshot.rows :
+          Array.isArray(item?.table?.rows) ? item.table.rows :
+          [];
+        const count = rows.filter((row) => {
+          if (Array.isArray(row)) {
+            return row.some((cell) => String(cell ?? "").trim());
+          }
+          if (row && typeof row === "object") {
+            return Object.values(row).some((cell) => String(cell ?? "").trim());
+          }
+          return Boolean(String(row ?? "").trim());
+        }).length;
+        if (count > best) {
+          best = count;
+        }
+      }
+    }
+    return best || null;
+  }
+
+  function countRowsInElement(root) {
+    if (!(root instanceof HTMLElement)) {
+      return 0;
+    }
+    const rows = Array.from(root.querySelectorAll("tbody tr, .floating-draft-data-row, .canvas-local-db-table tbody tr, .payslip-notion-links-table tbody tr"));
+    return rows.filter((row) => {
+      if (!(row instanceof HTMLElement)) {
+        return false;
+      }
+      const text = norm(row.textContent);
+      return Boolean(text && !/^(add|new|empty|loading|no rows|no data)$/.test(text));
+    }).length;
+  }
+
+  function namesRowIdsDomCount() {
+    const directTbody = document.getElementById("payslipNotionLinksTbody");
+    const direct = countRowsInElement(directTbody?.parentElement || directTbody);
+    if (direct > 0) {
+      return direct;
+    }
+
+    const root = dashboardRoot() || document;
+    const sections = Array.from(root.querySelectorAll("section, article, div"))
+      .filter((el) => {
+        if (!(el instanceof HTMLElement)) {
+          return false;
+        }
+        const text = norm(el.textContent);
+        return text.includes("names") && text.includes("notion") && text.includes("row");
+      });
+    let best = 0;
+    for (const section of sections) {
+      best = Math.max(best, countRowsInElement(section));
+    }
+    return best || null;
+  }
+
+  async function refreshNamesRowIdCount() {
+    if (state.fetchingIds) {
+      return;
+    }
+    state.fetchingIds = true;
+    try {
+      if (typeof window.teacherAuth?.fetchPayslipNotionPersonLinksForAdmin === "function") {
+        const res = await window.teacherAuth.fetchPayslipNotionPersonLinksForAdmin();
+        if (res?.ok && Array.isArray(res.rows)) {
+          state.lastIdCount = res.rows.length;
+          return;
+        }
+      }
+
+      const page = findWorkspacePageByTitle((title) =>
+        title.includes("names") && title.includes("notion") && title.includes("row")
+      );
+      const draftCount = rowsFromDraftBlob(page);
+      if (typeof draftCount === "number") {
+        state.lastIdCount = draftCount;
+        return;
+      }
+
+      const domCount = namesRowIdsDomCount();
+      if (typeof domCount === "number") {
+        state.lastIdCount = domCount;
+      }
+    } finally {
+      state.fetchingIds = false;
+    }
+  }
+
+  function visibleDashboardCards() {
+    const root = dashboardRoot();
+    if (!root) {
+      return [];
+    }
+    return Array.from(root.querySelectorAll("article, button, section, div"))
+      .filter((el) => {
+        if (!(el instanceof HTMLElement)) {
+          return false;
+        }
+        if (
+          el.closest("#notionWorkspace") ||
+          el.closest("#notionEditorSidebar") ||
+          el.closest("#notionWsPanes") ||
+          el.closest("#notionWorkspacePageList") ||
+          el.closest("#rmeOperationsInteractiveTables") ||
+          el.closest("#notionWsPaneRmeOperations") ||
+          el.closest(".rme-stat-card")
+        ) {
+          return false;
+        }
+        const rect = el.getBoundingClientRect();
+        if (rect.width < 170 || rect.height < 32) {
+          return false;
+        }
+        const text = norm(el.textContent);
+        if (!text || text.length > 340) {
+          return false;
+        }
+        return true;
+      });
+  }
+
+  function deepestCardsMatching(predicate) {
+    return visibleDashboardCards().filter((el) => {
+      const text = norm(el.textContent);
+      if (!predicate(text)) {
+        return false;
+      }
+      return !Array.from(el.children).some((child) => {
+        if (!(child instanceof HTMLElement)) {
+          return false;
+        }
+        const childText = norm(child.textContent);
+        return childText && childText.length < text.length && predicate(childText);
+      });
+    });
+  }
+
+  function targetCards() {
+    const cards = deepestCardsMatching((text) =>
+      text.includes("teacher pay slips") ||
+      text.includes("teach a pay slip") ||
+      text.includes("pay slip") && text.includes("open") ||
+      text.includes("names") && text.includes("notion") && text.includes("row") ||
+      text.includes("notions row") ||
+      /\b\d+\s+notion row id table rows?\b/.test(text)
+    );
+
+    cards.sort((a, b) => {
+      const ar = a.getBoundingClientRect();
+      const br = b.getBoundingClientRect();
+      if (Math.abs(ar.top - br.top) > 12) {
+        return ar.top - br.top;
+      }
+      return ar.left - br.left;
+    });
+
+    const pay = cards.find((card) => {
+      const text = norm(card.textContent);
+      return text.includes("teacher pay slips") || text.includes("teach a pay slip") || (text.includes("pay slip") && !text.includes("notion row"));
+    }) || cards[0] || null;
+
+    const ids = cards.find((card) => {
+      const text = norm(card.textContent);
+      return card !== pay && (
+        (text.includes("names") && text.includes("notion") && text.includes("row")) ||
+        text.includes("notions row") ||
+        /\b\d+\s+notion row id table rows?\b/.test(text)
+      );
+    }) || cards.find((card) => card !== pay) || null;
+
+    return { pay, ids };
+  }
+
+  function renderCard(el, label, icon, count, meta) {
+    if (!(el instanceof HTMLElement)) {
+      return;
+    }
+    const key = "v51::" + label + "::" + count + "::" + meta;
+    if (el.dataset.rmeTrueCountKey === key) {
+      return;
+    }
+    el.dataset.rmeTrueCountKey = key;
+    el.classList.add("rme-dashboard-true-count-card");
+    el.innerHTML =
+      "<div class=\"rme-admin-bottom-metric-repair\">" +
+        "<span class=\"rme-admin-bottom-metric-repair__icon\" aria-hidden=\"true\">" + esc(icon) + "</span>" +
+        "<div class=\"rme-admin-bottom-metric-repair__body\">" +
+          "<p class=\"rme-admin-bottom-metric-repair__label\">" + esc(label) + "</p>" +
+          "<p class=\"rme-admin-bottom-metric-repair__number\">" + esc(count) + "</p>" +
+          "<p class=\"rme-admin-bottom-metric-repair__meta\">" + esc(meta) + "</p>" +
+        "</div>" +
+        "<span class=\"rme-admin-bottom-metric-repair__arrow\" aria-hidden=\"true\">›</span>" +
+      "</div>";
+  }
+
+  function setTopPayslipStat(count) {
+    const card = document.querySelector(".rme-stat-card[data-card='payslipsThisMonth']");
+    if (!(card instanceof HTMLElement) || typeof count !== "number") {
+      return;
+    }
+    const value = card.querySelector(".rme-stat-value");
+    if (value instanceof HTMLElement) {
+      value.textContent = String(count);
+      value.classList.remove("rme-stat-value--loading");
+    }
+    const meta = card.querySelector(".rme-stat-meta");
+    if (meta instanceof HTMLElement) {
+      meta.textContent = count === 1 ? "1 teacher pay slip page" : count + " teacher pay slip pages";
+    }
+  }
+
+  function renderCounts() {
+    injectStyles();
+
+    const payCount = teacherPaySlipTeacherPageCount();
+    if (typeof payCount === "number") {
+      state.lastPayCount = payCount;
+      setTopPayslipStat(payCount);
+    }
+
+    const { pay, ids } = targetCards();
+    const pc = state.lastPayCount;
+    const ic = state.lastIdCount;
+
+    if (pay) {
+      renderCard(
+        pay,
+        "Teacher Pay Slips",
+        "📄",
+        pc ?? "—",
+        pc === 1 ? "1 teacher page - tap to open" : (pc ?? "—") + " teacher pages - tap to open",
+      );
+    }
+
+    if (ids) {
+      renderCard(
+        ids,
+        "Names & Notion Row IDs",
+        "🆔",
+        ic ?? "—",
+        ic === 1 ? "1 mapping row - tap for IDs" : (ic ?? "—") + " mapping rows - tap for IDs",
+      );
+    }
+  }
+
+  function tick() {
+    renderCounts();
+    void refreshNamesRowIdCount().then(renderCounts);
+  }
+
+  function start() {
+    tick();
+    window.setInterval(tick, REFRESH_MS);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start, { once: true });
+  } else {
+    window.setTimeout(start, 0);
+  }
+})();// === RME Turn 50 — Teacher Pay Slips school-grouped page ==========================
+// Removes the empty Teacher Pay Slips page toggle and replaces it with a clean,
+// school-grouped teacher loop. Each teacher stays in the workspace tree/sidebar,
+// but the page body now groups teacher pages by the school detected from that
+// teacher page's saved tables/draft databases.
+(function rmeTeacherPaySlipsSchoolGroupedPageBoot() {
+  const ROOT_ID = "rmeTeacherPaySlipsSchoolGroups";
+  const STYLE_ID = "rmeTeacherPaySlipsSchoolGroupsStylesV2";
+  const REFRESH_MS = 900;
+  const FLOATING_DRAFTS_KEY = "recruit-notion-workspace-page-floating-drafts-v1";
+  const CANVAS_DRAFTS_KEY = "recruit-notion-workspace-canvas-drafts-v1";
+  const WORKSPACE_PAGES_KEY = "recruit-notion-workspace-pages-v2";
+  /** Manual school column for a teacher workspace page (drag-and-drop on the TPS board). */
+  const TPS_SCHOOL_BUCKET_OVERRIDES_KEY = "recruit-rme-tps-school-bucket-overrides-v1";
+
+  const SCHOOL_ORDER = [
+    "Talking Global",
+    "Magic English",
+    "Speak English",
+    "Nice Kid",
+    "Sky Line",
+    "Other / Needs school check",
+  ];
+
+  const SCHOOL_TONES = {
+    "Talking Global": "blue",
+    "Magic English": "purple",
+    "Speak English": "green",
+    "Nice Kid": "pink",
+    "Sky Line": "orange",
+    "Other / Needs school check": "gray",
+  };
+
+  function norm(v) {
+    return String(v ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  function esc(v) {
+    return String(v ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function cssEscape(v) {
+    if (window.CSS && typeof window.CSS.escape === "function") {
+      return window.CSS.escape(String(v));
+    }
+    return String(v).replace(/["\\]/g, "\\$&");
+  }
+
+  function pagesState() {
+    try {
+      return Array.isArray(notionWorkspacePagesState)
+        ? notionWorkspacePagesState
+        : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function readStateJson(key) {
+    try {
+      const raw = typeof payslipAppStateGetItem === "function"
+        ? payslipAppStateGetItem(key)
+        : window.localStorage.getItem(key);
+      if (!raw) {
+        return null;
+      }
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+
+  /** @returns {Record<string, string>} */
+  function readSchoolBucketOverrides() {
+    const o = readStateJson(TPS_SCHOOL_BUCKET_OVERRIDES_KEY);
+    if (!o || typeof o !== "object" || Array.isArray(o)) {
+      return {};
+    }
+    /** @type {Record<string, string>} */
+    const out = {};
+    for (const [k, v] of Object.entries(o)) {
+      const id = String(k ?? "").trim();
+      const school = String(v ?? "").trim();
+      if (id && SCHOOL_ORDER.includes(school)) {
+        out[id] = school;
+      }
+    }
+    return out;
+  }
+
+  /** @param {Record<string, string>} map */
+  function writeSchoolBucketOverrides(map) {
+    try {
+      const json = JSON.stringify(map);
+      if (typeof payslipAppStateSetItem === "function") {
+        payslipAppStateSetItem(TPS_SCHOOL_BUCKET_OVERRIDES_KEY, json);
+      } else {
+        window.localStorage.setItem(TPS_SCHOOL_BUCKET_OVERRIDES_KEY, json);
+      }
+    } catch (e) {
+      console.warn("Teacher Pay Slips school bucket overrides save:", e);
+    }
+  }
+
+  function findTeacherPaySlipsPage() {
+    const pages = pagesState();
+    return (
+      pages.find((p) => norm(p?.title) === "teacher pay slips") ||
+      pages.find((p) => norm(p?.title).includes("teacher pay slips")) ||
+      null
+    );
+  }
+
+  function teacherChildPages(parentId) {
+    const parentKey = String(parentId ?? "");
+    if (!parentKey) {
+      return [];
+    }
+
+    try {
+      if (typeof window.rmeAssignTeacherPaySlipPageIds === "function") {
+        window.rmeAssignTeacherPaySlipPageIds();
+      }
+    } catch (e) {
+      console.warn("assign Teacher Pay Slips IDs for page loop:", e);
+    }
+
+    const registryPages = Array.isArray(window.rmeTeacherPaySlipPageIdRegistry?.pages)
+      ? window.rmeTeacherPaySlipPageIdRegistry.pages
+      : [];
+    if (registryPages.length) {
+      return registryPages
+        .filter((p) => p && p.kind !== "trash" && norm(p.title))
+        .sort((a, b) => String(a.title || "").localeCompare(String(b.title || "")));
+    }
+
+    const byParent = new Map();
+    for (const page of pagesState()) {
+      if (!page || page.kind === "trash") {
+        continue;
+      }
+      const pid = String(page.parentId ?? "");
+      if (!pid) {
+        continue;
+      }
+      if (!byParent.has(pid)) {
+        byParent.set(pid, []);
+      }
+      byParent.get(pid).push(page);
+    }
+
+    const seen = new Set([parentKey]);
+    const descendants = [];
+    const queue = [...(byParent.get(parentKey) || [])];
+    while (queue.length) {
+      const page = queue.shift();
+      const id = String(page?.id ?? "");
+      if (!id || seen.has(id) || page.kind === "trash") {
+        continue;
+      }
+      seen.add(id);
+      const title = norm(page.title);
+      if (!title || title === "teacher pay slips" || (title.includes("names") && title.includes("notion") && title.includes("row"))) {
+        continue;
+      }
+      descendants.push(page);
+      queue.push(...(byParent.get(id) || []));
+    }
+
+    return descendants
+      .filter((page) => {
+        const id = String(page.id ?? "");
+        const title = norm(page.title);
+        if (!title || /^(talking global|magic english|speak english|nice ?kid|nicekid|sky ?line|skyline)(\s+\d+|\s+sa|\s+america|\s+europe|\s+3\.5)?$/.test(title)) {
+          return false;
+        }
+        const children = (byParent.get(id) || []).filter((child) => child && child.kind !== "trash" && norm(child.title));
+        return children.length === 0;
+      })
+      .sort((a, b) => String(a.title || "").localeCompare(String(b.title || "")));
+  }
+
+  function objectsFromPageBlob(blob) {
+    if (Array.isArray(blob)) {
+      return blob.filter(Boolean);
+    }
+    if (blob && typeof blob === "object") {
+      return Object.values(blob).filter(Boolean);
+    }
+    return [];
+  }
+
+  function textFromRowsAndColumns(item) {
+    const chunks = [];
+    const sources = [
+      item,
+      item?.snapshot,
+      item?.shadow,
+      item?.table,
+      item?.data,
+    ];
+    for (const src of sources) {
+      if (!src || typeof src !== "object") {
+        continue;
+      }
+      if (typeof src.title === "string") {
+        chunks.push(src.title);
+      }
+      if (Array.isArray(src.columns)) {
+        chunks.push(src.columns.join(" "));
+      }
+      if (Array.isArray(src.rows)) {
+        for (const row of src.rows) {
+          if (Array.isArray(row)) {
+            chunks.push(row.join(" "));
+          } else if (row && typeof row === "object") {
+            chunks.push(Object.values(row).join(" "));
+          } else if (row != null) {
+            chunks.push(String(row));
+          }
+        }
+      }
+    }
+    return chunks.join(" ");
+  }
+
+  function textForTeacherPage(page) {
+    const chunks = [page?.title || ""];
+    const pageId = String(page?.id ?? "");
+    const canvas = readStateJson(CANVAS_DRAFTS_KEY);
+    const workspacePages = readStateJson(WORKSPACE_PAGES_KEY);
+
+    for (const item of floatingDraftSnapshotsForWorkspacePage(pageId)) {
+      chunks.push(textFromRowsAndColumns(item));
+    }
+    chunks.push(textChunksFromLiveFloatingReplicas(pageId));
+
+    for (const store of [canvas]) {
+      const blob = store && typeof store === "object" ? store[pageId] : null;
+      for (const item of objectsFromPageBlob(blob)) {
+        chunks.push(textFromRowsAndColumns(item));
+      }
+    }
+
+    if (Array.isArray(workspacePages)) {
+      const match = workspacePages.find((p) => String(p?.id ?? "") === pageId);
+      if (match && typeof match === "object") {
+        chunks.push(String(match.title ?? ""));
+        chunks.push(String(match.bodyHtml ?? ""));
+        chunks.push(String(match.content ?? ""));
+      }
+    }
+
+    return chunks.join(" ");
+  }
+
+  /**
+   * Notion workspace pages sometimes carry API-shaped `properties` (e.g. after a sync).
+   * Prefer the **Status** (or **School**) property when the user sets school there.
+   * @param {unknown} page
+   * @returns {string}
+   */
+  function statusFromPageProperties(page) {
+    const props = page && typeof page === "object" ? /** @type {any} */ (page).properties : null;
+    if (!props || typeof props !== "object") {
+      return "";
+    }
+    for (const key of Object.keys(props)) {
+      const nk = norm(key);
+      if (
+        nk !== "school" &&
+        nk !== "school name" &&
+        nk !== "school names" &&
+        nk !== "schoolnames" &&
+        nk !== "school status" &&
+        nk !== "cool name" &&
+        nk !== "coolname"
+      ) {
+        continue;
+      }
+      const p = /** @type {any} */ (props[key]);
+      if (!p || typeof p !== "object") {
+        continue;
+      }
+      if (p.type === "status" && p.status && typeof p.status.name === "string") {
+        return String(p.status.name).trim();
+      }
+      if (p.type === "select" && p.select && typeof p.select.name === "string") {
+        return String(p.select.name).trim();
+      }
+      if (p.type === "rich_text" && Array.isArray(p.rich_text)) {
+        const t = p.rich_text.map((x) => (x && typeof x.plain_text === "string" ? x.plain_text : "")).join("").trim();
+        if (t) {
+          return t;
+        }
+      }
+      if (p.type === "formula" && p.formula) {
+        const f = p.formula;
+        if (typeof f.string === "string" && f.string.trim()) {
+          return f.string.trim();
+        }
+      }
+    }
+    return "";
+  }
+
+  /**
+   * Draft / Notion column headers used to infer **which school** a teacher belongs to.
+   * Omit the generic header "status" — in pay-slip tables that is usually payment state (e.g. PAID).
+   */
+  const SCHOOL_HINT_HEADER_KEYS = [
+    "school name",
+    "school names",
+    "schoolnames",
+    "school",
+    "school status",
+    "cool name",
+    "coolname",
+  ];
+
+  /**
+   * Match Notion sheet headers that use $, bullets, or currency symbols before the label.
+   */
+  function schoolHintColumnHeaderNormalized(col) {
+    let s = norm(String(col ?? ""));
+    s = s.replace(/^[$€£₽¥₩₪₫₹₦₨•·|*]+\s*/u, "").replace(/\s+/g, " ").trim();
+    return s;
+  }
+
+  function schoolHintColumnIndices(columns) {
+    if (!Array.isArray(columns)) {
+      return [];
+    }
+    /** @type {number[]} */
+    const hits = [];
+    columns.forEach((c, i) => {
+      const n = schoolHintColumnHeaderNormalized(c);
+      if (SCHOOL_HINT_HEADER_KEYS.includes(n)) {
+        hits.push(i);
+        return;
+      }
+      if (
+        /\bschool\s*names?\b/.test(n) ||
+        /\bschool\s*status\b/.test(n) ||
+        /\bcool\s*name\b/.test(n) ||
+        n === "coolname" ||
+        (/\bschool\b/.test(n) && /\bname\b/.test(n))
+      ) {
+        hits.push(i);
+      }
+    });
+    return hits;
+  }
+
+  /**
+   * Persisted floating snapshots for one workspace page (same shape as {@link readFloatingDraftsObjectStore}).
+   * @param {string} pageId
+   */
+  function floatingDraftSnapshotsForWorkspacePage(pageId) {
+    const pid = String(pageId ?? "").trim();
+    if (!pid) {
+      return [];
+    }
+    try {
+      if (typeof readFloatingDraftsObjectStore === "function") {
+        const m = readFloatingDraftsObjectStore();
+        const arr = m[pid];
+        if (Array.isArray(arr) && arr.length) {
+          return arr.filter(Boolean);
+        }
+      }
+    } catch (_e) {
+      /* ignore */
+    }
+    const legacy = readStateJson(FLOATING_DRAFTS_KEY);
+    if (legacy && typeof legacy === "object") {
+      const blob = /** @type {Record<string, unknown>} */ (legacy)[pid];
+      return objectsFromPageBlob(blob);
+    }
+    return [];
+  }
+
+  /**
+   * In-memory pay-slip replicas for this page (may be ahead of debounced persist).
+   * @param {string} pageId
+   */
+  function extractSchoolHintsFromLiveFloatingReplicas(pageId) {
+    const pid = String(pageId ?? "").trim();
+    if (!pid) {
+      return "";
+    }
+    try {
+      if (typeof paySlipFloatingReplicas === "undefined" || !paySlipFloatingReplicas) {
+        return "";
+      }
+      const parts = [];
+      for (const rep of paySlipFloatingReplicas.values()) {
+        if (String(rep?.workspacePageId ?? "").trim() !== pid) {
+          continue;
+        }
+        const sh = rep?.shadow;
+        if (!sh || !Array.isArray(sh.columns) || !Array.isArray(sh.rows)) {
+          continue;
+        }
+        const t = extractStatusValuesFromDraftItem({ shadow: sh });
+        if (t) {
+          parts.push(t);
+        }
+      }
+      return parts.join(" ");
+    } catch (_e) {
+      return "";
+    }
+  }
+
+  /**
+   * Row/column text from live replicas (full-text school scoring).
+   * @param {string} pageId
+   */
+  function textChunksFromLiveFloatingReplicas(pageId) {
+    const pid = String(pageId ?? "").trim();
+    if (!pid) {
+      return "";
+    }
+    try {
+      if (typeof paySlipFloatingReplicas === "undefined" || !paySlipFloatingReplicas) {
+        return "";
+      }
+      const parts = [];
+      for (const rep of paySlipFloatingReplicas.values()) {
+        if (String(rep?.workspacePageId ?? "").trim() !== pid) {
+          continue;
+        }
+        const sh = rep?.shadow;
+        if (!sh || !Array.isArray(sh.columns) || !Array.isArray(sh.rows)) {
+          continue;
+        }
+        parts.push(textFromRowsAndColumns({ columns: sh.columns, rows: sh.rows }));
+      }
+      return parts.join(" ");
+    } catch (_e) {
+      return "";
+    }
+  }
+
+  /**
+   * Pull Status / School cell text from one floating- or canvas-draft table blob.
+   * @param {unknown} item
+   * @returns {string}
+   */
+  function extractStatusValuesFromDraftItem(item) {
+    const parts = [];
+    const sources = [
+      item,
+      item?.snapshot,
+      item?.shadow,
+      item?.table,
+      item?.data,
+    ];
+    for (const src of sources) {
+      if (!src || typeof src !== "object") {
+        continue;
+      }
+      const columns = Array.isArray(src.columns) ? src.columns : null;
+      const rows = Array.isArray(src.rows) ? src.rows : null;
+      if (!columns?.length || !rows?.length) {
+        continue;
+      }
+      const indices = schoolHintColumnIndices(columns);
+      if (!indices.length) {
+        continue;
+      }
+      for (const row of rows) {
+        if (Array.isArray(row)) {
+          for (const i of indices) {
+            const cell = row[i];
+            if (cell != null && String(cell).trim()) {
+              parts.push(String(cell).trim());
+            }
+          }
+        } else if (row && typeof row === "object") {
+          for (const i of indices) {
+            const col = columns[i];
+            const v = /** @type {Record<string, unknown>} */ (row)[String(col)];
+            if (v != null && String(v).trim()) {
+              parts.push(String(v).trim());
+            }
+          }
+        }
+      }
+    }
+    return parts.join(" ");
+  }
+
+  /**
+   * Status / school hints saved on this workspace page (Notion properties mirror or draft DB).
+   * @param {unknown} page
+   * @returns {string}
+   */
+  function statusSchoolHintForTeacherPage(page) {
+    const fromProps = statusFromPageProperties(page);
+    if (fromProps) {
+      return fromProps;
+    }
+    const pageId = String(page?.id ?? "");
+    if (!pageId) {
+      return "";
+    }
+    const chunks = [];
+    for (const item of floatingDraftSnapshotsForWorkspacePage(pageId)) {
+      const t = extractStatusValuesFromDraftItem(item);
+      if (t) {
+        chunks.push(t);
+      }
+    }
+    const liveHints = extractSchoolHintsFromLiveFloatingReplicas(pageId);
+    if (liveHints) {
+      chunks.push(liveHints);
+    }
+    for (const storeKey of [CANVAS_DRAFTS_KEY]) {
+      const store = readStateJson(storeKey);
+      if (!store || typeof store !== "object") {
+        continue;
+      }
+      const blob = store[pageId];
+      for (const item of objectsFromPageBlob(blob)) {
+        const t = extractStatusValuesFromDraftItem(item);
+        if (t) {
+          chunks.push(t);
+        }
+      }
+    }
+    const filtered = chunks.filter(Boolean);
+    return filtered.length ? filtered.join(" ") : "";
+  }
+
+  /**
+   * Map a Status cell / property label to one of our ordered school buckets.
+   * @param {string} textRaw
+   * @returns {string} canonical school name or ""
+   */
+  function mapStatusTextToCanonicalSchool(textRaw) {
+    const label = norm(textRaw);
+    if (!label) {
+      return "";
+    }
+    for (const school of SCHOOL_ORDER) {
+      if (school === "Other / Needs school check") {
+        continue;
+      }
+      if (norm(school) === label) {
+        return school;
+      }
+    }
+    for (const school of SCHOOL_ORDER) {
+      if (school === "Other / Needs school check") {
+        continue;
+      }
+      const ns = norm(school);
+      if (label.includes(ns)) {
+        return school;
+      }
+    }
+    const scored = scoreSchool(" " + label + " ");
+    if (scored && scored !== "Other / Needs school check") {
+      return scored;
+    }
+    return "";
+  }
+
+  /** Inferred school only (ignores drag-and-drop overrides). */
+  function schoolForTeacherPageAuto(child) {
+    const fromStatus = mapStatusTextToCanonicalSchool(statusSchoolHintForTeacherPage(child));
+    if (fromStatus) {
+      return fromStatus;
+    }
+    return scoreSchool(textForTeacherPage(child));
+  }
+
+  /**
+   * @param {{ id?: string } | null} child
+   * @param {Record<string, string>} [overrides]
+   */
+  function schoolForTeacherPage(child, overrides) {
+    const id = String(child?.id ?? "").trim();
+    const ov = overrides && id ? overrides[id] : undefined;
+    if (ov && SCHOOL_ORDER.includes(ov)) {
+      return ov;
+    }
+    return schoolForTeacherPageAuto(child);
+  }
+
+  function scoreSchool(textRaw) {
+    const text = " " + norm(textRaw)
+      .replace(/[$€£₽¥₩•·|]+/g, " ")
+      .replace(/[._-]+/g, " ")
+      .replace(/\s+/g, " ") + " ";
+    const count = (re) => (text.match(re) || []).length;
+    const scores = {
+      "Talking Global":
+        count(/\btalking global\b/g) +
+        count(/\btg\s*\d*\b/g) +
+        count(/\badults?\s+tg\s*\d*\b/g) +
+        count(/\btrials?\s+tg\s*\d*\b/g) +
+        count(/\bkids?\s+tg\s*\d*\b/g),
+      "Magic English":
+        count(/\bmagic english\b/g) +
+        count(/\bmagic english\s+sa\b/g) +
+        count(/\bmagic english\s+(america|europe)\b/g) +
+        count(/\bm\s*e\s*(sa|america|europe)?\b/g) +
+        count(/\bme\s*(sa|america|europe)\b/g),
+      "Speak English":
+        count(/\bspeak english\b/g) +
+        count(/\bse\s*\d+(\.\d+)?\b/g) +
+        count(/\bclass amount se\b/g) +
+        count(/\bfees se\b/g),
+      "Nice Kid":
+        count(/\bnice\s*kid\b/g) +
+        count(/\bnicekid\b/g) +
+        count(/\bnk\s*\d+\b/g) +
+        count(/\bclass amount nk\b/g) +
+        count(/\bfees nk\b/g),
+      "Sky Line":
+        count(/\bsky\s*line\b/g) +
+        count(/\bskyline\b/g) +
+        count(/\bskyline\s*\d+\b/g) +
+        count(/\bsl\s*\d+\b/g),
+    };
+
+    let bestSchool = "";
+    let bestScore = 0;
+    for (const [school, score] of Object.entries(scores)) {
+      if (score > bestScore) {
+        bestSchool = school;
+        bestScore = score;
+      }
+    }
+    return bestScore > 0 ? bestSchool : "Other / Needs school check";
+  }
+
+  function groupedTeachers(children, overrides) {
+    const ov = overrides && typeof overrides === "object" ? overrides : readSchoolBucketOverrides();
+    const groups = new Map(SCHOOL_ORDER.map((school) => [school, []]));
+    for (const child of children) {
+      const school = schoolForTeacherPage(child, ov);
+      if (!groups.has(school)) {
+        groups.set(school, []);
+      }
+      groups.get(school).push(child);
+    }
+    for (const rows of groups.values()) {
+      rows.sort((a, b) => String(a.title || "").localeCompare(String(b.title || "")));
+    }
+    return groups;
+  }
+
+  function paneForTeacherPaySlipsPage(page) {
+    if (!page?.id) {
+      return null;
+    }
+    const direct = document.querySelector(
+      ".notion-ws-pane[data-workspace-id=\"" + cssEscape(page.id) + "\"]",
+    );
+    if (direct instanceof HTMLElement) {
+      return direct;
+    }
+    const visible = document.querySelector(".notion-ws-pane--visible");
+    if (visible instanceof HTMLElement && norm(visible.textContent).includes("teacher pay slips")) {
+      return visible;
+    }
+    return null;
+  }
+
+  function findTitleAnchor(pane) {
+    const selectors = [
+      ".notion-page-title",
+      ".notion-editor-page-title",
+      ".notion-editor-title",
+      ".notion-blank-title",
+      "h1",
+      "[contenteditable='true']",
+    ];
+    for (const sel of selectors) {
+      const el = pane.querySelector(sel);
+      if (el instanceof HTMLElement && norm(el.textContent || el.value).includes("teacher pay slips")) {
+        return el;
+      }
+    }
+    return null;
+  }
+
+  function injectStyles() {
+    if (document.getElementById(STYLE_ID)) {
+      return;
+    }
+    const style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = [
+      ".notion-ws-pane[data-rme-tps-school-groups='true'] .notion-ws-subpages-details,",
+      ".notion-ws-pane[data-rme-tps-school-groups='true'] details:not(#" + ROOT_ID + " details) {",
+      "  display: none !important;",
+      "}",
+      ".notion-ws-pane[data-rme-tps-school-groups='true'] .notion-blank-body-wrap {",
+      "  display: none !important;",
+      "}",
+      "/* Full-width layout: drop blank-pane max-width and hide duplicate page title. */",
+      ".notion-ws-pane[data-rme-tps-school-groups='true'] .notion-blank-pane {",
+      "  max-width: none;",
+      "  width: 100%;",
+      "  margin: 0;",
+      "  padding: clamp(0.85rem, 2.2vw, 1.35rem) clamp(0.75rem, 2.2vw, 1.5rem) clamp(1.25rem, 3vw, 2.5rem);",
+      "  box-sizing: border-box;",
+      "}",
+      ".notion-ws-pane[data-rme-tps-school-groups='true'] .notion-blank-title {",
+      "  display: none !important;",
+      "}",
+      ".notion-ws-pane[data-rme-tps-school-groups='true'] {",
+      "  scrollbar-width: thin;",
+      "  scrollbar-color: #3b82f6 rgba(148, 163, 184, 0.28);",
+      "}",
+      "html[data-theme=\"dark\"] .notion-ws-pane[data-rme-tps-school-groups='true'] {",
+      "  scrollbar-color: #60a5fa rgba(15, 23, 42, 0.45);",
+      "}",
+      ".notion-ws-pane[data-rme-tps-school-groups='true']::-webkit-scrollbar {",
+      "  width: 4px;",
+      "}",
+      ".notion-ws-pane[data-rme-tps-school-groups='true']::-webkit-scrollbar-button,",
+      ".notion-ws-pane[data-rme-tps-school-groups='true']::-webkit-scrollbar-button:single-button,",
+      ".notion-ws-pane[data-rme-tps-school-groups='true']::-webkit-scrollbar-button:double-button {",
+      "  display: none;",
+      "  width: 0;",
+      "  height: 0;",
+      "}",
+      ".notion-ws-pane[data-rme-tps-school-groups='true']::-webkit-scrollbar-track {",
+      "  background: rgba(148, 163, 184, 0.12);",
+      "  border-radius: 999px;",
+      "}",
+      "html[data-theme=\"dark\"] .notion-ws-pane[data-rme-tps-school-groups='true']::-webkit-scrollbar-track {",
+      "  background: rgba(255, 255, 255, 0.06);",
+      "}",
+      ".notion-ws-pane[data-rme-tps-school-groups='true']::-webkit-scrollbar-thumb {",
+      "  background: linear-gradient(180deg, #60a5fa, #2563eb);",
+      "  border-radius: 999px;",
+      "}",
+      ".notion-ws-pane[data-rme-tps-school-groups='true']::-webkit-scrollbar-thumb:hover {",
+      "  background: linear-gradient(180deg, #93c5fd, #1d4ed8);",
+      "}",
+      ".rme-tps-school-groups {",
+      "  width: 100%;",
+      "  max-width: none;",
+      "  margin: 0;",
+      "  padding: 0;",
+      "  box-sizing: border-box;",
+      "}",
+      "/* Frosted glass — same recipe as .auth-card.admin-teachers-card / sign-in. */",
+      ".rme-tps-school-hero {",
+      "  margin: 0 0 clamp(0.85rem, 2vw, 1.15rem);",
+      "  padding: clamp(1.1rem, 2.8vw, 1.45rem) clamp(1.1rem, 2.8vw, 1.35rem);",
+      "  border-radius: 26px;",
+      "  isolation: isolate;",
+      "  position: relative;",
+      "  overflow: hidden;",
+      "  border: 1px solid color-mix(in srgb, #fff 40%, #94a3b8 10%);",
+      "  background: linear-gradient(",
+      "    165deg,",
+      "    color-mix(in srgb, #f8fafc 58%, transparent) 0%,",
+      "    color-mix(in srgb, #eef2ff 42%, transparent) 48%,",
+      "    color-mix(in srgb, #f1f5f9 36%, transparent) 100%",
+      "  );",
+      "  -webkit-backdrop-filter: blur(22px) saturate(138%);",
+      "  backdrop-filter: blur(22px) saturate(138%);",
+      "  box-shadow:",
+      "    inset 0 1px 0 rgba(255, 255, 255, 0.32),",
+      "    inset 0 0 0 1px rgba(15, 23, 42, 0.05),",
+      "    0 10px 38px -8px rgba(15, 23, 42, 0.13),",
+      "    0 0 40px -10px color-mix(in srgb, var(--rme-accent, #3b82f6) 17%, transparent);",
+      "}",
+      "html[data-theme=\"dark\"] .rme-tps-school-hero {",
+      "  border: 1px solid color-mix(in srgb, #fff 16%, #64748b 12%);",
+      "  background: linear-gradient(",
+      "    165deg,",
+      "    color-mix(in srgb, #1e293b 50%, transparent) 0%,",
+      "    color-mix(in srgb, #0f172a 34%, transparent) 55%,",
+      "    color-mix(in srgb, #172554 26%, transparent) 100%",
+      "  );",
+      "  box-shadow:",
+      "    inset 0 1px 0 rgba(255, 255, 255, 0.14),",
+      "    inset 0 0 0 1px rgba(0, 0, 0, 0.26),",
+      "    0 12px 40px -4px rgba(0, 0, 0, 0.3),",
+      "    0 0 44px -8px color-mix(in srgb, var(--rme-accent, #3b82f6) 14%, transparent);",
+      "}",
+      ".rme-tps-school-title {",
+      "  margin: 0;",
+      "  color: var(--text);",
+      "  font-size: clamp(1.35rem, 2.5vw, 2.05rem);",
+      "  line-height: 1.08;",
+      "  letter-spacing: -0.04em;",
+      "}",
+      "html[data-theme=\"dark\"] .rme-tps-school-title {",
+      "  color: #fafafa;",
+      "}",
+      ".rme-tps-school-subtitle {",
+      "  margin: 0.35rem 0 0;",
+      "  color: var(--text-muted);",
+      "  font-size: 0.88rem;",
+      "  line-height: 1.55;",
+      "}",
+      "html[data-theme=\"dark\"] .rme-tps-school-subtitle {",
+      "  color: rgba(226, 232, 240, 0.72);",
+      "}",
+      ".rme-tps-school-grid {",
+      "  display: grid;",
+      "  width: 100%;",
+      "  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));",
+      "  gap: clamp(0.75rem, 1.4vw, 1.1rem);",
+      "  align-content: start;",
+      "}",
+      ".rme-tps-school-card {",
+      "  min-width: 0;",
+      "  border-radius: 24px;",
+      "  isolation: isolate;",
+      "  position: relative;",
+      "  overflow: hidden;",
+      "  border: 1px solid color-mix(in srgb, #fff 40%, #94a3b8 10%);",
+      "  background: linear-gradient(",
+      "    165deg,",
+      "    color-mix(in srgb, #f8fafc 58%, transparent) 0%,",
+      "    color-mix(in srgb, #eef2ff 42%, transparent) 48%,",
+      "    color-mix(in srgb, #f1f5f9 36%, transparent) 100%",
+      "  );",
+      "  -webkit-backdrop-filter: blur(22px) saturate(138%);",
+      "  backdrop-filter: blur(22px) saturate(138%);",
+      "  box-shadow:",
+      "    inset 0 1px 0 rgba(255, 255, 255, 0.32),",
+      "    inset 0 0 0 1px rgba(15, 23, 42, 0.05),",
+      "    0 10px 38px -8px rgba(15, 23, 42, 0.13),",
+      "    0 0 40px -10px color-mix(in srgb, var(--rme-accent, #3b82f6) 17%, transparent);",
+      "}",
+      "html[data-theme=\"dark\"] .rme-tps-school-card {",
+      "  border: 1px solid color-mix(in srgb, #fff 16%, #64748b 12%);",
+      "  background: linear-gradient(",
+      "    165deg,",
+      "    color-mix(in srgb, #1e293b 50%, transparent) 0%,",
+      "    color-mix(in srgb, #0f172a 34%, transparent) 55%,",
+      "    color-mix(in srgb, #172554 26%, transparent) 100%",
+      "  );",
+      "  box-shadow:",
+      "    inset 0 1px 0 rgba(255, 255, 255, 0.14),",
+      "    inset 0 0 0 1px rgba(0, 0, 0, 0.26),",
+      "    0 12px 40px -4px rgba(0, 0, 0, 0.3),",
+      "    0 0 44px -8px color-mix(in srgb, var(--rme-accent, #3b82f6) 14%, transparent);",
+      "}",
+      ".rme-tps-school-card-head {",
+      "  display: flex;",
+      "  align-items: center;",
+      "  justify-content: space-between;",
+      "  gap: 0.65rem;",
+      "  padding: 0.78rem 0.95rem;",
+      "  border-bottom: 1px solid color-mix(in srgb, var(--border-subtle) 88%, transparent);",
+      "  background: color-mix(in srgb, var(--text) 4%, transparent);",
+      "  -webkit-backdrop-filter: blur(10px) saturate(120%);",
+      "  backdrop-filter: blur(10px) saturate(120%);",
+      "}",
+      "html[data-theme=\"dark\"] .rme-tps-school-card-head {",
+      "  border-bottom-color: rgba(255, 255, 255, 0.1);",
+      "  background: rgba(0, 0, 0, 0.18);",
+      "}",
+      ".rme-tps-school-name {",
+      "  margin: 0;",
+      "  font-size: 0.96rem;",
+      "  font-weight: 850;",
+      "  letter-spacing: -0.02em;",
+      "}",
+      "/* School heading colours (card has data-tone from SCHOOL_TONES). */",
+      ".rme-tps-school-card[data-tone=\"blue\"] .rme-tps-school-name { color: #1d4ed8; }",
+      ".rme-tps-school-card[data-tone=\"purple\"] .rme-tps-school-name { color: #6d28d9; }",
+      ".rme-tps-school-card[data-tone=\"green\"] .rme-tps-school-name { color: #047857; }",
+      ".rme-tps-school-card[data-tone=\"pink\"] .rme-tps-school-name { color: #be185d; }",
+      ".rme-tps-school-card[data-tone=\"orange\"] .rme-tps-school-name { color: #c2410c; }",
+      ".rme-tps-school-card[data-tone=\"gray\"] .rme-tps-school-name { color: #475569; }",
+      "html[data-theme=\"dark\"] .rme-tps-school-card[data-tone=\"blue\"] .rme-tps-school-name { color: #93c5fd; }",
+      "html[data-theme=\"dark\"] .rme-tps-school-card[data-tone=\"purple\"] .rme-tps-school-name { color: #c4b5fd; }",
+      "html[data-theme=\"dark\"] .rme-tps-school-card[data-tone=\"green\"] .rme-tps-school-name { color: #6ee7b7; }",
+      "html[data-theme=\"dark\"] .rme-tps-school-card[data-tone=\"pink\"] .rme-tps-school-name { color: #f9a8d4; }",
+      "html[data-theme=\"dark\"] .rme-tps-school-card[data-tone=\"orange\"] .rme-tps-school-name { color: #fdba74; }",
+      "html[data-theme=\"dark\"] .rme-tps-school-card[data-tone=\"gray\"] .rme-tps-school-name { color: #cbd5e1; }",
+      ".rme-tps-school-count {",
+      "  flex-shrink: 0;",
+      "  padding: 0.22rem 0.52rem;",
+      "  border-radius: 999px;",
+      "  color: var(--pill-text);",
+      "  background: var(--pill-bg);",
+      "  font-size: 0.68rem;",
+      "  font-weight: 850;",
+      "  border: 1px solid color-mix(in srgb, var(--border) 55%, transparent);",
+      "}",
+      "html[data-theme=\"dark\"] .rme-tps-school-count {",
+      "  color: #7fb2ff;",
+      "  background: rgba(15, 23, 42, 0.72);",
+      "  border-color: rgba(255, 255, 255, 0.12);",
+      "}",
+      ".rme-tps-school-teachers {",
+      "  display: flex;",
+      "  flex-direction: column;",
+      "  gap: 0.18rem;",
+      "  padding: 0.55rem 0.5rem 0.62rem;",
+      "  max-height: min(70vh, 32rem);",
+      "  overflow-x: hidden;",
+      "  overflow-y: auto;",
+      "  scrollbar-width: thin;",
+      "  scrollbar-color: #3b82f6 rgba(148, 163, 184, 0.22);",
+      "}",
+      "html[data-theme=\"dark\"] .rme-tps-school-teachers {",
+      "  scrollbar-color: #60a5fa rgba(15, 23, 42, 0.4);",
+      "}",
+      ".rme-tps-school-teachers::-webkit-scrollbar {",
+      "  width: 4px;",
+      "}",
+      ".rme-tps-school-teachers::-webkit-scrollbar-button,",
+      ".rme-tps-school-teachers::-webkit-scrollbar-button:single-button,",
+      ".rme-tps-school-teachers::-webkit-scrollbar-button:double-button {",
+      "  display: none;",
+      "  width: 0;",
+      "  height: 0;",
+      "}",
+      ".rme-tps-school-teachers::-webkit-scrollbar-track {",
+      "  background: rgba(148, 163, 184, 0.1);",
+      "  border-radius: 999px;",
+      "}",
+      "html[data-theme=\"dark\"] .rme-tps-school-teachers::-webkit-scrollbar-track {",
+      "  background: rgba(255, 255, 255, 0.05);",
+      "}",
+      ".rme-tps-school-teachers::-webkit-scrollbar-thumb {",
+      "  background: linear-gradient(180deg, #60a5fa, #2563eb);",
+      "  border-radius: 999px;",
+      "}",
+      ".rme-tps-school-teachers::-webkit-scrollbar-thumb:hover {",
+      "  background: linear-gradient(180deg, #93c5fd, #1d4ed8);",
+      "}",
+      ".rme-tps-school-teachers--drag-over {",
+      "  outline: 2px dashed color-mix(in srgb, var(--pill-text, #2563eb) 70%, transparent);",
+      "  outline-offset: 3px;",
+      "  border-radius: 12px;",
+      "  background: color-mix(in srgb, var(--pill-text, #2563eb) 12%, transparent);",
+      "}",
+      ".rme-tps-teacher-link--dragging {",
+      "  opacity: 0.42;",
+      "  cursor: grabbing !important;",
+      "}",
+      ".rme-tps-school-empty {",
+      "  margin: 0;",
+      "  padding: 0.55rem 0.35rem;",
+      "  color: var(--text-muted);",
+      "  font-size: 0.78rem;",
+      "  line-height: 1.4;",
+      "}",
+      ".rme-tps-teacher-link {",
+      "  width: 100%;",
+      "  display: grid;",
+      "  grid-template-columns: auto minmax(0, 1fr) auto;",
+      "  align-items: start;",
+      "  gap: 0.48rem 0.55rem;",
+      "  margin: 0;",
+      "  padding: 0.52rem 0.55rem;",
+      "  border: 0;",
+      "  border-radius: 12px;",
+      "  background: transparent;",
+      "  color: var(--text);",
+      "  font: inherit;",
+      "  font-size: 0.9rem;",
+      "  font-weight: 650;",
+      "  text-align: left;",
+      "  cursor: grab;",
+      "}",
+      ".rme-tps-teacher-link:hover {",
+      "  background: color-mix(in srgb, var(--text) 6.5%, transparent);",
+      "}",
+      "html[data-theme=\"dark\"] .rme-tps-teacher-link:hover {",
+      "  background: rgba(255, 255, 255, 0.07);",
+      "}",
+      "html[data-theme=\"dark\"] .rme-tps-teacher-link {",
+      "  color: #fafafa;",
+      "}",
+      ".rme-tps-teacher-icon {",
+      "  opacity: 0.76;",
+      "  align-self: start;",
+      "  margin-top: 0.16rem;",
+      "}",
+      "html[data-theme=\"dark\"] .rme-tps-teacher-icon {",
+      "  opacity: 0.92;",
+      "}",
+      ".rme-tps-teacher-title {",
+      "  min-width: 0;",
+      "  overflow-wrap: anywhere;",
+      "  word-break: break-word;",
+      "  white-space: normal;",
+      "  line-height: 1.35;",
+      "}",
+      ".rme-tps-teacher-arrow {",
+      "  color: var(--text-muted);",
+      "  font-weight: 850;",
+      "  align-self: center;",
+      "}",
+      "html[data-theme=\"dark\"] .rme-tps-teacher-arrow {",
+      "  color: rgba(226, 232, 240, 0.55);",
+      "}",
+    ].join("\n");
+    document.head.appendChild(style);
+  }
+
+  function clearTpsDropHighlights(rootEl) {
+    if (!(rootEl instanceof HTMLElement)) {
+      return;
+    }
+    rootEl.querySelectorAll(".rme-tps-school-teachers--drag-over").forEach((el) => {
+      el.classList.remove("rme-tps-school-teachers--drag-over");
+    });
+    rootEl.removeAttribute("data-rme-tps-drag-active");
+  }
+
+  function wireTpsSchoolGridDnD(rootEl) {
+    if (!(rootEl instanceof HTMLElement) || rootEl.dataset.rmeTpsDropWired === "1") {
+      return;
+    }
+    rootEl.dataset.rmeTpsDropWired = "1";
+    rootEl.addEventListener("dragover", (ev) => {
+      const zone =
+        ev.target instanceof Element
+          ? ev.target.closest("[data-rme-tps-drop-school]")
+          : null;
+      if (!(zone instanceof HTMLElement)) {
+        clearTpsDropHighlights(rootEl);
+        return;
+      }
+      ev.preventDefault();
+      try {
+        ev.dataTransfer.dropEffect = "move";
+      } catch {
+        /* ignore */
+      }
+      rootEl.setAttribute("data-rme-tps-drag-active", "1");
+      rootEl.querySelectorAll(".rme-tps-school-teachers--drag-over").forEach((el) => {
+        if (el !== zone) {
+          el.classList.remove("rme-tps-school-teachers--drag-over");
+        }
+      });
+      zone.classList.add("rme-tps-school-teachers--drag-over");
+    });
+    rootEl.addEventListener("dragleave", (ev) => {
+      const rel = ev.relatedTarget;
+      if (!(rel instanceof Node) || !rootEl.contains(rel)) {
+        clearTpsDropHighlights(rootEl);
+      }
+    });
+    rootEl.addEventListener("drop", (ev) => {
+      const zone =
+        ev.target instanceof Element
+          ? ev.target.closest("[data-rme-tps-drop-school]")
+          : null;
+      if (!(zone instanceof HTMLElement)) {
+        return;
+      }
+      ev.preventDefault();
+      clearTpsDropHighlights(rootEl);
+      const teacherId = String(ev.dataTransfer?.getData("text/plain") ?? "").trim();
+      const targetSchool = String(zone.getAttribute("data-rme-tps-drop-school") ?? "").trim();
+      if (!teacherId || !SCHOOL_ORDER.includes(targetSchool)) {
+        return;
+      }
+      const pages = pagesState();
+      const child = pages.find((p) => p && String(p.id) === teacherId);
+      if (!child) {
+        return;
+      }
+      const autoBucket = schoolForTeacherPageAuto(child);
+      const map = { ...readSchoolBucketOverrides() };
+      if (targetSchool === autoBucket) {
+        delete map[teacherId];
+      } else {
+        map[teacherId] = targetSchool;
+      }
+      writeSchoolBucketOverrides(map);
+      delete rootEl.dataset.rmeTpsSchoolGroupsKey;
+      renderSchoolGroups();
+    });
+  }
+
+  function removePageToggleOnly(pane) {
+    pane.dataset.rmeTpsSchoolGroups = "true";
+    pane.querySelectorAll(".notion-ws-subpages-details, details").forEach((el) => {
+      if (!(el instanceof HTMLElement)) {
+        return;
+      }
+      if (el.id === ROOT_ID || el.closest("#" + ROOT_ID)) {
+        return;
+      }
+      el.hidden = true;
+      el.style.display = "none";
+    });
+  }
+
+  function schoolCardHtml(school, teachers) {
+    const tone = SCHOOL_TONES[school] || "gray";
+    const countText = teachers.length === 1 ? "1 teacher" : teachers.length + " teachers";
+    const rows = teachers.length
+      ? teachers.map((teacher) => (
+          "<button type=\"button\" class=\"rme-tps-teacher-link\" draggable=\"true\" data-rme-tps-teacher-id=\"" + esc(teacher.id) + "\">" +
+            "<span class=\"rme-tps-teacher-icon\" aria-hidden=\"true\">📄</span>" +
+            "<span class=\"rme-tps-teacher-title\">" + esc(teacher.title || "Untitled teacher") + "</span>" +
+            "<span class=\"rme-tps-teacher-arrow\" aria-hidden=\"true\">›</span>" +
+          "</button>"
+        )).join("")
+      : "<p class=\"rme-tps-school-empty\">No teachers detected for this school yet.</p>";
+    return (
+      "<section class=\"rme-tps-school-card\" data-tone=\"" + esc(tone) + "\">" +
+        "<div class=\"rme-tps-school-card-head\">" +
+          "<h2 class=\"rme-tps-school-name\">" + esc(school) + "</h2>" +
+          "<span class=\"rme-tps-school-count\">" + esc(countText) + "</span>" +
+        "</div>" +
+        "<div class=\"rme-tps-school-teachers\" data-rme-tps-drop-school=\"" + esc(school) + "\">" + rows + "</div>" +
+      "</section>"
+    );
+  }
+
+  function renderSchoolGroups() {
+    injectStyles();
+
+    const parent = findTeacherPaySlipsPage();
+    if (!parent) {
+      return;
+    }
+    const pane = paneForTeacherPaySlipsPage(parent);
+    if (!pane) {
+      return;
+    }
+
+    removePageToggleOnly(pane);
+
+    const overrides = readSchoolBucketOverrides();
+    const children = teacherChildPages(parent.id);
+    const groups = groupedTeachers(children, overrides);
+    const visibleSchools = SCHOOL_ORDER.filter((school) => {
+      const teachers = groups.get(school) || [];
+      return teachers.length || school === "Other / Needs school check";
+    });
+    const key = children
+      .map(
+        (child) =>
+          child.id +
+          ":" +
+          child.title +
+          ":" +
+          schoolForTeacherPage(child, overrides),
+      )
+      .join("|");
+
+    let root = pane.querySelector("#" + ROOT_ID);
+    if (!(root instanceof HTMLElement)) {
+      root = document.createElement("section");
+      root.id = ROOT_ID;
+      root.className = "rme-tps-school-groups";
+      const anchor = findTitleAnchor(pane);
+      if (anchor?.parentElement) {
+        anchor.insertAdjacentElement("afterend", root);
+      } else {
+        pane.prepend(root);
+      }
+    }
+
+    if (root.dataset.rmeTpsSchoolGroupsKey !== key) {
+      root.dataset.rmeTpsSchoolGroupsKey = key;
+      root.innerHTML =
+        "<div class=\"rme-tps-school-hero\">" +
+          "<h1 class=\"rme-tps-school-title\">Teachers grouped by school</h1>" +
+          "<p class=\"rme-tps-school-subtitle\">" +
+            esc(
+              children.length === 1
+                ? "1 teacher page — drag a card into another school column to pin it there; drop on the auto-matched column to clear."
+                : children.length +
+                    " teacher pages — drag between columns to override school; drop on the column that matches your tables again to use automatic grouping.",
+            ) +
+          "</p>" +
+        "</div>" +
+        "<div class=\"rme-tps-school-grid\">" +
+          visibleSchools.map((school) => schoolCardHtml(school, groups.get(school) || [])).join("") +
+        "</div>";
+    }
+
+    wireTpsSchoolGridDnD(root);
+
+    root.querySelectorAll("[data-rme-tps-teacher-id]").forEach((btn) => {
+      if (!(btn instanceof HTMLElement) || btn.dataset.rmeTpsBound === "1") {
+        return;
+      }
+      btn.dataset.rmeTpsBound = "1";
+      btn.addEventListener("dragstart", (ev) => {
+        if (!(ev instanceof DragEvent) || !ev.dataTransfer) {
+          return;
+        }
+        const tid = btn.getAttribute("data-rme-tps-teacher-id");
+        if (!tid) {
+          return;
+        }
+        btn.dataset.rmeTpsDragStart = `${ev.clientX},${ev.clientY}`;
+        ev.dataTransfer.setData("text/plain", tid);
+        ev.dataTransfer.effectAllowed = "move";
+        btn.classList.add("rme-tps-teacher-link--dragging");
+      });
+      btn.addEventListener("dragend", (ev) => {
+        btn.classList.remove("rme-tps-teacher-link--dragging");
+        const st = btn.dataset.rmeTpsDragStart;
+        delete btn.dataset.rmeTpsDragStart;
+        if (st) {
+          const parts = st.split(",").map(Number);
+          const x0 = parts[0];
+          const y0 = parts[1];
+          if (
+            Number.isFinite(x0) &&
+            Number.isFinite(y0) &&
+            (Math.abs(ev.clientX - x0) > 5 || Math.abs(ev.clientY - y0) > 5)
+          ) {
+            btn.dataset.rmeTpsSkipOneClick = "1";
+          }
+        }
+      });
+      btn.addEventListener("click", () => {
+        if (btn.dataset.rmeTpsSkipOneClick === "1") {
+          delete btn.dataset.rmeTpsSkipOneClick;
+          return;
+        }
+        const id = btn.getAttribute("data-rme-tps-teacher-id");
+        if (!id) {
+          return;
+        }
+        try {
+          if (typeof activateNotionWorkspacePage === "function") {
+            activateNotionWorkspacePage(id);
+          }
+        } catch (e) {
+          console.warn("open Teacher Pay Slips teacher page:", e);
+        }
+      });
+    });
+  }
+
+  const DASHBOARD_MAIN_SCHOOLS = SCHOOL_ORDER.filter(
+    (school) => school !== "Other / Needs school check",
+  );
+
+  /** Same buckets as the Teachers grouped by school page — for admin dashboard cards. */
+  window.rmeGetSchoolTeacherCountsForDashboard = function rmeGetSchoolTeacherCountsForDashboard() {
+    const parent = findTeacherPaySlipsPage();
+    if (!parent) {
+      return { ok: false, pageId: null, schools: [] };
+    }
+    const children = teacherChildPages(parent.id);
+    const overrides = readSchoolBucketOverrides();
+    const groups = groupedTeachers(children, overrides);
+    return {
+      ok: true,
+      pageId: String(parent.id ?? ""),
+      schools: DASHBOARD_MAIN_SCHOOLS.map((school) => ({
+        school,
+        count: (groups.get(school) || []).length,
+        accent: SCHOOL_TONES[school] || "gray",
+      })),
+    };
+  };
+
+  function start() {
+    renderSchoolGroups();
+    window.setInterval(renderSchoolGroups, REFRESH_MS);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start, { once: true });
+  } else {
+    window.setTimeout(start, 0);
+  }
+})();
+
+// === RME Turn 46 — Admin dashboard card count source lock =========================
+// Fixes admin dashboard metric sources:
+// - Total Teachers = Supabase teacher account rows only.
+// - Teacher Pay Slips = direct child pages under the Teacher Pay Slips workspace page.
+// - Names & Notion Row IDs = rows inside the Names & Notion Row IDs table/page, not Supabase teachers.
+(function rmeAdminDashboardMetricSourceLockBoot() {
+  // Disabled by Turn 51. This older writer still used direct child-page and
+  // local-array fallbacks, which could keep overwriting the lower cards with
+  // stale 6 / 2 values.
+  return;
+  const STYLE_ID = "rmeAdminMetricSourceLockStyles";
+  const REFRESH_MS = 1200;
+
+  function norm(v) {
+    return String(v ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  function pagesState() {
+    try {
+      return Array.isArray(notionWorkspacePagesState)
+        ? notionWorkspacePagesState
+        : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function injectStyles() {
+    if (document.getElementById(STYLE_ID)) {
+      return;
+    }
+    const style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = [
+      ".rme-metric-source-locked .rme-stat-value,",
+      ".rme-metric-source-locked [data-rme-card-value='true'] {",
+      "  transition: none !important;",
+      "}",
+    ].join("\n");
+    document.head.appendChild(style);
+  }
+
+  function activeTeacherCountFromSupabaseRows(rows) {
+    const list = Array.isArray(rows) ? rows : [];
+    return list.filter((t) => {
+      if (!t || typeof t !== "object") {
+        return false;
+      }
+      if (t.disabled === true || t.is_active === false || t.archived === true) {
+        return false;
+      }
+      return true;
+    }).length;
+  }
+
+  async function fetchSupabaseTeacherCount() {
+    const ta = window.teacherAuth;
+    if (!ta) {
+      return null;
+    }
+    const candidates = [
+      "listTeachersForAdmin",
+      "listAdminTeachers",
+      "fetchAdminTeachers",
+      "loadAdminTeachers",
+      "getAdminTeachers",
+      "listAllTeachers",
+      "fetchTeachers",
+      "listTeachers",
+    ];
+    for (const name of candidates) {
+      if (typeof ta[name] !== "function") {
+        continue;
+      }
+      try {
+        const r = await ta[name]();
+        const rows =
+          Array.isArray(r?.teachers) ? r.teachers :
+          Array.isArray(r?.rows) ? r.rows :
+          Array.isArray(r?.data) ? r.data :
+          Array.isArray(r) ? r :
+          null;
+        if (Array.isArray(rows)) {
+          return activeTeacherCountFromSupabaseRows(rows);
+        }
+      } catch (e) {
+        console.warn("admin metric teacher count:", name, e);
+      }
+    }
+    return null;
+  }
+
+  function findWorkspacePageByTitle(testFn) {
+    return pagesState().find((p) => p && p.kind !== "trash" && testFn(norm(p.title))) || null;
+  }
+
+  function teacherPaySlipPageCount() {
+    const parent = findWorkspacePageByTitle((title) =>
+      title === "teacher pay slips" || title.includes("teacher pay slips")
+    );
+    if (!parent?.id) {
+      return null;
+    }
+    const parentId = String(parent.id);
+    return pagesState().filter((p) => {
+      if (!p || p.kind === "trash") {
+        return false;
+      }
+      if (String(p.parentId ?? "") !== parentId) {
+        return false;
+      }
+      const title = norm(p.title);
+      return Boolean(title && title !== "teacher pay slips");
+    }).length;
+  }
+
+  function rowHasContent(row) {
+    if (!(row instanceof HTMLElement)) {
+      return false;
+    }
+    const text = norm(row.textContent);
+    if (!text) {
+      return false;
+    }
+    if (/^(add|new|empty|loading|no rows|no data)$/.test(text)) {
+      return false;
+    }
+    const inputs = row.querySelectorAll("input, textarea, [contenteditable='true']");
+    if (!inputs.length) {
+      return true;
+    }
+    return Array.from(inputs).some((input) => {
+      if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) {
+        return Boolean(String(input.value || "").trim());
+      }
+      return Boolean(norm(input.textContent));
+    });
+  }
+
+  function countRowsInElement(root) {
+    if (!(root instanceof HTMLElement)) {
+      return 0;
+    }
+    const rowSelectors = [
+      "tbody tr",
+      ".floating-draft-data-row",
+      ".canvas-local-db-table tbody tr",
+      ".payslip-notion-links-table tbody tr",
+    ];
+    let best = 0;
+    for (const sel of rowSelectors) {
+      const rows = Array.from(root.querySelectorAll(sel))
+        .filter((row) => rowHasContent(row));
+      if (rows.length > best) {
+        best = rows.length;
+      }
+    }
+    return best;
+  }
+
+  function countNamesNotionRowsFromDom() {
+    const directTbody = document.getElementById("payslipNotionLinksTbody");
+    const direct = countRowsInElement(directTbody?.parentElement || directTbody);
+    if (direct > 0) {
+      return direct;
+    }
+
+    const sections = Array.from(document.querySelectorAll("section, article, div"))
+      .filter((el) => {
+        if (!(el instanceof HTMLElement)) {
+          return false;
+        }
+        const text = norm(el.textContent);
+        return text.includes("names") && text.includes("notion") && text.includes("row");
+      });
+    let best = 0;
+    for (const section of sections) {
+      const n = countRowsInElement(section);
+      if (n > best) {
+        best = n;
+      }
+    }
+    return best;
+  }
+
+  function countNamesNotionRowsFromState() {
+    try {
+      if (Array.isArray(payslipNotionLinkRows) && payslipNotionLinkRows.length > 0) {
+        return payslipNotionLinkRows.length;
+      }
+    } catch {
+      /* ignore */
+    }
+
+    const page = findWorkspacePageByTitle((title) =>
+      title.includes("names") && title.includes("notion") && title.includes("row")
+    );
+    if (!page?.id) {
+      return null;
+    }
+
+    try {
+      const raw = typeof payslipAppStateGetItem === "function"
+        ? payslipAppStateGetItem("recruit-notion-workspace-page-floating-drafts-v1")
+        : window.localStorage.getItem("recruit-notion-workspace-page-floating-drafts-v1");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const pageBlob = parsed?.[page.id];
+        const candidates = [];
+        if (Array.isArray(pageBlob)) {
+          candidates.push(...pageBlob);
+        } else if (pageBlob && typeof pageBlob === "object") {
+          candidates.push(...Object.values(pageBlob));
+        }
+        let best = 0;
+        for (const item of candidates) {
+          const rows =
+            Array.isArray(item?.rows) ? item.rows :
+            Array.isArray(item?.shadow?.rows) ? item.shadow.rows :
+            Array.isArray(item?.snapshot?.rows) ? item.snapshot.rows :
+            [];
+          if (rows.length > best) {
+            best = rows.length;
+          }
+        }
+        if (best > 0) {
+          return best;
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }
+
+  function namesNotionRowCount() {
+    const domCount = countNamesNotionRowsFromDom();
+    if (domCount > 0) {
+      return domCount;
+    }
+    return countNamesNotionRowsFromState();
+  }
+
+  function setTopStat(cardId, value, meta) {
+    const card = document.querySelector('.rme-stat-card[data-card="' + cardId + '"]');
+    if (!(card instanceof HTMLElement)) {
+      return false;
+    }
+    card.classList.add("rme-metric-source-locked");
+    const valueEl = card.querySelector(".rme-stat-value");
+    if (valueEl instanceof HTMLElement) {
+      valueEl.textContent = String(value);
+      valueEl.classList.remove("rme-stat-value--loading");
+    }
+    const metaEl = card.querySelector(".rme-stat-meta");
+    if (metaEl instanceof HTMLElement && meta != null) {
+      metaEl.textContent = String(meta);
+    }
+    return true;
+  }
+
+  function deepestCardCandidates() {
+    const dashboardRoot =
+      document.getElementById("pageHome") ||
+      document.getElementById("homeContent") ||
+      null;
+    const selectorRoot = dashboardRoot || document;
+    const all = Array.from(selectorRoot.querySelectorAll("article, button, section, div"))
+      .filter((el) => {
+        if (!(el instanceof HTMLElement)) {
+          return false;
+        }
+        // Never touch the Notion workspace side panel or page panes from metric repair.
+        if (
+          el.closest("#notionWorkspace") ||
+          el.closest("#notionEditorSidebar") ||
+          el.closest("#notionWsPanes") ||
+          el.closest("#notionWorkspacePageList")
+        ) {
+          return false;
+        }
+        return true;
+      });
+    return all.filter((el) => {
+      const text = norm(el.textContent);
+      if (!text || text.length > 360) {
+        return false;
+      }
+      return !Array.from(el.children).some((child) => {
+        const childText = norm(child.textContent);
+        return childText && childText.length < text.length && childText === text;
+      });
+    });
+  }
+
+  function findCardsByLabel(labelNeedles) {
+    const needles = labelNeedles.map(norm);
+    return deepestCardCandidates().filter((el) => {
+      const text = norm(el.textContent);
+      return needles.every((needle) => text.includes(needle));
+    });
+  }
+
+  function setCardNumberByLabel(labelNeedles, value, meta) {
+    const cards = findCardsByLabel(labelNeedles);
+    for (const card of cards) {
+      card.classList.add("rme-metric-source-locked");
+      const descendants = Array.from(card.querySelectorAll("*"))
+        .filter((el) => el instanceof HTMLElement);
+      let valueEl = descendants.find((el) => /^\d+$/.test(norm(el.textContent)));
+      if (!valueEl) {
+        valueEl = descendants.find((el) => /value|count|number/i.test(String(el.className || "")));
+      }
+      if (valueEl instanceof HTMLElement) {
+        valueEl.dataset.rmeCardValue = "true";
+        valueEl.textContent = String(value);
+      }
+      const metaEl = descendants.find((el) => {
+        const t = norm(el.textContent);
+        return t.includes("teacher") || t.includes("rows") || t.includes("ids") || t.includes("pages") || t.includes("accounts");
+      });
+      if (metaEl instanceof HTMLElement && meta) {
+        metaEl.textContent = String(meta);
+      }
+    }
+    return cards.length > 0;
+  }
+
+  let lastTeacherCount = null;
+
+  async function refreshMetrics() {
+    injectStyles();
+
+    const teacherCount = await fetchSupabaseTeacherCount();
+    if (typeof teacherCount === "number") {
+      lastTeacherCount = teacherCount;
+    }
+    if (lastTeacherCount != null) {
+      setTopStat(
+        "totalTeachers",
+        lastTeacherCount,
+        lastTeacherCount === 1
+          ? "1 Supabase teacher account"
+          : lastTeacherCount + " Supabase teacher accounts",
+      );
+    }
+
+    const paySlipCount = teacherPaySlipPageCount();
+    if (typeof paySlipCount === "number") {
+      setTopStat(
+        "payslipsThisMonth",
+        paySlipCount,
+        paySlipCount === 1
+          ? "1 teacher pay slip page"
+          : paySlipCount + " teacher pay slip pages",
+      );
+      setCardNumberByLabel(
+        ["teacher pay slips"],
+        paySlipCount,
+        paySlipCount === 1
+          ? "1 pay slip page - tap to open"
+          : paySlipCount + " pay slip pages - tap to open",
+      );
+    }
+
+    const notionRows = namesNotionRowCount();
+    if (typeof notionRows === "number" && notionRows > 0) {
+      setCardNumberByLabel(
+        ["names", "notion", "row"],
+        notionRows,
+        notionRows === 1
+          ? "1 Notion row ID table row"
+          : notionRows + " Notion row ID table rows",
+      );
+    }
+  }
+
+  function start() {
+    refreshMetrics();
+    window.setInterval(refreshMetrics, REFRESH_MS);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start, { once: true });
+  } else {
+    window.setTimeout(start, 0);
+  }
+})();
+
+// === RME Turn 47 — Admin dashboard bottom card visual repair =====================
+// Keeps the lower admin dashboard cards from being overwritten by the Notion row-ID
+// metric source lock. The left lower card is Teacher Pay Slips and reads child pages;
+// the right lower card is Names & Notion Row IDs and reads rows. Both use a larger
+// metric number for readability.
+(function rmeAdminBottomMetricCardVisualRepairBoot() {
+  // Disabled by Turn 51. The lower dashboard cards now have one source owner.
+  return;
+  const STYLE_ID = "rmeAdminBottomMetricCardVisualRepairStyles";
+  const REFRESH_MS = 520;
+
+  function norm(v) {
+    return String(v ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  function esc(v) {
+    return String(v ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function pagesState() {
+    try {
+      return Array.isArray(notionWorkspacePagesState) ? notionWorkspacePagesState : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function injectStyles() {
+    if (document.getElementById(STYLE_ID)) {
+      return;
+    }
+    const style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = [
+      ".rme-admin-bottom-metric-repair {",
+      "  display: grid;",
+      "  grid-template-columns: auto 1fr auto;",
+      "  align-items: center;",
+      "  gap: 0.75rem;",
+      "  width: 100%;",
+      "  min-width: 0;",
+      "}",
+      ".rme-admin-bottom-metric-repair__icon {",
+      "  width: 2rem;",
+      "  height: 2rem;",
+      "  display: inline-flex;",
+      "  align-items: center;",
+      "  justify-content: center;",
+      "  border-radius: 10px;",
+      "  background: color-mix(in srgb, var(--pill-dot, #3b82f6) 18%, transparent);",
+      "  color: var(--pill-text, #60a5fa);",
+      "  font-size: 1rem;",
+      "  flex-shrink: 0;",
+      "}",
+      ".rme-admin-bottom-metric-repair__body {",
+      "  min-width: 0;",
+      "}",
+      ".rme-admin-bottom-metric-repair__label {",
+      "  margin: 0 0 0.12rem;",
+      "  color: var(--th-label);",
+      "  font-size: 0.66rem;",
+      "  font-weight: 800;",
+      "  letter-spacing: 0.065em;",
+      "  text-transform: uppercase;",
+      "}",
+      ".rme-admin-bottom-metric-repair__number {",
+      "  margin: 0;",
+      "  color: var(--text);",
+      "  font-size: clamp(1.85rem, 3.6vw, 2.75rem);",
+      "  font-weight: 850;",
+      "  line-height: 0.95;",
+      "  letter-spacing: -0.055em;",
+      "  font-variant-numeric: tabular-nums;",
+      "}",
+      ".rme-admin-bottom-metric-repair__meta {",
+      "  margin: 0.28rem 0 0;",
+      "  color: var(--text-muted);",
+      "  font-size: 0.74rem;",
+      "  line-height: 1.25;",
+      "  white-space: nowrap;",
+      "  overflow: hidden;",
+      "  text-overflow: ellipsis;",
+      "}",
+      ".rme-admin-bottom-metric-repair__arrow {",
+      "  color: var(--pill-text);",
+      "  font-size: 1rem;",
+      "  font-weight: 800;",
+      "  opacity: 0.8;",
+      "}",
+      ".rme-stat-card[data-card='payslipsThisMonth'] .rme-stat-value,",
+      ".rme-stat-card[data-card='totalTeachers'] .rme-stat-value {",
+      "  font-size: clamp(1.9rem, 3vw, 2.55rem) !important;",
+      "}",
+    ].join("\n");
+    document.head.appendChild(style);
+  }
+
+  function findWorkspacePageByTitle(testFn) {
+    return pagesState().find((p) => p && p.kind !== "trash" && testFn(norm(p.title))) || null;
+  }
+
+  function teacherPaySlipPageCount() {
+    const parent = findWorkspacePageByTitle((title) =>
+      title === "teacher pay slips" || title.includes("teacher pay slips")
+    );
+    if (!parent?.id) {
+      return null;
+    }
+    const parentId = String(parent.id);
+    return pagesState().filter((p) => {
+      if (!p || p.kind === "trash") {
+        return false;
+      }
+      if (String(p.parentId ?? "") !== parentId) {
+        return false;
+      }
+      const title = norm(p.title);
+      return Boolean(title && title !== "teacher pay slips");
+    }).length;
+  }
+
+  function rowHasContent(row) {
+    if (!(row instanceof HTMLElement)) {
+      return false;
+    }
+    const text = norm(row.textContent);
+    if (!text || /^(add|new|empty|loading|no rows|no data)$/.test(text)) {
+      return false;
+    }
+    const inputs = row.querySelectorAll("input, textarea, [contenteditable='true']");
+    if (!inputs.length) {
+      return true;
+    }
+    return Array.from(inputs).some((input) => {
+      if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) {
+        return Boolean(String(input.value || "").trim());
+      }
+      return Boolean(norm(input.textContent));
+    });
+  }
+
+  function countRowsInElement(root) {
+    if (!(root instanceof HTMLElement)) {
+      return 0;
+    }
+    const selectors = [
+      "tbody tr",
+      ".floating-draft-data-row",
+      ".canvas-local-db-table tbody tr",
+      ".payslip-notion-links-table tbody tr",
+    ];
+    let best = 0;
+    for (const sel of selectors) {
+      const rows = Array.from(root.querySelectorAll(sel)).filter((row) => rowHasContent(row));
+      if (rows.length > best) {
+        best = rows.length;
+      }
+    }
+    return best;
+  }
+
+  function namesNotionRowCount() {
+    try {
+      if (Array.isArray(payslipNotionLinkRows) && payslipNotionLinkRows.length > 0) {
+        return payslipNotionLinkRows.length;
+      }
+    } catch {
+      /* ignore */
+    }
+    const directTbody = document.getElementById("payslipNotionLinksTbody");
+    const direct = countRowsInElement(directTbody?.parentElement || directTbody);
+    if (direct > 0) {
+      return direct;
+    }
+    const sections = Array.from(document.querySelectorAll("section, article, div")).filter((el) => {
+      if (!(el instanceof HTMLElement)) {
+        return false;
+      }
+      const text = norm(el.textContent);
+      return text.includes("names") && text.includes("notion") && text.includes("row");
+    });
+    let best = 0;
+    for (const section of sections) {
+      const n = countRowsInElement(section);
+      if (n > best) {
+        best = n;
+      }
+    }
+    return best || null;
+  }
+
+  function setTopStat(cardId, value, meta) {
+    const card = document.querySelector('.rme-stat-card[data-card="' + cardId + '"]');
+    if (!(card instanceof HTMLElement)) {
+      return;
+    }
+    const valueEl = card.querySelector(".rme-stat-value");
+    if (valueEl instanceof HTMLElement) {
+      valueEl.textContent = String(value);
+      valueEl.classList.remove("rme-stat-value--loading");
+    }
+    const metaEl = card.querySelector(".rme-stat-meta");
+    if (metaEl instanceof HTMLElement) {
+      metaEl.textContent = String(meta);
+    }
+  }
+
+  function visibleMetricCandidates() {
+    const dashboardRoot =
+      document.getElementById("pageHome") ||
+      document.getElementById("homeContent") ||
+      null;
+    const selectorRoot = dashboardRoot || document;
+    return Array.from(selectorRoot.querySelectorAll("article, button, section, div"))
+      .filter((el) => {
+        if (!(el instanceof HTMLElement)) {
+          return false;
+        }
+        if (el.closest(".rme-stat-card")) {
+          return false;
+        }
+        if (el.closest("#rmeOperationsInteractiveTables") || el.closest("#notionWsPaneRmeOperations")) {
+          return false;
+        }
+        const rect = el.getBoundingClientRect();
+        if (rect.width < 170 || rect.height < 28) {
+          return false;
+        }
+        const text = norm(el.textContent);
+        if (!text || text.length > 260) {
+          return false;
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        const ar = a.getBoundingClientRect();
+        const br = b.getBoundingClientRect();
+        return ar.top === br.top ? ar.left - br.left : ar.top - br.top;
+      });
+  }
+
+  function deepestMatchingCards(predicate) {
+    return visibleMetricCandidates().filter((el) => {
+      const text = norm(el.textContent);
+      if (!predicate(text)) {
+        return false;
+      }
+      return !Array.from(el.children).some((child) => {
+        if (!(child instanceof HTMLElement)) {
+          return false;
+        }
+        const childText = norm(child.textContent);
+        return childText && childText.length < text.length && predicate(childText);
+      });
+    });
+  }
+
+  function renderMiniCard(el, label, icon, count, meta) {
+    if (!(el instanceof HTMLElement)) {
+      return;
+    }
+    const currentKey = el.dataset.rmeMetricRepairKey || "";
+    const nextKey = label + "::" + count + "::" + meta;
+    if (currentKey === nextKey) {
+      return;
+    }
+    el.dataset.rmeMetricRepairKey = nextKey;
+    el.innerHTML =
+      "<div class=\"rme-admin-bottom-metric-repair\">" +
+        "<span class=\"rme-admin-bottom-metric-repair__icon\" aria-hidden=\"true\">" + esc(icon) + "</span>" +
+        "<div class=\"rme-admin-bottom-metric-repair__body\">" +
+          "<p class=\"rme-admin-bottom-metric-repair__label\">" + esc(label) + "</p>" +
+          "<p class=\"rme-admin-bottom-metric-repair__number\">" + esc(count) + "</p>" +
+          "<p class=\"rme-admin-bottom-metric-repair__meta\">" + esc(meta) + "</p>" +
+        "</div>" +
+        "<span class=\"rme-admin-bottom-metric-repair__arrow\" aria-hidden=\"true\">›</span>" +
+      "</div>";
+  }
+
+  function repairBottomCards() {
+    injectStyles();
+
+    const payCount = teacherPaySlipPageCount();
+    if (typeof payCount === "number") {
+      setTopStat(
+        "payslipsThisMonth",
+        payCount,
+        payCount === 1 ? "1 teacher pay slip page" : payCount + " teacher pay slip pages",
+      );
+    }
+
+    const notionCount = namesNotionRowCount();
+
+    const payMeta = payCount === 1
+      ? "1 pay slip page inside this card"
+      : (payCount ?? "—") + " pay slip pages inside this card";
+    const idsMeta = notionCount === 1
+      ? "1 Notion row ID table row"
+      : (notionCount ?? "—") + " Notion row ID table rows";
+
+    const payCards = deepestMatchingCards((text) =>
+      text.includes("teacher pay slips") || text.includes("pay slip pages") || text.includes("slips on file")
+    );
+    for (const card of payCards) {
+      renderMiniCard(card, "Teacher Pay Slips", "📄", payCount ?? "—", payMeta);
+    }
+
+    const idCards = deepestMatchingCards((text) =>
+      (text.includes("names") && text.includes("notion") && text.includes("row")) ||
+      text.includes("notion row id table rows")
+    );
+
+    const uniqueIdCards = idCards.filter((card) => !payCards.includes(card));
+    for (const card of uniqueIdCards) {
+      renderMiniCard(card, "Names & Notion Row IDs", "🆔", notionCount ?? "—", idsMeta);
+    }
+
+    // If the previous broad updater duplicated the Notion row-ID text into the
+    // left lower card, repair by visual order: left = Teacher Pay Slips, right = IDs.
+    const duplicateIdTextCards = deepestMatchingCards((text) =>
+      /^(\d+|—)\s+notion row id table rows$/.test(text)
+    );
+    if (duplicateIdTextCards.length >= 2) {
+      renderMiniCard(duplicateIdTextCards[0], "Teacher Pay Slips", "📄", payCount ?? "—", payMeta);
+      renderMiniCard(duplicateIdTextCards[1], "Names & Notion Row IDs", "🆔", notionCount ?? "—", idsMeta);
+    }
+  }
+
+  function start() {
+    repairBottomCards();
+    window.setInterval(repairBottomCards, REFRESH_MS);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start, { once: true });
+  } else {
+    window.setTimeout(start, 0);
+  }
+})();
+
+// === RME Turn 48 — Fix left bottom admin card + number/meta sizing ================
+// The LEFT lower admin dashboard card was duplicating the right card's text
+// ("N Notion row ID table rows"). This block:
+//   1. Locks the LEFT lower card to the Teacher Pay Slips child-page count.
+//   2. Makes the metric NUMBER visibly larger.
+//   3. Shrinks the wording underneath the number and pins it to the BOTTOM of the
+//      card so the layout reads: label → big number → small caption at the bottom.
+// It uses visual position (top-most row, left-most card on that row) so it works
+// even when the cards have identical DOM signatures.
+(function rmeAdminBottomLeftCardPaySlipLockBoot() {
+  // Disabled by Turn 49. This earlier patch was too broad and could touch
+  // non-dashboard UI. Turn 49 scopes fixes to the dashboard only.
+  return;
+  const STYLE_ID = "rmeAdminBottomLeftCardPaySlipLockStyles";
+  const REFRESH_MS = 480;
+
+  function norm(v) {
+    return String(v ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  function esc(v) {
+    return String(v ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function pagesState() {
+    try {
+      return Array.isArray(notionWorkspacePagesState) ? notionWorkspacePagesState : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function injectStyles() {
+    if (document.getElementById(STYLE_ID)) {
+      return;
+    }
+    const style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = [
+      "/* Bigger metric number */",
+      ".rme-admin-bottom-metric-repair__number {",
+      "  font-size: clamp(2.55rem, 5vw, 3.65rem) !important;",
+      "  font-weight: 900 !important;",
+      "  line-height: 0.92 !important;",
+      "  letter-spacing: -0.06em !important;",
+      "}",
+      "/* Stretch the card body so we can pin caption to the bottom */",
+      ".rme-admin-bottom-metric-repair {",
+      "  align-items: stretch !important;",
+      "}",
+      ".rme-admin-bottom-metric-repair__body {",
+      "  display: flex !important;",
+      "  flex-direction: column !important;",
+      "  justify-content: space-between !important;",
+      "  min-height: 4.6rem !important;",
+      "}",
+      "/* Smaller wording at the bottom of the card */",
+      ".rme-admin-bottom-metric-repair__meta {",
+      "  margin-top: auto !important;",
+      "  font-size: 0.6rem !important;",
+      "  line-height: 1.2 !important;",
+      "  letter-spacing: 0.01em !important;",
+      "  color: var(--text-muted) !important;",
+      "  opacity: 0.8 !important;",
+      "}",
+    ].join("\n");
+    document.head.appendChild(style);
+  }
+
+  function findWorkspacePageByTitle(testFn) {
+    return pagesState().find((p) => p && p.kind !== "trash" && testFn(norm(p.title))) || null;
+  }
+
+  function teacherPaySlipPageCount() {
+    const parent = findWorkspacePageByTitle((title) =>
+      title === "teacher pay slips" || title.includes("teacher pay slips")
+    );
+    if (!parent?.id) {
+      return null;
+    }
+    const parentId = String(parent.id);
+    return pagesState().filter((p) => {
+      if (!p || p.kind === "trash") {
+        return false;
+      }
+      if (String(p.parentId ?? "") !== parentId) {
+        return false;
+      }
+      const title = norm(p.title);
+      return Boolean(title && title !== "teacher pay slips");
+    }).length;
+  }
+
+  function visibleCardCandidates() {
+    return Array.from(document.querySelectorAll("article, button, section, div"))
+      .filter((el) => {
+        if (!(el instanceof HTMLElement)) {
+          return false;
+        }
+        if (el.closest(".rme-stat-card")) {
+          return false;
+        }
+        if (
+          el.closest("#rmeOperationsInteractiveTables") ||
+          el.closest("#notionWsPaneRmeOperations")
+        ) {
+          return false;
+        }
+        const rect = el.getBoundingClientRect();
+        if (rect.width < 170 || rect.height < 28) {
+          return false;
+        }
+        const text = norm(el.textContent);
+        if (!text || text.length > 320) {
+          return false;
+        }
+        return true;
+      });
+  }
+
+  function deepestCardsMatching(predicate) {
+    return visibleCardCandidates().filter((el) => {
+      const text = norm(el.textContent);
+      if (!predicate(text)) {
+        return false;
+      }
+      return !Array.from(el.children).some((child) => {
+        if (!(child instanceof HTMLElement)) {
+          return false;
+        }
+        const childText = norm(child.textContent);
+        return childText && childText.length < text.length && predicate(childText);
+      });
+    });
+  }
+
+  function renderMiniCard(el, label, icon, count, meta) {
+    if (!(el instanceof HTMLElement)) {
+      return;
+    }
+    const nextKey = "v48::" + label + "::" + count + "::" + meta;
+    if (el.dataset.rmeMetricRepairKey === nextKey) {
+      return;
+    }
+    el.dataset.rmeMetricRepairKey = nextKey;
+    el.innerHTML =
+      "<div class=\"rme-admin-bottom-metric-repair\">" +
+        "<span class=\"rme-admin-bottom-metric-repair__icon\" aria-hidden=\"true\">" + esc(icon) + "</span>" +
+        "<div class=\"rme-admin-bottom-metric-repair__body\">" +
+          "<p class=\"rme-admin-bottom-metric-repair__label\">" + esc(label) + "</p>" +
+          "<p class=\"rme-admin-bottom-metric-repair__number\">" + esc(count) + "</p>" +
+          "<p class=\"rme-admin-bottom-metric-repair__meta\">" + esc(meta) + "</p>" +
+        "</div>" +
+        "<span class=\"rme-admin-bottom-metric-repair__arrow\" aria-hidden=\"true\">›</span>" +
+      "</div>";
+  }
+
+  function repairLeftCard() {
+    injectStyles();
+
+    const payCount = teacherPaySlipPageCount();
+    const payMeta =
+      payCount === 1
+        ? "1 teacher pay slip page inside this card"
+        : (payCount ?? "—") + " teacher pay slip pages inside this card";
+
+    // Cards whose visible text matches the duplicated Notion-row-ID phrasing
+    // (or the Names & Notion Row IDs label). These are the candidates we need
+    // to disambiguate by position.
+    const phraseCards = deepestCardsMatching((text) =>
+      /\b\d+\s+notion row id table rows?\b/.test(text) ||
+      (text.includes("names") && text.includes("notion") && text.includes("row")) ||
+      text.includes("teacher pay slips") ||
+      text.includes("pay slip pages")
+    );
+
+    if (phraseCards.length < 2) {
+      // Only one card to act on — still relabel it as Teacher Pay Slips if it
+      // looks like the duplicated row-IDs caption took over the pay-slips card.
+      if (phraseCards.length === 1) {
+        const only = phraseCards[0];
+        const text = norm(only.textContent);
+        if (/\b\d+\s+notion row id table rows?\b/.test(text) && !text.includes("teacher pay slips")) {
+          renderMiniCard(only, "Teacher Pay Slips", "📄", payCount ?? "—", payMeta);
+        }
+      }
+      return;
+    }
+
+    // Sort by visual position: top-most first, then left-most.
+    phraseCards.sort((a, b) => {
+      const ar = a.getBoundingClientRect();
+      const br = b.getBoundingClientRect();
+      if (Math.abs(ar.top - br.top) > 12) {
+        return ar.top - br.top;
+      }
+      return ar.left - br.left;
+    });
+
+    // The leftmost card on the top row is the Teacher Pay Slips card.
+    const leftCard = phraseCards[0];
+    renderMiniCard(
+      leftCard,
+      "Teacher Pay Slips",
+      "📄",
+      payCount ?? "—",
+      payMeta,
+    );
+  }
+
+  function start() {
+    repairLeftCard();
+    window.setInterval(repairLeftCard, REFRESH_MS);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start, { once: true });
+  } else {
+    window.setTimeout(start, 0);
+  }
+})();
+
+// === RME Turn 49 — Dashboard-only bottom card source + sizing lock =================
+// Fixes ONLY the dashboard cards. It does not edit the Notion workspace side panel,
+// page tree, page panes, or Teacher Pay Slips toggle UI.
+//
+// Dashboard bottom cards:
+// - Left card: Teacher Pay Slips = child pages inside the Teacher Pay Slips page.
+// - Right card: Names & Notion Row IDs = rows in the row-ID mapping table.
+// - Number is larger.
+// - Caption wording is smaller and pinned to the bottom of the card.
+(function rmeDashboardOnlyBottomMetricCardsBoot() {
+  // Disabled by Turn 51. This still counted direct school/group pages as pay
+  // slip pages and could keep showing 6 instead of the teacher-page total.
+  return;
+  const STYLE_ID = "rmeDashboardOnlyBottomMetricCardsStyles";
+  const REFRESH_MS = 480;
+
+  function norm(v) {
+    return String(v ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  function esc(v) {
+    return String(v ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function dashboardRoot() {
+    const root =
+      document.getElementById("pageHome") ||
+      document.getElementById("homeContent") ||
+      null;
+    return root instanceof HTMLElement ? root : null;
+  }
+
+  function pagesState() {
+    try {
+      return Array.isArray(notionWorkspacePagesState) ? notionWorkspacePagesState : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function injectStyles() {
+    if (document.getElementById(STYLE_ID)) {
+      return;
+    }
+    const style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = [
+      ".rme-dashboard-bottom-card-v49 .rme-admin-bottom-metric-repair {",
+      "  display: grid !important;",
+      "  grid-template-columns: auto 1fr auto !important;",
+      "  align-items: stretch !important;",
+      "  gap: 0.75rem !important;",
+      "  width: 100% !important;",
+      "  min-width: 0 !important;",
+      "  height: 100% !important;",
+      "}",
+      ".rme-dashboard-bottom-card-v49 .rme-admin-bottom-metric-repair__icon {",
+      "  width: 2rem !important;",
+      "  height: 2rem !important;",
+      "  display: inline-flex !important;",
+      "  align-items: center !important;",
+      "  justify-content: center !important;",
+      "  border-radius: 10px !important;",
+      "  background: color-mix(in srgb, var(--pill-dot, #3b82f6) 18%, transparent) !important;",
+      "  color: var(--pill-text, #60a5fa) !important;",
+      "  font-size: 1rem !important;",
+      "  flex-shrink: 0 !important;",
+      "}",
+      ".rme-dashboard-bottom-card-v49 .rme-admin-bottom-metric-repair__body {",
+      "  min-width: 0 !important;",
+      "  min-height: 4.8rem !important;",
+      "  display: flex !important;",
+      "  flex-direction: column !important;",
+      "}",
+      ".rme-dashboard-bottom-card-v49 .rme-admin-bottom-metric-repair__label {",
+      "  margin: 0 0 0.16rem !important;",
+      "  color: var(--th-label) !important;",
+      "  font-size: 0.62rem !important;",
+      "  font-weight: 850 !important;",
+      "  letter-spacing: 0.075em !important;",
+      "  text-transform: uppercase !important;",
+      "}",
+      ".rme-dashboard-bottom-card-v49 .rme-admin-bottom-metric-repair__number {",
+      "  margin: 0 !important;",
+      "  color: var(--text) !important;",
+      "  font-size: clamp(2.65rem, 5.2vw, 3.8rem) !important;",
+      "  font-weight: 920 !important;",
+      "  line-height: 0.9 !important;",
+      "  letter-spacing: -0.065em !important;",
+      "  font-variant-numeric: tabular-nums !important;",
+      "}",
+      ".rme-dashboard-bottom-card-v49 .rme-admin-bottom-metric-repair__meta {",
+      "  margin: auto 0 0 !important;",
+      "  color: var(--text-muted) !important;",
+      "  font-size: 0.58rem !important;",
+      "  line-height: 1.18 !important;",
+      "  letter-spacing: 0.01em !important;",
+      "  opacity: 0.82 !important;",
+      "  white-space: nowrap !important;",
+      "  overflow: hidden !important;",
+      "  text-overflow: ellipsis !important;",
+      "}",
+      ".rme-dashboard-bottom-card-v49 .rme-admin-bottom-metric-repair__arrow {",
+      "  color: var(--pill-text) !important;",
+      "  font-size: 1rem !important;",
+      "  font-weight: 800 !important;",
+      "  opacity: 0.8 !important;",
+      "  align-self: center !important;",
+      "}",
+    ].join("\n");
+    document.head.appendChild(style);
+  }
+
+  function findWorkspacePageByTitle(testFn) {
+    return pagesState().find((p) => p && p.kind !== "trash" && testFn(norm(p.title))) || null;
+  }
+
+  function teacherPaySlipPageCount() {
+    const parent = findWorkspacePageByTitle((title) =>
+      title === "teacher pay slips" || title.includes("teacher pay slips")
+    );
+    if (!parent?.id) {
+      return null;
+    }
+    const parentId = String(parent.id);
+    return pagesState().filter((p) => {
+      if (!p || p.kind === "trash") {
+        return false;
+      }
+      if (String(p.parentId ?? "") !== parentId) {
+        return false;
+      }
+      const title = norm(p.title);
+      return Boolean(title && title !== "teacher pay slips");
+    }).length;
+  }
+
+  function rowHasContent(row) {
+    if (!(row instanceof HTMLElement)) {
+      return false;
+    }
+    const text = norm(row.textContent);
+    if (!text || /^(add|new|empty|loading|no rows|no data)$/.test(text)) {
+      return false;
+    }
+    const inputs = row.querySelectorAll("input, textarea, [contenteditable='true']");
+    if (!inputs.length) {
+      return true;
+    }
+    return Array.from(inputs).some((input) => {
+      if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) {
+        return Boolean(String(input.value || "").trim());
+      }
+      return Boolean(norm(input.textContent));
+    });
+  }
+
+  function countRowsInElement(root) {
+    if (!(root instanceof HTMLElement)) {
+      return 0;
+    }
+    const selectors = [
+      "tbody tr",
+      ".floating-draft-data-row",
+      ".canvas-local-db-table tbody tr",
+      ".payslip-notion-links-table tbody tr",
+    ];
+    let best = 0;
+    for (const sel of selectors) {
+      const rows = Array.from(root.querySelectorAll(sel)).filter((row) => rowHasContent(row));
+      if (rows.length > best) {
+        best = rows.length;
+      }
+    }
+    return best;
+  }
+
+  function namesNotionRowCount() {
+    try {
+      if (Array.isArray(payslipNotionLinkRows) && payslipNotionLinkRows.length > 0) {
+        return payslipNotionLinkRows.length;
+      }
+    } catch {
+      /* ignore */
+    }
+
+    const directTbody = document.getElementById("payslipNotionLinksTbody");
+    const direct = countRowsInElement(directTbody?.parentElement || directTbody);
+    if (direct > 0) {
+      return direct;
+    }
+
+    const page = findWorkspacePageByTitle((title) =>
+      title.includes("names") && title.includes("notion") && title.includes("row")
+    );
+    if (!page?.id) {
+      return null;
+    }
+
+    try {
+      const raw = typeof payslipAppStateGetItem === "function"
+        ? payslipAppStateGetItem("recruit-notion-workspace-page-floating-drafts-v1")
+        : window.localStorage.getItem("recruit-notion-workspace-page-floating-drafts-v1");
+      if (!raw) {
+        return null;
+      }
+      const parsed = JSON.parse(raw);
+      const pageBlob = parsed?.[page.id];
+      const candidates = [];
+      if (Array.isArray(pageBlob)) {
+        candidates.push(...pageBlob);
+      } else if (pageBlob && typeof pageBlob === "object") {
+        candidates.push(...Object.values(pageBlob));
+      }
+      let best = 0;
+      for (const item of candidates) {
+        const rows =
+          Array.isArray(item?.rows) ? item.rows :
+          Array.isArray(item?.shadow?.rows) ? item.shadow.rows :
+          Array.isArray(item?.snapshot?.rows) ? item.snapshot.rows :
+          [];
+        if (rows.length > best) {
+          best = rows.length;
+        }
+      }
+      return best || null;
+    } catch {
+      return null;
+    }
+  }
+
+  function visibleDashboardCardCandidates() {
+    const root = dashboardRoot();
+    if (!root) {
+      return [];
+    }
+    return Array.from(root.querySelectorAll("article, button, section, div"))
+      .filter((el) => {
+        if (!(el instanceof HTMLElement)) {
+          return false;
+        }
+        if (
+          el.closest("#notionWorkspace") ||
+          el.closest("#notionEditorSidebar") ||
+          el.closest("#notionWsPanes") ||
+          el.closest("#notionWorkspacePageList") ||
+          el.closest("#rmeOperationsInteractiveTables") ||
+          el.closest("#notionWsPaneRmeOperations")
+        ) {
+          return false;
+        }
+        const rect = el.getBoundingClientRect();
+        if (rect.width < 170 || rect.height < 32) {
+          return false;
+        }
+        const text = norm(el.textContent);
+        if (!text || text.length > 320) {
+          return false;
+        }
+        return true;
+      });
+  }
+
+  function deepestMatchingDashboardCards(predicate) {
+    return visibleDashboardCardCandidates().filter((el) => {
+      const text = norm(el.textContent);
+      if (!predicate(text)) {
+        return false;
+      }
+      return !Array.from(el.children).some((child) => {
+        if (!(child instanceof HTMLElement)) {
+          return false;
+        }
+        const childText = norm(child.textContent);
+        return childText && childText.length < text.length && predicate(childText);
+      });
+    });
+  }
+
+  function renderDashboardCard(el, label, icon, count, meta) {
+    if (!(el instanceof HTMLElement)) {
+      return;
+    }
+    const key = "v49::" + label + "::" + count + "::" + meta;
+    if (el.dataset.rmeDashboardMetricKey === key) {
+      return;
+    }
+    el.dataset.rmeDashboardMetricKey = key;
+    el.classList.add("rme-dashboard-bottom-card-v49");
+    el.innerHTML =
+      "<div class=\"rme-admin-bottom-metric-repair\">" +
+        "<span class=\"rme-admin-bottom-metric-repair__icon\" aria-hidden=\"true\">" + esc(icon) + "</span>" +
+        "<div class=\"rme-admin-bottom-metric-repair__body\">" +
+          "<p class=\"rme-admin-bottom-metric-repair__label\">" + esc(label) + "</p>" +
+          "<p class=\"rme-admin-bottom-metric-repair__number\">" + esc(count) + "</p>" +
+          "<p class=\"rme-admin-bottom-metric-repair__meta\">" + esc(meta) + "</p>" +
+        "</div>" +
+        "<span class=\"rme-admin-bottom-metric-repair__arrow\" aria-hidden=\"true\">›</span>" +
+      "</div>";
+  }
+
+  function repairDashboardCards() {
+    injectStyles();
+
+    const payCount = teacherPaySlipPageCount();
+    const idCount = namesNotionRowCount();
+
+    const payMeta = payCount === 1
+      ? "1 page inside Teacher Pay Slips"
+      : (payCount ?? "—") + " pages inside Teacher Pay Slips";
+    const idMeta = idCount === 1
+      ? "1 row inside Names & Notion Row IDs"
+      : (idCount ?? "—") + " rows inside Names & Notion Row IDs";
+
+    const relatedCards = deepestMatchingDashboardCards((text) =>
+      text.includes("teacher pay slips") ||
+      text.includes("pay slip pages") ||
+      text.includes("slips on file") ||
+      text.includes("names") && text.includes("notion") && text.includes("row") ||
+      /\b\d+\s+notion row id table rows?\b/.test(text)
+    );
+
+    if (!relatedCards.length) {
+      return;
+    }
+
+    relatedCards.sort((a, b) => {
+      const ar = a.getBoundingClientRect();
+      const br = b.getBoundingClientRect();
+      if (Math.abs(ar.top - br.top) > 12) {
+        return ar.top - br.top;
+      }
+      return ar.left - br.left;
+    });
+
+    // If both bottom cards have become the same row-ID text, visual order is the
+    // source of truth: left = Teacher Pay Slips, right = Names & Notion Row IDs.
+    const leftCard = relatedCards[0] || null;
+    const rightCard = relatedCards[1] || null;
+
+    if (leftCard) {
+      renderDashboardCard(
+        leftCard,
+        "Teacher Pay Slips",
+        "📄",
+        payCount ?? "—",
+        payMeta,
+      );
+    }
+
+    if (rightCard) {
+      renderDashboardCard(
+        rightCard,
+        "Names & Notion Row IDs",
+        "🆔",
+        idCount ?? "—",
+        idMeta,
+      );
+    }
+  }
+
+  function start() {
+    repairDashboardCards();
+    window.setInterval(repairDashboardCards, REFRESH_MS);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start, { once: true });
+  } else {
+    window.setTimeout(start, 0);
+  }
+})();
+
+// === RME Turn 45 — Interactive RME Operations tables ===============================
+// Adds global search/filter, expandable live table cards, row detail drawer, safe
+// low-risk Notion writes through preload → main.js, and confirmation for risky actions.
+(function rmeOperationsInteractiveTablesBoot() {
+  const PANE_ID = "notionWsPaneRmeOperations";
+  const ROOT_ID = "rmeOperationsInteractiveTables";
+  const STYLE_ID = "rmeOperationsInteractiveTablesStyles";
+  const OLD_PREVIEW_ID = "rmeOperationsLivePreviews";
+  const NOTION_PREFIX = "https://www.notion.so/";
+
+  const DBs = [
+    { key: "owner", title: "Owner Action Queue", section: "👑 My Day", tone: "red", databaseId: "cdc81ecb-c578-4e4f-b41c-313459c9e930", filters: ["red", "approval", "overdue"] },
+    { key: "screener", title: "Application Screener Queue", section: "🧑‍🏫 Recruiting", tone: "yellow", databaseId: "1039e9de-8f04-4557-8ae6-14e20caf8771", filters: ["approval"] },
+    { key: "interviews", title: "Interviews & Demos", section: "🧑‍🏫 Recruiting", tone: "green", databaseId: "cb724de9-bdef-4b39-addc-2ead19683dbe", filters: [] },
+    { key: "health", title: "Teacher Health", section: "🛟 Teacher Health", tone: "red", databaseId: "e4a22530-9c6f-4475-a45c-4a65b488567b", filters: ["red"] },
+    { key: "letters", title: "Employment Letter Requests", section: "🛟 Teacher Health", tone: "yellow", databaseId: "4e38a2c0-4bbe-470b-bc84-3cf433eb141c", filters: ["approval"] },
+    { key: "schools", title: "Schools Prospect CRM", section: "🎣 Sales", tone: "yellow", databaseId: "67d31231-656e-42d1-aeb3-af76d795b688", filters: [] },
+    { key: "outreach", title: "Outreach Drafts", section: "✋ Approval Inboxes", tone: "red", databaseId: "be2feacb-c73d-451e-a688-131c6d78d555", filters: ["red", "approval"] },
+    { key: "sops", title: "SOPs", section: "📚 SOPs & Knowledge Base", tone: "green", databaseId: "8cdb4362-062b-4752-aeb2-9ab446354b41", filters: [] },
+    { key: "agents", title: "Sub-Agents Registry", section: "🤖 Agent Build Progress", tone: "yellow", databaseId: "8fcf6a81-c2e9-4196-9e73-e982e4ed5002", filters: [] },
+  ];
+
+  const state = {
+    query: "",
+    filter: "all",
+    expanded: new Set(["owner", "screener", "health", "outreach"]),
+    tables: new Map(),
+    loading: new Set(),
+    selected: null,
+  };
+
+  function esc(v) {
+    return String(v ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function norm(v) {
+    return String(v ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  function pageUrl(id) {
+    const clean = String(id ?? "").replace(/-/g, "").trim();
+    return clean ? NOTION_PREFIX + clean : "";
+  }
+
+  function dbUrl(id) {
+    return pageUrl(id);
+  }
+
+  function signalForDb(db) {
+    if (db.tone === "red") return "🔴 Act today";
+    if (db.tone === "yellow") return "🟡 Check soon";
+    return "🟢 Okay";
+  }
+
+  function injectStyles() {
+    if (document.getElementById(STYLE_ID)) return;
+    const style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = [
+      "#" + OLD_PREVIEW_ID + "{display:none!important;}",
+      ".rme-ops-interactive-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:.65rem;padding:1rem;border-bottom:1px solid var(--border-subtle);}",
+      ".rme-ops-search{flex:1 1 18rem;min-width:12rem;padding:.58rem .72rem;border:1px solid var(--btn-border);border-radius:10px;background:var(--btn-bg);color:var(--text);font:inherit;font-size:.9rem;}",
+      ".rme-ops-chipbar{display:flex;flex-wrap:wrap;gap:.35rem;}",
+      ".rme-ops-chip{padding:.38rem .62rem;border-radius:999px;border:1px solid var(--btn-border);background:var(--btn-bg);color:var(--text-muted);font-size:.78rem;font-weight:750;}",
+      ".rme-ops-chip[data-active='true']{background:var(--pill-bg);color:var(--pill-text);border-color:color-mix(in srgb,var(--pill-dot) 45%,var(--btn-border));}",
+      ".rme-ops-live2-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:.85rem;padding:1rem;}",
+      ".rme-ops-live2-card{min-width:0;border:1px solid var(--border-subtle);border-radius:15px;background:color-mix(in srgb,var(--surface) 96%,var(--bg));overflow:hidden;}",
+      ".rme-ops-live2-head{display:flex;align-items:flex-start;justify-content:space-between;gap:.75rem;padding:.85rem;border-bottom:1px solid var(--border-subtle);}",
+      ".rme-ops-live2-title{margin:0;font-size:.94rem;color:var(--text);}",
+      ".rme-ops-live2-meta{margin:.18rem 0 0;font-size:.73rem;color:var(--text-muted);}",
+      ".rme-ops-live2-actions{display:flex;align-items:center;gap:.35rem;flex-shrink:0;}",
+      ".rme-ops-icon-btn{width:1.85rem;height:1.85rem;padding:0;border-radius:8px;border:1px solid var(--btn-border);background:var(--btn-bg);color:var(--text-muted);display:inline-flex;align-items:center;justify-content:center;}",
+      ".rme-ops-icon-btn:hover{background:var(--btn-hover);color:var(--text);}",
+      ".rme-ops-live2-body{min-height:3.5rem;}",
+      ".rme-ops-row-list{display:flex;flex-direction:column;}",
+      ".rme-ops-row-btn{display:grid;grid-template-columns:minmax(8rem,1.4fr) minmax(6rem,1fr) auto;gap:.65rem;align-items:center;width:100%;padding:.62rem .8rem;border:0;border-bottom:1px solid var(--table-border);border-radius:0;background:transparent;color:var(--text);font:inherit;text-align:left;}",
+      ".rme-ops-row-btn:hover{background:var(--tr-hover);}",
+      ".rme-ops-row-btn:last-child{border-bottom:0;}",
+      ".rme-ops-row-main{min-width:0;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
+      ".rme-ops-row-sub{min-width:0;color:var(--text-muted);font-size:.78rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
+      ".rme-ops-row-open{font-size:.72rem;font-weight:800;color:var(--pill-text);}",
+      ".rme-ops-empty{padding:.9rem;color:var(--text-muted);font-size:.84rem;line-height:1.45;}",
+      ".rme-ops-drawer-scrim{position:fixed;inset:0;z-index:4200;background:rgba(15,15,20,.34);backdrop-filter:blur(4px);display:none;}",
+      ".rme-ops-drawer-scrim[data-open='true']{display:block;}",
+      ".rme-ops-drawer{position:absolute;top:0;right:0;width:min(34rem,100vw);height:100%;display:flex;flex-direction:column;background:var(--surface);border-left:1px solid var(--border);box-shadow:var(--overlay-panel-shadow);}",
+      ".rme-ops-drawer-head{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;padding:1rem;border-bottom:1px solid var(--border-subtle);}",
+      ".rme-ops-drawer-title{margin:0;font-size:1.05rem;color:var(--text);line-height:1.3;}",
+      ".rme-ops-drawer-kicker{margin:0 0 .28rem;color:var(--text-muted);font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;}",
+      ".rme-ops-drawer-close{width:2rem;height:2rem;padding:0;border-radius:8px;}",
+      ".rme-ops-drawer-body{flex:1;min-height:0;overflow:auto;padding:1rem;}",
+      ".rme-ops-field-grid{display:grid;grid-template-columns:minmax(7rem,11rem) 1fr;gap:.55rem .9rem;font-size:.86rem;}",
+      ".rme-ops-field-grid dt{color:var(--th-label);font-weight:800;text-transform:uppercase;font-size:.66rem;letter-spacing:.06em;padding-top:.25rem;}",
+      ".rme-ops-field-grid dd{margin:0;color:var(--text);word-break:break-word;padding-bottom:.55rem;border-bottom:1px solid var(--table-border);}",
+      ".rme-ops-action-row{display:flex;flex-wrap:wrap;gap:.45rem;margin:0 0 1rem;}",
+      ".rme-ops-action{font-size:.8rem;padding:.45rem .7rem;border-radius:9px;}",
+      ".rme-ops-action--danger{color:#dc2626;border-color:color-mix(in srgb,#ef4444 45%,var(--btn-border));}",
+      ".rme-ops-action--primary{color:var(--pill-text);border-color:color-mix(in srgb,var(--pill-dot) 45%,var(--btn-border));background:var(--pill-bg);}",
+      ".rme-ops-save-msg{margin:.35rem 0 .9rem;color:var(--text-muted);font-size:.82rem;min-height:1.2em;}",
+    ].join("\n");
+    document.head.appendChild(style);
+  }
+
+  function bestTitle(columns, row, db) {
+    const preferred = ["Name", "Title", "Applicant", "Teacher", "School", "Action", "Task", "Company", "SOP", "Agent"];
+    for (const want of preferred) {
+      const idx = columns.findIndex((c) => norm(c).includes(norm(want)));
+      if (idx >= 0 && String(row[idx] ?? "").trim()) return String(row[idx]).trim();
+    }
+    return String(row.find((v) => String(v ?? "").trim()) ?? db.title).trim() || db.title;
+  }
+
+  function rowSearchText(db, columns, row) {
+    return norm([db.title, db.section, ...columns, ...row].join(" "));
+  }
+
+  function rowMatchesFilter(db, columns, row) {
+    const f = state.filter;
+    if (f === "all") return true;
+    const text = rowSearchText(db, columns, row);
+    if (f === "red") return db.tone === "red" || /red|urgent|overdue|risk|at risk|act today/.test(text);
+    if (f === "yellow") return db.tone === "yellow" || /watch|soon|pending|review/.test(text);
+    if (f === "approval") return db.filters.includes("approval") || /approval|approve|awaiting|draft|outbound|letter|contract/.test(text);
+    if (f === "overdue") return db.filters.includes("overdue") || /overdue|late|today|urgent/.test(text);
+    if (f === "mine") return /ayaaz|yushra|owner|admin|mine/.test(text);
+    return true;
+  }
+
+  function visibleRows(db, table) {
+    const columns = Array.isArray(table?.columns) ? table.columns : [];
+    const rows = Array.isArray(table?.rows) ? table.rows : [];
+    const q = norm(state.query);
+    return rows
+      .map((row, idx) => ({ row, idx }))
+      .filter(({ row }) => (!q || rowSearchText(db, columns, row).includes(q)) && rowMatchesFilter(db, columns, row));
+  }
+
+  async function loadDb(db, force) {
+    if (state.loading.has(db.key)) return;
+    if (!force && state.tables.has(db.key)) return;
+    state.loading.add(db.key);
+    render();
+    try {
+      if (typeof window.notionApi?.queryDatabase !== "function") {
+        state.tables.set(db.key, { ok: false, message: "Notion bridge unavailable.", columns: [], rows: [], pageIds: [] });
+      } else {
+        const result = await window.notionApi.queryDatabase({ databaseId: db.databaseId });
+        state.tables.set(db.key, result);
+      }
+    } catch (e) {
+      state.tables.set(db.key, { ok: false, message: e instanceof Error ? e.message : String(e), columns: [], rows: [], pageIds: [] });
+    } finally {
+      state.loading.delete(db.key);
+      render();
+    }
+  }
+
+  function loadAll() {
+    DBs.forEach((db) => void loadDb(db, false));
+  }
+
+  function buildToolbar() {
+    const chips = [
+      ["all", "All"],
+      ["red", "🔴 Red"],
+      ["yellow", "🟡 Yellow"],
+      ["approval", "Awaiting approval"],
+      ["overdue", "Overdue"],
+      ["mine", "Mine"],
+    ];
+    return (
+      "<div class=\"rme-ops-interactive-toolbar\">" +
+        "<input id=\"rmeOpsSearch\" class=\"rme-ops-search\" type=\"search\" placeholder=\"Search all operations tables…\" value=\"" + esc(state.query) + "\" />" +
+        "<div class=\"rme-ops-chipbar\">" +
+          chips.map(([key, label]) => "<button type=\"button\" class=\"rme-ops-chip\" data-filter=\"" + key + "\" data-active=\"" + (state.filter === key ? "true" : "false") + "\">" + label + "</button>").join("") +
+        "</div>" +
+      "</div>"
+    );
+  }
+
+  function renderCard(db) {
+    const table = state.tables.get(db.key);
+    const columns = Array.isArray(table?.columns) ? table.columns : [];
+    const pageIds = Array.isArray(table?.pageIds) ? table.pageIds : [];
+    const rows = visibleRows(db, table);
+    const expanded = state.expanded.has(db.key);
+    const loading = state.loading.has(db.key);
+    const displayRows = expanded ? rows.slice(0, 12) : rows.slice(0, 3);
+    const rowHtml = !table
+      ? "<div class=\"rme-ops-empty\">Waiting to load…</div>"
+      : !table.ok
+        ? "<div class=\"rme-ops-empty\">Could not load this table. " + esc(table.message || "Open Notion for the full view.") + "</div>"
+        : !displayRows.length
+          ? "<div class=\"rme-ops-empty\">No matching rows. Try another filter or open the full Notion table.</div>"
+          : "<div class=\"rme-ops-row-list\">" + displayRows.map(({ row, idx }) => {
+              const title = bestTitle(columns, row, db);
+              const subA = row.find((v) => String(v ?? "").trim() && String(v).trim() !== title) || "";
+              const subB = row.slice(0, 4).filter((v) => String(v ?? "").trim()).join(" · ");
+              return "<button type=\"button\" class=\"rme-ops-row-btn\" data-db=\"" + db.key + "\" data-row=\"" + idx + "\">" +
+                "<span class=\"rme-ops-row-main\">" + esc(title) + "</span>" +
+                "<span class=\"rme-ops-row-sub\">" + esc(subA || subB || db.section) + "</span>" +
+                "<span class=\"rme-ops-row-open\">Open</span>" +
+              "</button>";
+            }).join("") + "</div>";
+
+    return (
+      "<article class=\"rme-ops-live2-card\" data-card=\"" + db.key + "\">" +
+        "<div class=\"rme-ops-live2-head\">" +
+          "<div>" +
+            "<h3 class=\"rme-ops-live2-title\">" + esc(db.title) + "</h3>" +
+            "<p class=\"rme-ops-live2-meta\">" + esc(db.section) + " · " + signalForDb(db) + " · " + (table?.ok ? rows.length + " matching / " + table.rows.length + " rows" : loading ? "Loading…" : "Not loaded") + "</p>" +
+          "</div>" +
+          "<div class=\"rme-ops-live2-actions\">" +
+            "<button type=\"button\" class=\"rme-ops-icon-btn\" data-refresh=\"" + db.key + "\" title=\"Refresh\">↻</button>" +
+            "<button type=\"button\" class=\"rme-ops-icon-btn\" data-expand=\"" + db.key + "\" title=\"Expand/collapse\">" + (expanded ? "−" : "+") + "</button>" +
+            "<button type=\"button\" class=\"rme-ops-icon-btn\" data-open-db=\"" + db.databaseId + "\" title=\"Open in Notion\">↗</button>" +
+          "</div>" +
+        "</div>" +
+        "<div class=\"rme-ops-live2-body\">" + (loading ? "<div class=\"rme-ops-empty\">Loading live rows…</div>" : rowHtml) + "</div>" +
+      "</article>"
+    );
+  }
+
+  function ensureRoot() {
+    injectStyles();
+    const pane = document.getElementById(PANE_ID);
+    if (!pane) return null;
+    const shell = pane.querySelector(".rme-ops-shell");
+    if (!(shell instanceof HTMLElement)) return null;
+
+    let root = document.getElementById(ROOT_ID);
+    if (!(root instanceof HTMLElement)) {
+      root = document.createElement("section");
+      root.id = ROOT_ID;
+      root.className = "rme-ops-table-panel";
+      const sourcePanel = shell.querySelector(".rme-ops-table-panel:last-child");
+      if (sourcePanel instanceof HTMLElement) {
+        shell.insertBefore(root, sourcePanel);
+      } else {
+        shell.appendChild(root);
+      }
+    }
+    return root;
+  }
+
+  function render() {
+    const root = ensureRoot();
+    if (!root) return;
+    root.innerHTML =
+      "<div class=\"rme-ops-panel-head\"><div><h2>Interactive operations tables</h2><p>Search, filter, refresh, open rows, and save low-risk updates. Risky decisions ask for confirmation and never auto-send outbound or contract content.</p></div></div>" +
+      buildToolbar() +
+      "<div class=\"rme-ops-live2-grid\">" + DBs.map(renderCard).join("") + "</div>";
+    bindRootEvents(root);
+  }
+
+  function bindRootEvents(root) {
+    const search = root.querySelector("#rmeOpsSearch");
+    if (search instanceof HTMLInputElement) {
+      search.addEventListener("input", () => {
+        state.query = search.value;
+        render();
+      });
+    }
+    root.querySelectorAll("[data-filter]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        state.filter = btn.getAttribute("data-filter") || "all";
+        render();
+      });
+    });
+    root.querySelectorAll("[data-refresh]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const db = DBs.find((x) => x.key === btn.getAttribute("data-refresh"));
+        if (db) void loadDb(db, true);
+      });
+    });
+    root.querySelectorAll("[data-expand]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const key = btn.getAttribute("data-expand");
+        if (!key) return;
+        if (state.expanded.has(key)) state.expanded.delete(key);
+        else state.expanded.add(key);
+        render();
+      });
+    });
+    root.querySelectorAll("[data-open-db]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.getAttribute("data-open-db");
+        const url = dbUrl(id);
+        if (url) window.open(url, "_blank", "noopener,noreferrer");
+      });
+    });
+    root.querySelectorAll("[data-db][data-row]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        openDrawer(btn.getAttribute("data-db"), Number(btn.getAttribute("data-row")));
+      });
+    });
+  }
+
+  function ensureDrawer() {
+    let scrim = document.getElementById("rmeOpsDrawerScrim");
+    if (scrim instanceof HTMLElement) return scrim;
+    scrim = document.createElement("div");
+    scrim.id = "rmeOpsDrawerScrim";
+    scrim.className = "rme-ops-drawer-scrim";
+    scrim.innerHTML = "<aside class=\"rme-ops-drawer\" role=\"dialog\" aria-modal=\"true\"><div id=\"rmeOpsDrawerInner\"></div></aside>";
+    document.body.appendChild(scrim);
+    scrim.addEventListener("click", (e) => {
+      if (e.target === scrim) closeDrawer();
+    });
+    return scrim;
+  }
+
+  function openDrawer(key, rowIdx) {
+    const db = DBs.find((x) => x.key === key);
+    const table = db ? state.tables.get(db.key) : null;
+    if (!db || !table?.ok) return;
+    const row = table.rows[rowIdx];
+    if (!Array.isArray(row)) return;
+    state.selected = { key, rowIdx };
+    const scrim = ensureDrawer();
+    const inner = scrim.querySelector("#rmeOpsDrawerInner");
+    const title = bestTitle(table.columns, row, db);
+    const pageId = Array.isArray(table.pageIds) ? table.pageIds[rowIdx] : "";
+    const fields = table.columns.map((col, i) =>
+      "<dt>" + esc(col) + "</dt><dd>" + esc(row[i] ?? "") + "</dd>"
+    ).join("");
+    if (inner instanceof HTMLElement) {
+      inner.innerHTML =
+        "<div class=\"rme-ops-drawer-head\">" +
+          "<div><p class=\"rme-ops-drawer-kicker\">" + esc(db.title) + "</p><h3 class=\"rme-ops-drawer-title\">" + esc(title) + "</h3></div>" +
+          "<button type=\"button\" class=\"rme-ops-drawer-close\" data-close>×</button>" +
+        "</div>" +
+        "<div class=\"rme-ops-drawer-body\">" +
+          "<div class=\"rme-ops-action-row\">" +
+            "<button type=\"button\" class=\"rme-ops-action rme-ops-action--primary\" data-safe-action=\"note\">Add note</button>" +
+            "<button type=\"button\" class=\"rme-ops-action\" data-safe-action=\"done\">Mark done</button>" +
+            "<button type=\"button\" class=\"rme-ops-action\" data-safe-action=\"snooze\">Snooze</button>" +
+            "<button type=\"button\" class=\"rme-ops-action rme-ops-action--danger\" data-safe-action=\"risk\">Risky decision…</button>" +
+            "<button type=\"button\" class=\"rme-ops-action\" data-open-row>Open in Notion</button>" +
+          "</div>" +
+          "<p id=\"rmeOpsSaveMsg\" class=\"rme-ops-save-msg\"></p>" +
+          "<dl class=\"rme-ops-field-grid\">" + fields + "</dl>" +
+        "</div>";
+      bindDrawerEvents(scrim, db, table, rowIdx, pageId);
+    }
+    scrim.dataset.open = "true";
+  }
+
+  function closeDrawer() {
+    const scrim = document.getElementById("rmeOpsDrawerScrim");
+    if (scrim instanceof HTMLElement) scrim.dataset.open = "false";
+    state.selected = null;
+  }
+
+  function msg(text) {
+    const el = document.getElementById("rmeOpsSaveMsg");
+    if (el instanceof HTMLElement) el.textContent = text;
+  }
+
+  function findColumn(columns, names) {
+    const wanted = names.map(norm);
+    for (const w of wanted) {
+      const idx = columns.findIndex((c) => norm(c) === w || norm(c).includes(w));
+      if (idx >= 0) return columns[idx];
+    }
+    return "";
+  }
+
+  async function updateProperty(pageId, propertyName, value, requiresConfirm) {
+    if (!pageId) {
+      msg("This row does not expose a Notion page id, so it can only be reviewed here.");
+      return false;
+    }
+    if (requiresConfirm) {
+      const ok = window.confirm("This is a higher-risk operations decision. Confirm that you want to update the Notion row and preserve the audit trail.");
+      if (!ok) return false;
+    }
+    if (typeof window.notionApi?.updatePageProperty !== "function") {
+      msg("Update bridge is not available in this build yet.");
+      return false;
+    }
+    msg("Saving…");
+    const res = await window.notionApi.updatePageProperty({ pageId, propertyName, value });
+    if (!res?.ok) {
+      msg("Could not save: " + (res?.message || "Unknown error"));
+      return false;
+    }
+    msg("Saved. Refreshing table…");
+    const selected = state.selected;
+    const db = selected ? DBs.find((x) => x.key === selected.key) : null;
+    if (db) {
+      await loadDb(db, true);
+    }
+    msg("Saved.");
+    return true;
+  }
+
+  function bindDrawerEvents(scrim, db, table, rowIdx, pageId) {
+    scrim.querySelectorAll("[data-close]").forEach((btn) => btn.addEventListener("click", closeDrawer));
+    const openBtn = scrim.querySelector("[data-open-row]");
+    if (openBtn) {
+      openBtn.addEventListener("click", () => {
+        const url = pageUrl(pageId) || dbUrl(db.databaseId);
+        if (url) window.open(url, "_blank", "noopener,noreferrer");
+      });
+    }
+    scrim.querySelectorAll("[data-safe-action]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const action = btn.getAttribute("data-safe-action");
+        const columns = table.columns || [];
+        if (action === "note") {
+          const prop = findColumn(columns, ["Notes", "Owner note", "Audit note", "Comments"]) || window.prompt("Which Notion property should receive the note?", "Notes");
+          if (!prop) return;
+          const note = window.prompt("Add note / audit trail entry:", "");
+          if (note == null) return;
+          await updateProperty(pageId, prop, note, false);
+        } else if (action === "done") {
+          const prop = findColumn(columns, ["Status", "Stage", "Action status", "Done"]);
+          if (!prop) {
+            msg("No status-like property was found on this table.");
+            return;
+          }
+          await updateProperty(pageId, prop, "Done", false);
+        } else if (action === "snooze") {
+          const prop = findColumn(columns, ["Due", "Due date", "Follow-up", "Next follow-up", "Date"]) || window.prompt("Which date property should be snoozed?", "Due Date");
+          if (!prop) return;
+          const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+          const ymd = window.prompt("Snooze until date:", tomorrow);
+          if (ymd == null) return;
+          await updateProperty(pageId, prop, ymd, false);
+        } else if (action === "risk") {
+          const prop = findColumn(columns, ["Status", "Approval status", "Decision", "Stage"]) || window.prompt("Which property should be updated?", "Status");
+          if (!prop) return;
+          const value = window.prompt("Enter the approved decision/status. This will not send outbound or contract content.", "Awaiting approval");
+          if (value == null) return;
+          await updateProperty(pageId, prop, value, true);
+        }
+      });
+    });
+  }
+
+  function start() {
+    render();
+    loadAll();
+    window.rmeIdlePower?.runOnAdaptiveInterval?.(
+      () => {
+        if (document.getElementById(PANE_ID)) render();
+      },
+      {
+        activeMs: 8000,
+        idleMs: 30000,
+        hiddenMs: 120000,
+        shouldRun: () =>
+          window.rmeIdlePower?.isNotionWsPaneVisible?.("notionWsPaneRmeOperations"),
+      },
+    ) ??
+      window.setInterval(() => {
+        if (document.getElementById(PANE_ID)) render();
+      }, 2500);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start, { once: true });
+  } else {
+    window.setTimeout(start, 0);
+  }
+})();
+
+// === RME Turn 44 — Teacher Pay Slips direct child pages ============================
+// Removes the empty toggle from the Teacher Pay Slips page and renders each teacher
+// child page directly on the page as a separate Notion-style page block.
+(function rmeTeacherPaySlipsDirectChildPagesBoot() {
+  // Disabled by Turn 49. The side panel must stay as the normal workspace tree:
+  // Teacher Pay Slips + Names & Notion Row IDs, with their toggles intact.
+  return;
+  const ROOT_ID = "rmeTeacherPaySlipsDirectPages";
+  const STYLE_ID = "rmeTeacherPaySlipsDirectPagesStyles";
+
+  function norm(v) {
+    return String(v ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  function esc(v) {
+    return String(v ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function cssEscape(v) {
+    if (window.CSS && typeof window.CSS.escape === "function") {
+      return window.CSS.escape(String(v));
+    }
+    return String(v).replace(/["\\]/g, "\\$&");
+  }
+
+  function pagesState() {
+    try {
+      return Array.isArray(notionWorkspacePagesState)
+        ? notionWorkspacePagesState
+        : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function findTeacherPaySlipsPage() {
+    const pages = pagesState();
+    return (
+      pages.find((p) => norm(p?.title) === "teacher pay slips") ||
+      pages.find((p) => norm(p?.title).includes("teacher pay slips")) ||
+      null
+    );
+  }
+
+  function teacherChildPages(parentId) {
+    const parentKey = String(parentId ?? "");
+    if (!parentKey) {
+      return [];
+    }
+    return pagesState()
+      .filter((p) => {
+        if (!p || p.kind === "trash") {
+          return false;
+        }
+        if (String(p.parentId ?? "") !== parentKey) {
+          return false;
+        }
+        const title = norm(p.title);
+        return title && title !== "teacher pay slips";
+      })
+      .sort((a, b) => String(a.title || "").localeCompare(String(b.title || "")));
+  }
+
+  function injectStyles() {
+    if (document.getElementById(STYLE_ID)) {
+      return;
+    }
+    const style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = [
+      ".rme-teacher-payslips-direct-pages {",
+      "  width: min(820px, 100%);",
+      "  margin: 0.8rem 0 1rem;",
+      "  display: flex;",
+      "  flex-direction: column;",
+      "  gap: 0.2rem;",
+      "}",
+      ".rme-teacher-payslips-direct-page {",
+      "  width: 100%;",
+      "  display: flex;",
+      "  align-items: center;",
+      "  gap: 0.55rem;",
+      "  padding: 0.48rem 0.55rem;",
+      "  border: 0;",
+      "  border-radius: 7px;",
+      "  background: transparent;",
+      "  color: var(--text);",
+      "  font: inherit;",
+      "  font-size: 0.95rem;",
+      "  line-height: 1.35;",
+      "  text-align: left;",
+      "  cursor: pointer;",
+      "}",
+      ".rme-teacher-payslips-direct-page:hover {",
+      "  background: color-mix(in srgb, var(--text) 7%, transparent);",
+      "}",
+      ".rme-teacher-payslips-direct-icon {",
+      "  flex: 0 0 auto;",
+      "  opacity: 0.78;",
+      "}",
+      ".rme-teacher-payslips-direct-title {",
+      "  min-width: 0;",
+      "  overflow: hidden;",
+      "  text-overflow: ellipsis;",
+      "  white-space: nowrap;",
+      "}",
+      ".notion-ws-pane[data-rme-teacher-payslips='true'] details,",
+      ".notion-ws-pane[data-rme-teacher-payslips='true'] .notion-toggle,",
+      ".notion-ws-pane[data-rme-teacher-payslips='true'] .notion-editor-toggle,",
+      ".notion-ws-pane[data-rme-teacher-payslips='true'] [data-block-type='toggle'] {",
+      "  display: none !important;",
+      "}",
+    ].join("\n");
+    document.head.appendChild(style);
+  }
+
+  function paneForPage(page) {
+    if (!page?.id) {
+      return null;
+    }
+    const byId = document.querySelector(
+      ".notion-ws-pane[data-workspace-id=\"" + cssEscape(page.id) + "\"]",
+    );
+    if (byId instanceof HTMLElement) {
+      return byId;
+    }
+    const active = document.querySelector(".notion-ws-pane--visible");
+    if (active instanceof HTMLElement && norm(active.textContent).includes("teacher pay slips")) {
+      return active;
+    }
+    return null;
+  }
+
+  function findInsertAnchor(pane) {
+    const candidates = [
+      ".notion-page-title",
+      ".notion-editor-page-title",
+      ".notion-editor-title",
+      "h1",
+      "[contenteditable='true']",
+    ];
+    for (const sel of candidates) {
+      const el = pane.querySelector(sel);
+      if (el instanceof HTMLElement && norm(el.textContent).includes("teacher pay slips")) {
+        return el;
+      }
+    }
+    return null;
+  }
+
+  function removeTeacherPaySlipsToggle(pane) {
+    pane.dataset.rmeTeacherPayslips = "true";
+    pane.querySelectorAll("details").forEach((details) => {
+      if (!(details instanceof HTMLElement)) {
+        return;
+      }
+      if (details.id === ROOT_ID || details.closest("#" + ROOT_ID)) {
+        return;
+      }
+      details.remove();
+    });
+  }
+
+  function renderDirectPages() {
+    injectStyles();
+    const parent = findTeacherPaySlipsPage();
+    if (!parent) {
+      return;
+    }
+    const pane = paneForPage(parent);
+    if (!pane) {
+      return;
+    }
+
+    removeTeacherPaySlipsToggle(pane);
+
+    const children = teacherChildPages(parent.id);
+    let root = pane.querySelector("#" + ROOT_ID);
+    if (!(root instanceof HTMLElement)) {
+      root = document.createElement("div");
+      root.id = ROOT_ID;
+      root.className = "rme-teacher-payslips-direct-pages";
+      const anchor = findInsertAnchor(pane);
+      if (anchor?.parentElement) {
+        anchor.insertAdjacentElement("afterend", root);
+      } else {
+        pane.prepend(root);
+      }
+    }
+
+    root.innerHTML = children
+      .map((child) => (
+        "<button type=\"button\" class=\"rme-teacher-payslips-direct-page\" data-page-id=\"" + esc(child.id) + "\">" +
+          "<span class=\"rme-teacher-payslips-direct-icon\" aria-hidden=\"true\">📄</span>" +
+          "<span class=\"rme-teacher-payslips-direct-title\">" + esc(child.title || "Untitled") + "</span>" +
+        "</button>"
+      ))
+      .join("");
+
+    root.querySelectorAll("[data-page-id]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.getAttribute("data-page-id");
+        if (!id) {
+          return;
+        }
+        try {
+          if (typeof activateNotionWorkspacePage === "function") {
+            activateNotionWorkspacePage(id);
+          }
+        } catch (e) {
+          console.warn("teacher pay slips direct page open:", e);
+        }
+      });
+    });
+  }
+
+  function start() {
+    renderDirectPages();
+    window.rmeIdlePower?.runOnAdaptiveInterval?.(renderDirectPages, {
+      activeMs: 4000,
+      idleMs: 20000,
+      hiddenMs: 120000,
+      shouldRun: () => window.rmeIdlePower?.isDomPageVisible?.("pageHome"),
+    }) ?? window.setInterval(renderDirectPages, 900);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start, { once: true });
+  } else {
+    window.setTimeout(start, 0);
+  }
+})();
+
+// === RME Turn 42 — Mission Control-style Operations dashboard =====================
+// Adds a dedicated RecruitMyEnglish operations page to the bottom of the Notion-style
+// workspace sidebar. It is visibility-only: the Blueprint remains the source of truth.
+(function rmeOperationsDashboardBoot() {
+  const RME_OPS_PAGE_ID = "__rmeOperations";
+  const RME_OPS_PANE_ID = "notionWsPaneRmeOperations";
+  const RME_OPS_NAV_ID = "rmeOperationsSidebarRow";
+
+  const notionPageUrl = (id) => "https://www.notion.so/" + String(id).replace(/-/g, "");
+
+  const RME_OPS_LINKS = {
+    blueprint: notionPageUrl("a3e479cf-b4d9-4ec8-9f53-c74a1738bbe6"),
+    missionControl: notionPageUrl("77fde278-73e7-4860-97b7-dd1062532c0f"),
+    rubric: notionPageUrl("1704e7c3-64b0-4d65-8704-754855e9c5b2"),
+    ownerActionQueue: notionPageUrl("cdc81ecb-c578-4e4f-b41c-313459c9e930"),
+    applicationScreener: notionPageUrl("1039e9de-8f04-4557-8ae6-14e20caf8771"),
+    interviews: notionPageUrl("cb724de9-bdef-4b39-addc-2ead19683dbe"),
+    teacherHealth: notionPageUrl("e4a22530-9c6f-4475-a45c-4a65b488567b"),
+    employmentLetters: notionPageUrl("4e38a2c0-4bbe-470b-bc84-3cf433eb141c"),
+    schoolsCrm: notionPageUrl("67d31231-656e-42d1-aeb3-af76d795b688"),
+    outreachDrafts: notionPageUrl("be2feacb-c73d-451e-a688-131c6d78d555"),
+    sops: notionPageUrl("8cdb4362-062b-4752-aeb2-9ab446354b41"),
+    subAgents: notionPageUrl("8fcf6a81-c2e9-4196-9e73-e982e4ed5002"),
+  };
+
+  const RME_OPS_TABLES = [
+    {
+      section: "👑 My Day",
+      table: "Owner Action Queue",
+      focus: "Red items, overdue work, and decisions waiting on Ayaaz or Yushra.",
+      href: RME_OPS_LINKS.ownerActionQueue,
+      tone: "red",
+    },
+    {
+      section: "🧑‍🏫 Recruiting",
+      table: "Application Screener Queue",
+      focus: "New applications, scores, recommendations, and full audit trail.",
+      href: RME_OPS_LINKS.applicationScreener,
+      tone: "yellow",
+    },
+    {
+      section: "🧑‍🏫 Recruiting",
+      table: "Interviews & Demos",
+      focus: "Candidates in interview, demo, school decision, hired, or rejected stages.",
+      href: RME_OPS_LINKS.interviews,
+      tone: "green",
+    },
+    {
+      section: "🛟 Teacher Health",
+      table: "Teacher Health",
+      focus: "At-risk teachers, low bookings, quiet teachers, and retention notes.",
+      href: RME_OPS_LINKS.teacherHealth,
+      tone: "red",
+    },
+    {
+      section: "🛟 Teacher Health",
+      table: "Employment Letter Requests",
+      focus: "Letters requested, drafted, awaiting approval, or sent.",
+      href: RME_OPS_LINKS.employmentLetters,
+      tone: "yellow",
+    },
+    {
+      section: "🎣 Sales",
+      table: "Schools Prospect CRM",
+      focus: "Prospects, decision-makers, follow-ups, meetings, proposals, wins, and losses.",
+      href: RME_OPS_LINKS.schoolsCrm,
+      tone: "yellow",
+    },
+    {
+      section: "✋ Approval Inboxes",
+      table: "Outreach Drafts",
+      focus: "School emails, follow-ups, and proposal drafts waiting for human review.",
+      href: RME_OPS_LINKS.outreachDrafts,
+      tone: "red",
+    },
+    {
+      section: "📚 SOPs & Knowledge Base",
+      table: "SOPs",
+      focus: "Payment day, onboarding, interviews, school onboarding, exits, complaints, and invoicing.",
+      href: RME_OPS_LINKS.sops,
+      tone: "green",
+    },
+    {
+      section: "🤖 Agent Build Progress",
+      table: "Sub-Agents Registry",
+      focus: "Agent scope, trigger, autonomy, escalation rule, and build status.",
+      href: RME_OPS_LINKS.subAgents,
+      tone: "yellow",
+    },
+  ];
+
+  function rmeOpsInjectStyle() {
+    if (document.getElementById("rmeOperationsStyles")) {
+      return;
+    }
+    const style = document.createElement("style");
+    style.id = "rmeOperationsStyles";
+    style.textContent = [
+      ".notion-editor-page-row--rme-operations {",
+      "  align-self: stretch;",
+      "  width: 100%;",
+      "  margin-top: auto;",
+      "  padding-top: 0;",
+      "}",
+      ".notion-editor-page-row--rme-operations + .notion-editor-page-row--trash {",
+      "  margin-top: 0.35rem;",
+      "}",
+      ".notion-editor-page-row--rme-operations .notion-editor-page-btn {",
+      "  border: none;",
+      "  background: transparent;",
+      "  color: var(--text);",
+      "}",
+      ".notion-editor-page-row--rme-operations[data-active='true'] .notion-editor-page-btn {",
+      "  color: var(--pill-text);",
+      "  background: color-mix(in srgb, var(--pill-bg) 90%, transparent);",
+      "  border: none;",
+      "}",
+      "html[data-theme='dark'] .notion-editor-page-row--rme-operations[data-active='true'] .notion-editor-page-btn {",
+      "  color: #93c5fd;",
+      "}",
+      ".rme-ops-pane {",
+      "  flex: 1;",
+      "  min-height: 0;",
+      "  overflow: auto;",
+      "  padding: 2.5rem clamp(1.35rem, 3.5vw, 3.5rem) 3.5rem;",
+      "  background:",
+      "    radial-gradient(circle at top left, color-mix(in srgb, #f59e0b 14%, transparent) 0, transparent 32rem),",
+      "    var(--bg);",
+      "}",
+      ".rme-ops-shell {",
+      "  width: min(1180px, 100%);",
+      "  margin: 0 auto;",
+      "  display: flex;",
+      "  flex-direction: column;",
+      "  gap: 1.2rem;",
+      "}",
+      ".rme-ops-hero, .rme-ops-card, .rme-ops-table-panel {",
+      "  isolation: isolate;",
+      "  border-radius: 18px;",
+      "  border: 1px solid color-mix(in srgb, #fff 40%, #94a3b8 10%);",
+      "  background: linear-gradient(",
+      "    165deg,",
+      "    color-mix(in srgb, #f8fafc 58%, transparent) 0%,",
+      "    color-mix(in srgb, #eef2ff 42%, transparent) 48%,",
+      "    color-mix(in srgb, #f1f5f9 36%, transparent) 100%",
+      "  );",
+      "  -webkit-backdrop-filter: blur(22px) saturate(138%);",
+      "  backdrop-filter: blur(22px) saturate(138%);",
+      "  box-shadow:",
+      "    inset 0 1px 0 rgba(255, 255, 255, 0.32),",
+      "    inset 0 0 0 1px rgba(15, 23, 42, 0.05),",
+      "    0 10px 38px -8px rgba(15, 23, 42, 0.13),",
+      "    0 0 40px -10px color-mix(in srgb, var(--rme-accent, #3b82f6) 17%, transparent);",
+      "}",
+      "html[data-theme='dark'] .rme-ops-hero,",
+      "html[data-theme='dark'] .rme-ops-card,",
+      "html[data-theme='dark'] .rme-ops-table-panel {",
+      "  border: 1px solid color-mix(in srgb, #fff 16%, #64748b 12%);",
+      "  background: linear-gradient(",
+      "    165deg,",
+      "    color-mix(in srgb, #1e293b 50%, transparent) 0%,",
+      "    color-mix(in srgb, #0f172a 34%, transparent) 55%,",
+      "    color-mix(in srgb, #172554 26%, transparent) 100%",
+      "  );",
+      "  box-shadow:",
+      "    inset 0 1px 0 rgba(255, 255, 255, 0.14),",
+      "    inset 0 0 0 1px rgba(0, 0, 0, 0.26),",
+      "    0 12px 40px -4px rgba(0, 0, 0, 0.3),",
+      "    0 0 44px -8px color-mix(in srgb, var(--rme-accent, #3b82f6) 14%, transparent);",
+      "}",
+      ".rme-ops-hero {",
+      "  padding: clamp(1.4rem, 2.2vw, 1.65rem) clamp(1.35rem, 2vw, 1.55rem);",
+      "}",
+      ".rme-ops-eyebrow {",
+      "  margin: 0 0 0.4rem;",
+      "  font-size: 0.72rem;",
+      "  font-weight: 800;",
+      "  letter-spacing: 0.12em;",
+      "  text-transform: uppercase;",
+      "  color: #b45309;",
+      "}",
+      ".rme-ops-title {",
+      "  margin: 0;",
+      "  font-size: clamp(1.75rem, 3vw, 2.55rem);",
+      "  line-height: 1.05;",
+      "  letter-spacing: -0.05em;",
+      "  color: var(--text);",
+      "}",
+      ".rme-ops-subtitle {",
+      "  max-width: 64rem;",
+      "  margin: 0.65rem 0 0;",
+      "  color: var(--text-muted);",
+      "  line-height: 1.6;",
+      "}",
+      ".rme-ops-status-grid, .rme-ops-grid {",
+      "  display: grid;",
+      "  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));",
+      "  gap: 0.8rem;",
+      "}",
+      ".rme-ops-card {",
+      "  padding: clamp(1.15rem, 1.8vw, 1.35rem) clamp(1.1rem, 1.6vw, 1.3rem);",
+      "}",
+      ".rme-ops-card h3 {",
+      "  margin: 0 0 0.42rem;",
+      "  font-size: 1rem;",
+      "  color: var(--text);",
+      "}",
+      ".rme-ops-card p, .rme-ops-table-panel p {",
+      "  margin: 0;",
+      "  color: var(--text-muted);",
+      "  line-height: 1.5;",
+      "  font-size: 0.9rem;",
+      "}",
+      ".rme-ops-pill {",
+      "  display: inline-flex;",
+      "  align-items: center;",
+      "  gap: 0.35rem;",
+      "  margin-bottom: 0.55rem;",
+      "  padding: 0.28rem 0.55rem;",
+      "  border-radius: 999px;",
+      "  font-size: 0.72rem;",
+      "  font-weight: 800;",
+      "}",
+      ".rme-ops-pill--green { background: rgba(34, 197, 94, 0.12); color: #16a34a; }",
+      ".rme-ops-pill--yellow { background: rgba(245, 158, 11, 0.14); color: #b45309; }",
+      ".rme-ops-pill--red { background: rgba(239, 68, 68, 0.12); color: #dc2626; }",
+      ".rme-ops-warning {",
+      "  border-color: color-mix(in srgb, #ef4444 38%, #94a3b8 18%);",
+      "  background: linear-gradient(",
+      "    165deg,",
+      "    color-mix(in srgb, #fef2f2 72%, transparent) 0%,",
+      "    color-mix(in srgb, #fee2e2 48%, transparent) 50%,",
+      "    color-mix(in srgb, #fecaca 28%, transparent) 100%",
+      "  );",
+      "}",
+      "html[data-theme='dark'] .rme-ops-warning {",
+      "  border-color: color-mix(in srgb, #f87171 42%, #64748b 14%);",
+      "  background: linear-gradient(",
+      "    165deg,",
+      "    color-mix(in srgb, #450a0a 55%, transparent) 0%,",
+      "    color-mix(in srgb, #1c1917 42%, transparent) 55%,",
+      "    color-mix(in srgb, #7f1d1d 22%, transparent) 100%",
+      "  );",
+      "}",
+      ".rme-ops-table-panel {",
+      "  overflow: hidden;",
+      "}",
+      ".rme-ops-panel-head {",
+      "  display: flex;",
+      "  align-items: flex-start;",
+      "  justify-content: space-between;",
+      "  gap: 1rem;",
+      "  padding: clamp(1.1rem, 1.6vw, 1.35rem) clamp(1.1rem, 1.6vw, 1.3rem);",
+      "  border-bottom: 1px solid var(--border-subtle);",
+      "}",
+      ".rme-ops-panel-head h2 {",
+      "  margin: 0;",
+      "  font-size: 1.05rem;",
+      "  color: var(--text);",
+      "}",
+      ".rme-ops-table-wrap {",
+      "  overflow: auto;",
+      "}",
+      ".rme-ops-table {",
+      "  width: 100%;",
+      "  min-width: 760px;",
+      "  border-collapse: collapse;",
+      "  font-size: 0.88rem;",
+      "}",
+      ".rme-ops-table th, .rme-ops-table td {",
+      "  padding: 0.72rem 0.85rem;",
+      "  border-bottom: 1px solid var(--table-border);",
+      "  vertical-align: top;",
+      "  text-align: left;",
+      "}",
+      ".rme-ops-table th {",
+      "  background: color-mix(in srgb, var(--th-bg) 58%, transparent);",
+      "  -webkit-backdrop-filter: blur(10px) saturate(120%);",
+      "  backdrop-filter: blur(10px) saturate(120%);",
+      "  color: var(--th-label);",
+      "  text-transform: uppercase;",
+      "  letter-spacing: 0.08em;",
+      "  font-size: 0.67rem;",
+      "}",
+      ".rme-ops-table tr:last-child td {",
+      "  border-bottom: none;",
+      "}",
+      ".rme-ops-table a, .rme-ops-source-link {",
+      "  color: var(--pill-text);",
+      "  font-weight: 750;",
+      "  text-decoration: none;",
+      "}",
+      ".rme-ops-table a:hover, .rme-ops-source-link:hover {",
+      "  text-decoration: underline;",
+      "}",
+      ".rme-ops-source-grid {",
+      "  display: grid;",
+      "  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));",
+      "  gap: 0.65rem;",
+      "  padding: clamp(1.05rem, 1.5vw, 1.25rem) clamp(1.05rem, 1.5vw, 1.25rem) 1.2rem;",
+      "}",
+      ".rme-ops-source-link {",
+      "  display: block;",
+      "  padding: 0.95rem 0.9rem;",
+      "  border-radius: 14px;",
+      "  isolation: isolate;",
+      "  border: 1px solid color-mix(in srgb, #fff 32%, #94a3b8 14%);",
+      "  background: color-mix(in srgb, var(--surface, #fff) 42%, transparent);",
+      "  -webkit-backdrop-filter: blur(12px) saturate(130%);",
+      "  backdrop-filter: blur(12px) saturate(130%);",
+      "  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);",
+      "}",
+      "html[data-theme='dark'] .rme-ops-source-link {",
+      "  border: 1px solid color-mix(in srgb, #fff 12%, #475569 22%);",
+      "  background: color-mix(in srgb, #0f172a 48%, transparent);",
+      "  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);",
+      "}",
+      "@media (max-width: 720px) {",
+      "  .rme-ops-pane { padding: 1.35rem 1rem 2.35rem; }",
+      "  .rme-ops-panel-head { flex-direction: column; }",
+      "}",
+    ].join("\n");
+    document.head.appendChild(style);
+  }
+
+  function rmeOpsToneLabel(tone) {
+    if (tone === "red") {
+      return "🔴 Act today";
+    }
+    if (tone === "yellow") {
+      return "🟡 Check soon";
+    }
+    return "🟢 Okay";
+  }
+
+  function rmeOpsOpenExternal(e) {
+    const link = e.target.closest("a[href]");
+    if (!link) {
+      return;
+    }
+    const href = link.getAttribute("href");
+    if (!href || !href.startsWith("https://www.notion.so/")) {
+      return;
+    }
+    e.preventDefault();
+    window.open(href, "_blank", "noopener,noreferrer");
+  }
+
+  function rmeOpsBuildPane() {
+    let pane = document.getElementById(RME_OPS_PANE_ID);
+    if (pane) {
+      return pane;
+    }
+    const root = document.getElementById("notionWsPanes");
+    if (!root) {
+      return null;
+    }
+
+    pane = document.createElement("section");
+    pane.id = RME_OPS_PANE_ID;
+    pane.className = "notion-ws-pane";
+    pane.dataset.workspaceId = RME_OPS_PAGE_ID;
+
+    const rowsHtml = RME_OPS_TABLES.map((row) => (
+      "<tr>" +
+        "<td><strong>" + row.section + "</strong></td>" +
+        "<td><a href=\"" + row.href + "\">" + row.table + "</a></td>" +
+        "<td><span class=\"rme-ops-pill rme-ops-pill--" + row.tone + "\">" + rmeOpsToneLabel(row.tone) + "</span></td>" +
+        "<td>" + row.focus + "</td>" +
+      "</tr>"
+    )).join("");
+
+    pane.innerHTML =
+      "<div class=\"rme-ops-pane\">" +
+        "<div class=\"rme-ops-shell\">" +
+          "<section class=\"rme-ops-hero\">" +
+            "<p class=\"rme-ops-eyebrow\">👑 RME Operations</p>" +
+            "<h1 class=\"rme-ops-title\">RecruitMyEnglish Operations Dashboard</h1>" +
+            "<p class=\"rme-ops-subtitle\">Mission Control inside the Teachers Portal. Start with My Day, check anything red, review teacher health, then move through recruiting, sales, approvals, SOPs, and agent build progress. This page is for visibility only. The Blueprint controls the work.</p>" +
+          "</section>" +
+          "<section class=\"rme-ops-status-grid\" aria-label=\"Dashboard colour guide\">" +
+            "<article class=\"rme-ops-card\"><span class=\"rme-ops-pill rme-ops-pill--green\">🟢 Green</span><h3>Okay</h3><p>Nothing urgent needs your attention.</p></article>" +
+            "<article class=\"rme-ops-card\"><span class=\"rme-ops-pill rme-ops-pill--yellow\">🟡 Yellow</span><h3>Watch</h3><p>Something needs a check soon.</p></article>" +
+            "<article class=\"rme-ops-card\"><span class=\"rme-ops-pill rme-ops-pill--red\">🔴 Red</span><h3>Act today</h3><p>Handle this before moving on.</p></article>" +
+          "</section>" +
+          "<section class=\"rme-ops-grid\" aria-label=\"Operations sections\">" +
+            "<article class=\"rme-ops-card\"><h3>👑 My Day</h3><p>Urgent owner actions and approvals waiting for a human.</p></article>" +
+            "<article class=\"rme-ops-card\"><h3>🧑‍🏫 Recruiting</h3><p>Applications, interviews, demos, outcomes, and the screening audit trail.</p></article>" +
+            "<article class=\"rme-ops-card\"><h3>🛟 Teacher Health</h3><p>At-risk teachers, underbooked teachers, and employment letter requests.</p></article>" +
+            "<article class=\"rme-ops-card\"><h3>🎣 Sales</h3><p>School prospects, next follow-ups, and outreach drafts.</p></article>" +
+            "<article class=\"rme-ops-card\"><h3>📚 SOPs</h3><p>Process docs that protect the business from tribal knowledge.</p></article>" +
+            "<article class=\"rme-ops-card\"><h3>🤖 Agents</h3><p>Sub-agent build status, autonomy, triggers, and escalation rules.</p></article>" +
+          "</section>" +
+          "<section class=\"rme-ops-card rme-ops-warning\">" +
+            "<h3>⚖️ Human approval rule</h3>" +
+            "<p>Nothing money-related, contract-related, or outbound gets sent without human approval. Teacher-facing content must use TG / SE / ME before hire. Applicant screening must show all applicants with a visible audit trail.</p>" +
+          "</section>" +
+          "<section class=\"rme-ops-table-panel\">" +
+            "<div class=\"rme-ops-panel-head\">" +
+              "<div><h2>Embedded operations tables</h2><p>Open each table when you need the live Notion data. The app keeps the dashboard clean and points to the correct source.</p></div>" +
+            "</div>" +
+            "<div class=\"rme-ops-table-wrap\">" +
+              "<table class=\"rme-ops-table\">" +
+                "<thead><tr><th>Section</th><th>Embedded table</th><th>Signal</th><th>What to check</th></tr></thead>" +
+                "<tbody>" + rowsHtml + "</tbody>" +
+              "</table>" +
+            "</div>" +
+          "</section>" +
+          "<section class=\"rme-ops-table-panel\">" +
+            "<div class=\"rme-ops-panel-head\"><div><h2>🧠 Source of truth</h2><p>Use these pages to understand the system. For business logic, the Blueprint wins.</p></div></div>" +
+            "<div class=\"rme-ops-source-grid\">" +
+              "<a class=\"rme-ops-source-link\" href=\"" + RME_OPS_LINKS.blueprint + "\">🧠 Operations Blueprint</a>" +
+              "<a class=\"rme-ops-source-link\" href=\"" + RME_OPS_LINKS.missionControl + "\">🎛️ Mission Control</a>" +
+              "<a class=\"rme-ops-source-link\" href=\"" + RME_OPS_LINKS.rubric + "\">📊 Interview Scoring Rubric</a>" +
+            "</div>" +
+          "</section>" +
+        "</div>" +
+      "</div>";
+
+    pane.addEventListener("click", rmeOpsOpenExternal);
+    root.appendChild(pane);
+    return pane;
+  }
+
+  function rmeOpsSetActiveNav(active) {
+    document.querySelectorAll(".notion-editor-page-row[data-active='true']")
+      .forEach((row) => {
+        if (row.id !== RME_OPS_NAV_ID) {
+          row.dataset.active = "false";
+        }
+      });
+    const row = document.getElementById(RME_OPS_NAV_ID);
+    if (row) {
+      row.dataset.active = active ? "true" : "false";
+    }
+  }
+
+  function rmeOpsShowPane() {
+    const pane = rmeOpsBuildPane();
+    if (!pane) {
+      return;
+    }
+    document.querySelectorAll(".notion-ws-pane").forEach((el) => {
+      el.classList.remove("notion-ws-pane--visible");
+      if (el instanceof HTMLElement) {
+        el.hidden = el.id === RME_OPS_PANE_ID ? false : el.hidden;
+      }
+    });
+    pane.classList.add("notion-ws-pane--visible");
+    pane.hidden = false;
+    rmeOpsSetActiveNav(true);
+    try {
+      window.localStorage.setItem("recruit-notion-workspace-active-v2", RME_OPS_PAGE_ID);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function rmeOpsAddSidebarItem() {
+    const list = document.getElementById("notionWorkspacePageList");
+    if (!list || document.getElementById(RME_OPS_NAV_ID)) {
+      return;
+    }
+
+    const row = document.createElement("div");
+    row.id = RME_OPS_NAV_ID;
+    row.className = "notion-editor-page-row notion-editor-page-row--rme-operations";
+    row.dataset.active = "false";
+    row.dataset.workspaceId = RME_OPS_PAGE_ID;
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "notion-editor-page-btn";
+    btn.textContent = "👑 RME Operations";
+    btn.setAttribute("aria-label", "Open RME Operations dashboard");
+    btn.addEventListener("click", rmeOpsShowPane);
+
+    row.appendChild(btn);
+
+    const trashRow = list.querySelector(".notion-editor-page-row--trash");
+    if (trashRow) {
+      list.insertBefore(row, trashRow);
+    } else {
+      list.appendChild(row);
+    }
+  }
+
+  function rmeOpsEnsure() {
+    rmeOpsInjectStyle();
+    rmeOpsBuildPane();
+    rmeOpsAddSidebarItem();
+  }
+
+  function rmeOpsStart() {
+    rmeOpsEnsure();
+    const list = document.getElementById("notionWorkspacePageList");
+    if (list) {
+      const observer = new MutationObserver(() => rmeOpsAddSidebarItem());
+      observer.observe(list, { childList: true });
+    }
+    window.rmeIdlePower?.runOnAdaptiveInterval?.(rmeOpsEnsure, {
+      activeMs: 8000,
+      idleMs: 30000,
+      hiddenMs: 120000,
+      shouldRun: () =>
+        window.rmeIdlePower?.isNotionWsPaneVisible?.("notionWsPaneRmeOperations"),
+    }) ?? window.setInterval(rmeOpsEnsure, 2500);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", rmeOpsStart, { once: true });
+  } else {
+    rmeOpsStart();
+  }
+})();
+
+// Live preview layer for the RME Operations dashboard.
+// Reads through preload → main.js → Notion API, so the renderer never sees secrets.
+(function rmeOperationsLiveTablePreviewsBoot() {
+  const RME_OPS_PANE_ID = "notionWsPaneRmeOperations";
+  const PREVIEW_ROOT_ID = "rmeOperationsLivePreviews";
+  const PREVIEW_LIMIT_ROWS = 5;
+  const PREVIEW_LIMIT_COLS = 5;
+
+  const PREVIEW_DATABASES = [
+    {
+      title: "Owner Action Queue",
+      databaseId: "cdc81ecb-c578-4e4f-b41c-313459c9e930",
+      section: "👑 My Day",
+    },
+    {
+      title: "Application Screener Queue",
+      databaseId: "1039e9de-8f04-4557-8ae6-14e20caf8771",
+      section: "🧑‍🏫 Recruiting",
+    },
+    {
+      title: "Interviews & Demos",
+      databaseId: "cb724de9-bdef-4b39-addc-2ead19683dbe",
+      section: "🧑‍🏫 Recruiting",
+    },
+    {
+      title: "Teacher Health",
+      databaseId: "e4a22530-9c6f-4475-a45c-4a65b488567b",
+      section: "🛟 Teacher Health",
+    },
+    {
+      title: "Employment Letter Requests",
+      databaseId: "4e38a2c0-4bbe-470b-bc84-3cf433eb141c",
+      section: "🛟 Teacher Health",
+    },
+    {
+      title: "Schools Prospect CRM",
+      databaseId: "67d31231-656e-42d1-aeb3-af76d795b688",
+      section: "🎣 Sales",
+    },
+    {
+      title: "Outreach Drafts",
+      databaseId: "be2feacb-c73d-451e-a688-131c6d78d555",
+      section: "✋ Approval Inboxes",
+    },
+    {
+      title: "SOPs",
+      databaseId: "8cdb4362-062b-4752-aeb2-9ab446354b41",
+      section: "📚 SOPs & Knowledge Base",
+    },
+    {
+      title: "Sub-Agents Registry",
+      databaseId: "8fcf6a81-c2e9-4196-9e73-e982e4ed5002",
+      section: "🤖 Agent Build Progress",
+    },
+  ];
+
+  function rmeOpsEscapeHtml(value) {
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function rmeOpsInjectPreviewStyles() {
+    if (document.getElementById("rmeOperationsPreviewStyles")) {
+      return;
+    }
+    const style = document.createElement("style");
+    style.id = "rmeOperationsPreviewStyles";
+    style.textContent = [
+      ".rme-ops-live-grid {",
+      "  display: grid;",
+      "  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));",
+      "  gap: 0.85rem;",
+      "  padding: 1rem;",
+      "}",
+      ".rme-ops-live-card {",
+      "  min-width: 0;",
+      "  border: 1px solid var(--border-subtle);",
+      "  border-radius: 14px;",
+      "  background: color-mix(in srgb, var(--surface) 96%, var(--bg));",
+      "  overflow: hidden;",
+      "}",
+      ".rme-ops-live-head {",
+      "  display: flex;",
+      "  align-items: flex-start;",
+      "  justify-content: space-between;",
+      "  gap: 0.75rem;",
+      "  padding: 0.8rem 0.85rem;",
+      "  border-bottom: 1px solid var(--border-subtle);",
+      "}",
+      ".rme-ops-live-title {",
+      "  margin: 0;",
+      "  font-size: 0.92rem;",
+      "  color: var(--text);",
+      "}",
+      ".rme-ops-live-section {",
+      "  margin: 0.15rem 0 0;",
+      "  font-size: 0.72rem;",
+      "  color: var(--text-muted);",
+      "}",
+      ".rme-ops-live-status {",
+      "  flex-shrink: 0;",
+      "  font-size: 0.72rem;",
+      "  font-weight: 750;",
+      "  color: var(--text-muted);",
+      "}",
+      ".rme-ops-live-scroll {",
+      "  max-height: 15rem;",
+      "  overflow: auto;",
+      "}",
+      ".rme-ops-live-table {",
+      "  width: 100%;",
+      "  min-width: 520px;",
+      "  border-collapse: collapse;",
+      "  font-size: 0.78rem;",
+      "}",
+      ".rme-ops-live-table th, .rme-ops-live-table td {",
+      "  padding: 0.5rem 0.6rem;",
+      "  border-bottom: 1px solid var(--table-border);",
+      "  text-align: left;",
+      "  vertical-align: top;",
+      "  max-width: 15rem;",
+      "  overflow: hidden;",
+      "  text-overflow: ellipsis;",
+      "  white-space: nowrap;",
+      "}",
+      ".rme-ops-live-table th {",
+      "  position: sticky;",
+      "  top: 0;",
+      "  background: var(--th-bg);",
+      "  color: var(--th-label);",
+      "  text-transform: uppercase;",
+      "  letter-spacing: 0.06em;",
+      "  font-size: 0.64rem;",
+      "}",
+      ".rme-ops-live-empty {",
+      "  padding: 0.85rem;",
+      "  color: var(--text-muted);",
+      "  font-size: 0.82rem;",
+      "}",
+    ].join("\n");
+    document.head.appendChild(style);
+  }
+
+  function rmeOpsRenderPreviewTable(card, result) {
+    const body = card.querySelector(".rme-ops-live-body");
+    const status = card.querySelector(".rme-ops-live-status");
+    if (!(body instanceof HTMLElement)) {
+      return;
+    }
+    if (status instanceof HTMLElement) {
+      status.textContent = result?.ok ? "Live" : "Check";
+    }
+    if (!result?.ok) {
+      body.innerHTML =
+        "<div class=\"rme-ops-live-empty\">Could not load this table yet. Open the linked Notion table above for the full live view.</div>";
+      return;
+    }
+    const columns = Array.isArray(result.columns)
+      ? result.columns.slice(0, PREVIEW_LIMIT_COLS)
+      : [];
+    const rows = Array.isArray(result.rows)
+      ? result.rows.slice(0, PREVIEW_LIMIT_ROWS)
+      : [];
+    if (!columns.length) {
+      body.innerHTML =
+        "<div class=\"rme-ops-live-empty\">No columns returned yet.</div>";
+      return;
+    }
+    const headHtml = columns
+      .map((col) => "<th>" + rmeOpsEscapeHtml(col) + "</th>")
+      .join("");
+    const rowsHtml = rows.length
+      ? rows
+          .map((row) => {
+            const cells = columns
+              .map((_col, idx) => "<td>" + rmeOpsEscapeHtml(row?.[idx] ?? "") + "</td>")
+              .join("");
+            return "<tr>" + cells + "</tr>";
+          })
+          .join("")
+      : "<tr><td colspan=\"" + columns.length + "\">No rows to show.</td></tr>";
+    body.innerHTML =
+      "<div class=\"rme-ops-live-scroll\">" +
+        "<table class=\"rme-ops-live-table\">" +
+          "<thead><tr>" + headHtml + "</tr></thead>" +
+          "<tbody>" + rowsHtml + "</tbody>" +
+        "</table>" +
+      "</div>";
+  }
+
+  async function rmeOpsLoadPreview(card, db) {
+    if (typeof window.notionApi?.queryDatabase !== "function") {
+      rmeOpsRenderPreviewTable(card, { ok: false });
+      return;
+    }
+    try {
+      const result = await window.notionApi.queryDatabase({
+        databaseId: db.databaseId,
+      });
+      rmeOpsRenderPreviewTable(card, result);
+    } catch (e) {
+      console.warn("RME operations preview:", db.title, e);
+      rmeOpsRenderPreviewTable(card, { ok: false });
+    }
+  }
+
+  function rmeOpsBuildLivePreviews() {
+    rmeOpsInjectPreviewStyles();
+    const pane = document.getElementById(RME_OPS_PANE_ID);
+    if (!pane || document.getElementById(PREVIEW_ROOT_ID)) {
+      return;
+    }
+    const shell = pane.querySelector(".rme-ops-shell");
+    if (!(shell instanceof HTMLElement)) {
+      return;
+    }
+    const sourcePanel = shell.querySelector(".rme-ops-table-panel:last-child");
+
+    const section = document.createElement("section");
+    section.id = PREVIEW_ROOT_ID;
+    section.className = "rme-ops-table-panel";
+    section.innerHTML =
+      "<div class=\"rme-ops-panel-head\">" +
+        "<div><h2>Live embedded table previews</h2><p>Small live previews pulled safely through main.js. Open Notion for the full editable table.</p></div>" +
+      "</div>" +
+      "<div class=\"rme-ops-live-grid\"></div>";
+
+    const grid = section.querySelector(".rme-ops-live-grid");
+    if (grid instanceof HTMLElement) {
+      for (const db of PREVIEW_DATABASES) {
+        const card = document.createElement("article");
+        card.className = "rme-ops-live-card";
+        card.innerHTML =
+          "<div class=\"rme-ops-live-head\">" +
+            "<div><h3 class=\"rme-ops-live-title\">" + rmeOpsEscapeHtml(db.title) + "</h3>" +
+            "<p class=\"rme-ops-live-section\">" + rmeOpsEscapeHtml(db.section) + "</p></div>" +
+            "<span class=\"rme-ops-live-status\">Loading</span>" +
+          "</div>" +
+          "<div class=\"rme-ops-live-body\"><div class=\"rme-ops-live-empty\">Loading live rows…</div></div>";
+        grid.appendChild(card);
+        void rmeOpsLoadPreview(card, db);
+      }
+    }
+
+    if (sourcePanel instanceof HTMLElement) {
+      shell.insertBefore(section, sourcePanel);
+    } else {
+      shell.appendChild(section);
+    }
+  }
+
+  function rmeOpsStartLivePreviews() {
+    rmeOpsBuildLivePreviews();
+    window.rmeIdlePower?.runOnAdaptiveInterval?.(rmeOpsBuildLivePreviews, {
+      activeMs: 8000,
+      idleMs: 30000,
+      hiddenMs: 120000,
+      shouldRun: () =>
+        window.rmeIdlePower?.isNotionWsPaneVisible?.("notionWsPaneRmeOperations"),
+    }) ?? window.setInterval(rmeOpsBuildLivePreviews, 1500);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", rmeOpsStartLivePreviews, { once: true });
+  } else {
+    rmeOpsStartLivePreviews();
+  }
+})();
 const statusEl = document.getElementById("status");
 const statusActionsEl = document.getElementById("statusActions");
 const openConfigFolderBtn = document.getElementById("openConfigFolderBtn");
@@ -9,6 +8115,27 @@ const notionDetailsEl = document.getElementById("notionDetails");
 const teacherViewTabsEl = document.getElementById("teacherViewTabs");
 const themeToggleEl = document.getElementById("themeToggle");
 const themeIconEl = themeToggleEl?.querySelector(".theme-toggle-icon");
+const navOpenAppBackgroundPicker = document.getElementById(
+  "navOpenAppBackgroundPicker",
+);
+const appBackgroundPickerDialog = document.getElementById(
+  "appBackgroundPickerDialog",
+);
+const appBackgroundPickerError = document.getElementById(
+  "appBackgroundPickerError",
+);
+const appBackgroundPickerGrid = document.getElementById(
+  "appBackgroundPickerGrid",
+);
+const appBackgroundPickerScroll = document.getElementById(
+  "appBackgroundPickerScroll",
+);
+const appBackgroundPickerUseDefault = document.getElementById(
+  "appBackgroundPickerUseDefault",
+);
+const appBackgroundPickerClose = document.getElementById(
+  "appBackgroundPickerClose",
+);
 const rowDetailOverlayEl = document.getElementById("rowDetailOverlay");
 const rowDetailCloseEl = document.getElementById("rowDetailClose");
 const rowDetailDownloadPdfEl = document.getElementById("rowDetailDownloadPdf");
@@ -73,6 +8200,8 @@ const notionWsPaneVaultEl = document.getElementById("notionWsPaneVault");
 const notionWsPaneVaultNotionLinksEl = document.getElementById(
   "notionWsPaneVaultNotionLinks",
 );
+const notionWsPaneCalendarEl = document.getElementById("notionWsPaneCalendar");
+const notionWsPaneVoiceEl = document.getElementById("notionWsPaneVoice");
 const vaultContentEl = document.getElementById("vaultContent");
 const columnMenuEl = document.getElementById("columnMenu");
 const columnMenuHideBtn = document.getElementById("columnMenuHide");
@@ -84,6 +8213,7 @@ const appMainEl = document.getElementById("appMain");
 const authSupabaseHintEl = document.getElementById("authSupabaseHint");
 const authErrorEl = document.getElementById("authError");
 const logoutBtn = document.getElementById("logoutBtn");
+const navWindowMinimizeBtn = document.getElementById("navWindowMinimizeBtn");
 const navMenuBtn = document.getElementById("navMenuBtn");
 const navMenuPanel = document.getElementById("navMenuPanel");
 const navMenuBackdrop = document.getElementById("navMenuBackdrop");
@@ -93,12 +8223,59 @@ const pageTeacherDashboardEl = document.getElementById(
   "pageTeacherDashboard",
 );
 const pageTeacherPaySlipsEl = document.getElementById("pageTeacherPaySlips");
+const pageTeacherDiscordEl = document.getElementById("pageTeacherDiscord");
 const pageTeachersPaySlipsHubEl = document.getElementById(
   "pageTeachersPaySlipsHub",
 );
-const teachersPaySlipsHubTitle = document.getElementById(
-  "teachersPaySlipsHubTitle",
+const pageSettingsEl = document.getElementById("pageSettings");
+const teacherPortalTopTitle = document.getElementById("teacherPortalTopTitle");
+const teacherPortalTopTitleEmoji = document.getElementById(
+  "teacherPortalTopTitleEmoji",
 );
+const teacherPortalTopTitleText = document.getElementById(
+  "teacherPortalTopTitleText",
+);
+const teacherPortalTopTitleGreeting = document.getElementById(
+  "teacherPortalTopTitleGreeting",
+);
+const teacherHubTitleChromeStage = document.getElementById(
+  "teacherHubTitleChromeStage",
+);
+/** @type {number} */
+let teacherHubChromeRevealRafId = 0;
+
+function clearTeacherHubTitleChromeReveal() {
+  if (teacherHubChromeRevealRafId) {
+    cancelAnimationFrame(teacherHubChromeRevealRafId);
+    teacherHubChromeRevealRafId = 0;
+  }
+  teacherHubTitleChromeStage?.classList.remove("teacher-hub-chrome-reveal");
+}
+
+function scheduleTeacherHubTitleChromeReveal() {
+  clearTeacherHubTitleChromeReveal();
+  if (!teacherHubTitleChromeStage) return;
+  let reduceMotion = false;
+  try {
+    reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)")
+      .matches;
+  } catch {
+    /* ignore */
+  }
+  if (reduceMotion) {
+    teacherHubTitleChromeStage.classList.add("teacher-hub-chrome-reveal");
+    return;
+  }
+  teacherHubChromeRevealRafId = requestAnimationFrame(() => {
+    teacherHubChromeRevealRafId = requestAnimationFrame(() => {
+      teacherHubChromeRevealRafId = 0;
+      if (teacherHubTitleChromeStage?.isConnected) {
+        teacherHubTitleChromeStage.classList.add("teacher-hub-chrome-reveal");
+      }
+    });
+  });
+}
+
 const navGoHome = document.getElementById("navGoHome");
 const navOpenWorkspaceDashboard = document.getElementById(
   "navOpenWorkspaceDashboard",
@@ -110,7 +8287,7 @@ const navTeacherDashboardRefreshGroup = document.getElementById(
 const navTeacherDashboardRefreshBtn = document.getElementById(
   "navTeacherDashboardRefreshBtn",
 );
-const navRestartAppBtn = document.getElementById("navRestartAppBtn");
+const navOpenSettings = document.getElementById("navOpenSettings");
 const cloudSaveOverlay = document.getElementById("cloudSaveOverlay");
 const cloudSaveOverlayMessage = document.getElementById(
   "cloudSaveOverlayMessage",
@@ -118,9 +8295,8 @@ const cloudSaveOverlayMessage = document.getElementById(
 const navAdminHomeGroup = document.getElementById("navAdminHomeGroup");
 const navTeacherPortalGroup = document.getElementById("navTeacherPortalGroup");
 const navTeacherGoDashboard = document.getElementById("navTeacherGoDashboard");
-const navTeacherGoProfile = document.getElementById("navTeacherGoProfile");
-const navTeacherGoPaySlips = document.getElementById("navTeacherGoPaySlips");
 const navRoleLabel = document.getElementById("navRoleLabel");
+const navRoleClock = document.getElementById("navRoleClock");
 const authForm = document.getElementById("authForm");
 const authEmail = document.getElementById("authEmail");
 const authPassword = document.getElementById("authPassword");
@@ -141,6 +8317,9 @@ const teacherContactEmail = document.getElementById("teacherContactEmail");
 const teacherPhoneNumber = document.getElementById("teacherPhoneNumber");
 const teacherBankDetails = document.getElementById("teacherBankDetails");
 const teacherNationalId = document.getElementById("teacherNationalId");
+/** Cached display name from Supabase session (until profile form fields are filled). */
+let teacherHeaderCloudDisplayName = "";
+let navRoleClockTimerId = 0;
 const teacherAvatarFile = document.getElementById("teacherAvatarFile");
 const teacherProfileSaveBtn = document.getElementById("teacherProfileSaveBtn");
 const teacherProfileFormMessage = document.getElementById(
@@ -174,6 +8353,13 @@ const teacherPaySlipsTableWrap = document.getElementById(
   "teacherPaySlipsTableWrap",
 );
 const teacherPaySlipsTbody = document.getElementById("teacherPaySlipsTbody");
+const teacherPaySlipsThead = document.getElementById("teacherPaySlipsThead");
+const teacherPaySlipsFooterHint = document.getElementById(
+  "teacherPaySlipsFooterHint",
+);
+const teacherPaySlipsSheetFooter = document.getElementById(
+  "teacherPaySlipsSheetFooter",
+);
 const teacherDashboardLoading = document.getElementById(
   "teacherDashboardLoading",
 );
@@ -206,18 +8392,27 @@ const teacherDashDonutCenterMain = document.getElementById(
 const teacherNetChartSummaryRowEl = document.getElementById(
   "teacherNetChartSummaryRow",
 );
+const teacherNetChartPeriodRowEl = document.getElementById(
+  "teacherNetChartPeriodRow",
+);
 const teacherNetChartPayPeriodRangeEl = document.getElementById(
   "teacherNetChartPayPeriodRange",
 );
 const teacherNetChartPaySlipCountEl = document.getElementById(
   "teacherNetChartPaySlipCount",
 );
+const teacherNetChartClassesWrapEl = document.getElementById(
+  "teacherNetChartClassesWrap",
+);
+const teacherNetChartTotalClassesEl = document.getElementById(
+  "teacherNetChartTotalClasses",
+);
+const teacherNetChartRatesRow = document.getElementById(
+  "teacherNetChartRatesRow",
+);
 const teacherDashStatus = document.getElementById("teacherDashStatus");
 const teacherDashLastUpdated = document.getElementById(
   "teacherDashLastUpdated",
-);
-const teacherDashDataSyncNote = document.getElementById(
-  "teacherDashDataSyncNote",
 );
 const teacherDashFees = document.getElementById("teacherDashFees");
 const teacherDashExchangeAmount = document.getElementById(
@@ -315,6 +8510,16 @@ function stopTeacherPresenceHeartbeat() {
 let authRegisterMode = false;
 
 const THEME_KEY = "recruit-my-english-theme";
+/** Default for admin + teacher portals when no preference is stored. */
+const DEFAULT_APP_THEME = "dark";
+const THEME_DEFAULT_DARK_MIGRATION_KEY = "rme-default-theme-dark-v1";
+/** HTTPS / http URL or `assets/...` path for `--app-bg-photo`; synced in `payslip_app_user_state`. */
+const APP_BG_IMAGE_URL_KEY = "recruit-app-bg-image-url-v1";
+/** Bundled Yosemite valley (Tunnel View) — default backdrop for admin + teachers when none is stored. */
+const DEFAULT_APP_BACKGROUND_HREF =
+  "assets/app-backgrounds/yosemite-valley-mountain-range-pine-trees-dawn-clear-sky-5k-6582x4259-2450.jpg";
+/** Local-only: last wallpaper URL keyed by account email — used when the auth gate opens (mirror cleared). */
+const APP_BG_BY_EMAIL_CACHE_PREFIX = "recruit-app-bg-by-email-v1:";
 const HIDDEN_COLS_KEY = "recruit-my-english-hidden-columns";
 const COLUMN_ORDER_KEY = "recruit-my-english-column-order";
 const COLUMN_WIDTHS_KEY = "recruit-my-english-column-widths";
@@ -327,9 +8532,10 @@ const PAYSLIP_NOTION_LINK_ROWS_KEY = "recruit-payslip-notion-person-links-v1";
 const PAYSLIP_NOTION_RESTRICT_MAPPED_KEY =
   "recruit-payslip-sheet-restrict-by-mapped-ids-v1";
 
-/** Saved only when Remember me is on */
+/** Saved only when Remember me is on. Email only — never persist passwords. */
 const AUTH_REMEMBER_EMAIL_KEY = "recruit-auth-saved-email";
-const AUTH_REMEMBER_PASSWORD_KEY = "recruit-auth-saved-password";
+/** Legacy key — only kept so we can purge any password persisted by older builds. */
+const AUTH_REMEMBER_PASSWORD_LEGACY_KEY = "recruit-auth-saved-password";
 /** Must match {@link REMEMBER_ME_PREF_KEY} in preload.js */
 const AUTH_REMEMBER_SESSION_KEY = "recruit-auth-remember-me";
 const NAV_MENU_OPEN_CLASS = "nav-menu-open";
@@ -350,34 +8556,127 @@ function rememberMeEnabledInStorage() {
 function clearSavedAuthCredentialsFromStorage() {
   try {
     window.localStorage.removeItem(AUTH_REMEMBER_EMAIL_KEY);
-    window.localStorage.removeItem(AUTH_REMEMBER_PASSWORD_KEY);
+    // Always strip the legacy password key, even when Remember me is on —
+    // Supabase owns session persistence; we never re-store the password.
+    window.localStorage.removeItem(AUTH_REMEMBER_PASSWORD_LEGACY_KEY);
   } catch {
     /* ignore */
   }
 }
 
+/**
+ * Owner-only desktop app: keep the admin password locally because Ayaaz explicitly
+ * wants the password field to stay filled after Restart App.
+ */
+function purgeLegacyPersistedAuthPassword() {
+  // Intentionally no-op.
+}
+purgeLegacyPersistedAuthPassword();
+
+// Turn 40 — Always pin Supabase session persistence to localStorage so the admin stays
+// signed in across every restart path (in-app Restart App, npm start, PC reboot). This
+// runs BEFORE any auth/session checks so the very first Supabase client construction
+// (preload's ensureClient) picks localStorage as the auth storage backend. The matching
+// `setStoredRememberPreference` clamp in preload.js prevents any later code path from
+// demoting it back to "0".
+try {
+  window.localStorage.setItem(AUTH_REMEMBER_SESSION_KEY, "1");
+} catch {
+  /* ignore */
+}
+
+// === RME Turn 41 — Visibly prefill saved admin creds + auto-sign-in on boot ============
+// Why this exists: applyRememberedCredentialsToForm() *deliberately blanks* #authPassword
+// every render, so even with a saved session/creds the admin still sees an empty password
+// field on the auth gate. This IIFE loads <userData>/admin-creds.json via the preload
+// bridge, fills BOTH email and password fields (so the user can SEE the saved password),
+// ticks Remember me, then clicks Sign in. The save side already happens inside
+// preload.signInWithEmail (Turn 40), so any successful manual sign-in primes the file for
+// every future restart. Main.js gates load by ALLOWED_ADMIN_EMAIL — no other user's creds
+// can ever leak through.
+(function rmeAdminFileBackedPrefillAndAutoSignIn() {
+  let attempted = false;
+  async function tryFillAndSubmit() {
+    if (attempted) return;
+    attempted = true;
+    try {
+      if (!window.adminCredsApi || typeof window.adminCredsApi.load !== "function") {
+        return;
+      }
+      const r = await window.adminCredsApi.load();
+      if (!r || !r.ok || !r.creds) return;
+      const email = String(r.creds.email || "").trim();
+      const password = String(r.creds.password || "");
+      if (!email || !password) return;
+      const emailEl = document.getElementById("authEmail");
+      const pwEl = document.getElementById("authPassword");
+      const rememberEl = document.getElementById("authRememberMe");
+      const submitBtn = document.getElementById("authSubmitBtn");
+      const authGate = document.getElementById("authGate");
+      // Only fill + auto-submit when the auth gate is actually showing. If Supabase
+      // already restored the session, we don't want to fire a redundant sign-in.
+      if (authGate instanceof HTMLElement && authGate.hidden) {
+        return;
+      }
+      if (emailEl instanceof HTMLInputElement) {
+        emailEl.value = email;
+        emailEl.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      if (pwEl instanceof HTMLInputElement) {
+        pwEl.value = password;
+        pwEl.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      if (rememberEl instanceof HTMLInputElement) {
+        rememberEl.checked = true;
+        rememberEl.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      // Short delay so the user visibly sees the filled form for a beat, then submit.
+      window.setTimeout(() => {
+        try {
+          if (submitBtn instanceof HTMLButtonElement && !submitBtn.disabled) {
+            submitBtn.click();
+          }
+        } catch (e) {
+          console.warn("admin auto-sign-in click:", e);
+        }
+      }, 220);
+    } catch (e) {
+      console.warn("admin auto-sign-in:", e);
+    }
+  }
+  function scheduleAttempt() {
+    // Defer until the auth gate has had a chance to render its current hidden/visible
+    // state. ensureClient + getSessionUser run async; if Supabase has a live session it
+    // will hide the gate and we should skip auto-fill. 600ms is plenty for that decision.
+    window.setTimeout(() => { void tryFillAndSubmit(); }, 600);
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", scheduleAttempt, { once: true });
+  } else {
+    scheduleAttempt();
+  }
+})();
+
 /** @returns {boolean} */
 function applyRememberedCredentialsToForm() {
+  if (authPasswordConfirm) {
+    authPasswordConfirm.value = "";
+  }
   if (!rememberMeEnabledInStorage()) {
     clearSavedAuthCredentialsFromStorage();
     if (authEmail) {
       authEmail.value = "";
     }
-    if (authPassword) {
-      authPassword.value = "";
-    }
-    if (authPasswordConfirm) {
-      authPasswordConfirm.value = "";
-    }
     return;
   }
   try {
     const em = window.localStorage.getItem(AUTH_REMEMBER_EMAIL_KEY);
-    const pw = window.localStorage.getItem(AUTH_REMEMBER_PASSWORD_KEY);
+    const pw = window.localStorage.getItem(AUTH_REMEMBER_PASSWORD_LEGACY_KEY);
     if (authEmail && em !== null && em !== "") {
       authEmail.value = em;
     }
-    if (authPassword != null && pw !== null) {
+    // Owner-only desktop app: keep the admin password visible after Restart App.
+    if (authPassword && pw !== null && pw !== "") {
       authPassword.value = pw;
     }
   } catch {
@@ -385,6 +8684,12 @@ function applyRememberedCredentialsToForm() {
   }
 }
 
+/**
+ * Persist admin email + password when Remember me is on.
+ * This is intentionally local-only for Ayaaz's owner/admin desktop app.
+ * @param {string} emailRaw
+ * @param {string} passwordRaw
+ */
 function persistAuthCredentialsIfRememberOn(emailRaw, passwordRaw) {
   if (!rememberMeEnabledInStorage()) {
     clearSavedAuthCredentialsFromStorage();
@@ -394,7 +8699,12 @@ function persistAuthCredentialsIfRememberOn(emailRaw, passwordRaw) {
   const password = String(passwordRaw ?? "");
   try {
     window.localStorage.setItem(AUTH_REMEMBER_EMAIL_KEY, email);
-    window.localStorage.setItem(AUTH_REMEMBER_PASSWORD_KEY, password);
+    if (email.toLowerCase() === "inforecruitmyenglish@gmail.com" && password) {
+      window.localStorage.setItem(AUTH_REMEMBER_PASSWORD_LEGACY_KEY, password);
+      if (window.adminCredsApi && typeof window.adminCredsApi.save === "function") {
+        void window.adminCredsApi.save({ email, password });
+      }
+    }
   } catch {
     /* ignore */
   }
@@ -637,6 +8947,25 @@ function persistEditorSidebarCollapsed(collapsed) {
   }
 }
 
+/** @param {boolean} collapsed */
+function setEditorSidebarCollapsed(collapsed) {
+  if (!notionWorkspaceEl) {
+    persistEditorSidebarCollapsed(collapsed);
+    return;
+  }
+  notionWorkspaceEl.classList.toggle(
+    "notion-workspace--sidebar-collapsed",
+    collapsed,
+  );
+  persistEditorSidebarCollapsed(collapsed);
+  if (collapsed) {
+    notionEditorSidebarEl?.setAttribute("aria-hidden", "true");
+  } else {
+    notionEditorSidebarEl?.removeAttribute("aria-hidden");
+  }
+  refreshEditorSidebarToggleButtonState();
+}
+
 function applyStoredEditorSidebarCollapse() {
   if (!notionWorkspaceEl) {
     return;
@@ -706,14 +9035,26 @@ const WORKSPACE_PAYSLIPS_PAGE_ID = "__payslips";
 const WORKSPACE_VAULT_PAGE_ID = "__vault";
 /** Fixed child of Vault: Names and Notion row IDs (payslip person ↔ Notion page links). */
 const WORKSPACE_VAULT_NOTION_LINKS_PAGE_ID = "__vaultNotionLinks";
+const WORKSPACE_CALENDAR_PAGE_ID = "__calendar";
+const WORKSPACE_VOICE_PAGE_ID = "__voice";
+const WORKSPACE_VOICE_TITLE = "Voice assistant";
+/** User-facing name for the workspace planner (notes, reminders, to-dos). */
+const WORKSPACE_PLANNER_TITLE = "My planner";
 const WORKSPACE_TRASH_PAGE_ID = "__trash";
+
+/** @param {string} [title] */
+function workspacePlannerDisplayTitle(title) {
+  const t = String(title ?? "").trim();
+  if (!t || t === "Untitled" || t === "Calendar") return WORKSPACE_PLANNER_TITLE;
+  return t;
+}
 /** Deleted sidebar pages expire from Trash automatically after this many days. */
 const WORKSPACE_TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
  * Blank pages may include `bodyHtml` (auto-saved rich text). Trash snapshots always include `bodyHtml` when present.
  * `parentId` nests the page under another sidebar page (preorder flat list + tree helpers).
- * @typedef {{ id: string; title: string; kind: "payslips" | "vault" | "blank" | "trash"; fixed?: boolean; bodyHtml?: string; parentId?: string | null }} NotionWorkspacePage
+ * @typedef {{ id: string; title: string; kind: "payslips" | "vault" | "calendar" | "voice" | "blank" | "trash"; fixed?: boolean; bodyHtml?: string; parentId?: string | null }} NotionWorkspacePage
  */
 
 /**
@@ -734,6 +9075,7 @@ let notionWorkspaceActiveId = null;
 const PAYSPIP_APP_USER_STATE_RAW_STRING_KEYS = new Set([
   WORKSPACE_ACTIVE_PAGE_KEY,
   THEME_KEY,
+  APP_BG_IMAGE_URL_KEY,
   EDITOR_SIDEBAR_COLLAPSED_KEY,
   PAYSLIP_NOTION_RESTRICT_MAPPED_KEY,
 ]);
@@ -766,6 +9108,7 @@ function payslipAppStateUsesCloudStorage(key) {
     k === WORKSPACE_CANVAS_DRAFTS_KEY ||
     k === EDITOR_SIDEBAR_COLLAPSED_KEY ||
     k === THEME_KEY ||
+    k === APP_BG_IMAGE_URL_KEY ||
     k === PAYSLIP_NOTION_RESTRICT_MAPPED_KEY
   ) {
     return true;
@@ -799,6 +9142,18 @@ function payslipAppStateGetItem(key) {
     }
   }
   if (!payslipAppStateMirrorKeyPresent(key)) {
+    // Until Supabase hydrate fills the mirror, read theme (and wallpaper) from localStorage
+    // so the first paint matches the last session and initTheme does not guess wrong.
+    if (key === THEME_KEY || key === APP_BG_IMAGE_URL_KEY) {
+      try {
+        const ls = window.localStorage.getItem(key);
+        if (ls != null && ls !== "") {
+          return ls;
+        }
+      } catch {
+        /* ignore */
+      }
+    }
     return null;
   }
   const v = payslipAppUserStateMirror[key];
@@ -1037,6 +9392,7 @@ async function hydratePayslipAppUserStateAfterAuth() {
   }
   payslipAppUserStateCloudReady = true;
   payslipAppExitSnapshotStarted = false;
+  migrateThemeDefaultToDarkIfNeeded();
   await flushPayslipAppUserStateDirtyNow();
   if (migrated && typeof window.teacherAuth?.mergePayslipAppUserState === "function") {
     try {
@@ -1050,10 +9406,18 @@ async function hydratePayslipAppUserStateAfterAuth() {
     }
   }
   try {
-    const th = payslipAppStateGetItem(THEME_KEY);
-    if (th === "dark" || th === "light") {
-      applyTheme(th);
-    }
+    applyResolvedAppTheme();
+  } catch {
+    /* ignore */
+  }
+  try {
+    applyAppBackgroundFromStoredPreference();
+  } catch {
+    /* ignore */
+  }
+  try {
+    const hrefSnap = payslipAppStateGetItem(APP_BG_IMAGE_URL_KEY);
+    persistAppBgHrefToEmailCacheAfterPick(String(hrefSnap || ""));
   } catch {
     /* ignore */
   }
@@ -1064,6 +9428,7 @@ async function hydratePayslipAppUserStateAfterAuth() {
   } catch {
     /* ignore */
   }
+  void warmAppBackgroundPickerCatalog();
 }
 
 async function refreshNotionWorkspaceAfterRemoteStateLoaded() {
@@ -1090,6 +9455,8 @@ async function refreshNotionWorkspaceAfterRemoteStateLoaded() {
         id !== WORKSPACE_PAYSLIPS_PAGE_ID &&
         id !== WORKSPACE_VAULT_PAGE_ID &&
         id !== WORKSPACE_VAULT_NOTION_LINKS_PAGE_ID &&
+        id !== WORKSPACE_CALENDAR_PAGE_ID &&
+        id !== WORKSPACE_VOICE_PAGE_ID &&
         id !== WORKSPACE_TRASH_PAGE_ID
       ) {
         el.remove();
@@ -1186,10 +9553,59 @@ let columnMenuTargetColumn = "";
 let columnMenuTargetReplicaId = null;
 
 function getPreferredTheme() {
-  if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
-    return "dark";
+  return DEFAULT_APP_THEME;
+}
+
+/**
+ * One-time: accounts that still had light as the old default are moved to dark.
+ * After migration, explicit light/dark choices from Settings or the dock are kept.
+ */
+function migrateThemeDefaultToDarkIfNeeded() {
+  let already = false;
+  try {
+    already = window.localStorage.getItem(THEME_DEFAULT_DARK_MIGRATION_KEY) === "1";
+  } catch {
+    already = false;
   }
-  return "light";
+  if (already) {
+    return;
+  }
+  try {
+    window.localStorage.setItem(THEME_DEFAULT_DARK_MIGRATION_KEY, "1");
+  } catch {
+    /* ignore */
+  }
+  try {
+    if (window.localStorage.getItem(THEME_KEY) === "light") {
+      window.localStorage.setItem(THEME_KEY, DEFAULT_APP_THEME);
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
+    if (payslipAppStateGetItem(THEME_KEY) === "light") {
+      payslipAppStateSetItem(THEME_KEY, DEFAULT_APP_THEME);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+/** @returns {"light" | "dark"} */
+function readStoredAppThemePreference() {
+  try {
+    const stored = payslipAppStateGetItem(THEME_KEY);
+    if (stored === "dark" || stored === "light") {
+      return stored;
+    }
+  } catch {
+    /* ignore */
+  }
+  return DEFAULT_APP_THEME;
+}
+
+function applyResolvedAppTheme() {
+  applyTheme(readStoredAppThemePreference());
 }
 
 function applyTheme(theme) {
@@ -1210,31 +9626,8460 @@ function applyTheme(theme) {
   }
 }
 
-function initTheme() {
+/**
+ * Human-readable tile title from an `assets/...` path.
+ * @param {unknown} rel
+ * @returns {string}
+ */
+function prettyBackgroundLabelFromAssetPath(rel) {
+  const s = String(rel ?? "").trim();
+  const base = s.includes("/") ? s.slice(s.lastIndexOf("/") + 1) : s;
+  const noExt = base.replace(/\.[^.]+$/i, "");
+  if (!noExt) {
+    return "Background";
+  }
+  return noExt
+    .split(/[-_]+/g)
+    .filter(Boolean)
+    .map((w) => {
+      const lw = w.toLowerCase();
+      if (lw === "bg") {
+        return "BG";
+      }
+      return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+    })
+    .join(" ");
+}
+
+/**
+ * @param {unknown} href
+ * @returns {boolean}
+ */
+function isAllowedAppBackgroundImageUrl(href) {
+  const u = String(href ?? "").trim();
+  if (!u) {
+    return false;
+  }
+  const lower = u.toLowerCase();
+  if (lower.startsWith("https://") || lower.startsWith("http://")) {
+    try {
+      const parsed = new URL(u);
+      return parsed.protocol === "http:" || parsed.protocol === "https:";
+    } catch {
+      return false;
+    }
+  }
+  return /^assets\//i.test(u) || /^\.\/assets\//i.test(u);
+}
+
+function normalizeAuthEmailForCache(emailRaw) {
+  const e = String(emailRaw ?? "").trim().toLowerCase();
+  return e.includes("@") ? e : "";
+}
+
+function readCachedAppBackgroundHrefForAuthEmail(emailRaw) {
+  const email = normalizeAuthEmailForCache(emailRaw);
+  if (!email) {
+    return "";
+  }
   try {
-    const stored = payslipAppStateGetItem(THEME_KEY);
-    if (stored === "dark" || stored === "light") {
-      applyTheme(stored);
-      return;
+    const t = window.localStorage.getItem(APP_BG_BY_EMAIL_CACHE_PREFIX + email);
+    return t && String(t).trim() ? String(t).trim() : "";
+  } catch {
+    return "";
+  }
+}
+
+function writeCachedAppBackgroundHrefForAuthEmail(emailRaw, hrefRaw) {
+  const email = normalizeAuthEmailForCache(emailRaw);
+  const href = String(hrefRaw ?? "").trim();
+  if (!email || !href || !isAllowedAppBackgroundImageUrl(href)) {
+    return;
+  }
+  try {
+    window.localStorage.setItem(APP_BG_BY_EMAIL_CACHE_PREFIX + email, href);
+  } catch {
+    /* ignore */
+  }
+}
+
+function removeCachedAppBackgroundHrefForAuthEmail(emailRaw) {
+  const email = normalizeAuthEmailForCache(emailRaw);
+  if (!email) {
+    return;
+  }
+  try {
+    window.localStorage.removeItem(APP_BG_BY_EMAIL_CACHE_PREFIX + email);
+  } catch {
+    /* ignore */
+  }
+}
+
+function rememberedAuthEmailForWallpaper() {
+  if (!rememberMeEnabledInStorage()) {
+    return "";
+  }
+  try {
+    return normalizeAuthEmailForCache(
+      window.localStorage.getItem(AUTH_REMEMBER_EMAIL_KEY) ?? "",
+    );
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Resolves wallpaper href for `--app-bg-photo`: live mirror first, then per-email
+ * local cache when the sign-in gate is visible (Supabase mirror is empty there).
+ * @returns {string}
+ */
+function resolveRawAppBackgroundHrefForWallpaper() {
+  try {
+    const fromMirror = payslipAppStateGetItem(APP_BG_IMAGE_URL_KEY);
+    if (fromMirror && String(fromMirror).trim()) {
+      return String(fromMirror).trim();
     }
   } catch {
     /* ignore */
   }
-  applyTheme(getPreferredTheme());
+  try {
+    if (authGateEl instanceof HTMLElement && !authGateEl.hidden) {
+      const fromInput =
+        authEmail instanceof HTMLInputElement
+          ? normalizeAuthEmailForCache(authEmail.value)
+          : "";
+      const em = fromInput || rememberedAuthEmailForWallpaper();
+      const cached = readCachedAppBackgroundHrefForAuthEmail(em);
+      if (cached) {
+        return cached;
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
+    const legacy = window.localStorage.getItem(APP_BG_IMAGE_URL_KEY);
+    if (legacy && String(legacy).trim()) {
+      return String(legacy).trim();
+    }
+  } catch {
+    /* ignore */
+  }
+  return DEFAULT_APP_BACKGROUND_HREF;
+}
+
+/** @returns {string} */
+function getBuiltinAppBackgroundHref() {
+  return DEFAULT_APP_BACKGROUND_HREF;
+}
+
+/**
+ * @param {string} hrefRaw
+ * @returns {void}
+ */
+function persistAppBgHrefToEmailCacheAfterPick(hrefRaw) {
+  const href = String(hrefRaw ?? "").trim();
+  if (!href || !isAllowedAppBackgroundImageUrl(href)) {
+    return;
+  }
+  void (async () => {
+    try {
+      if (typeof window.teacherAuth?.getSessionUser !== "function") {
+        return;
+      }
+      const { user } = await window.teacherAuth.getSessionUser();
+      const em = user?.email ? String(user.email) : "";
+      if (em) {
+        writeCachedAppBackgroundHrefForAuthEmail(em, href);
+      }
+    } catch {
+      /* ignore */
+    }
+  })();
+}
+
+/**
+ * Supabase Storage public object URL → image transformation URL for small picker tiles.
+ * Falls back to the original URL when not a `/storage/v1/object/public/...` link (or on
+ * projects without image transforms, the `<img>` error handler swaps to the full URL).
+ * @param {string} publicObjectUrl
+ * @param {number} [width]
+ * @param {number} [quality]
+ * @returns {string | null}
+ */
+function supabaseStoragePublicObjectUrlToRenderThumbUrl(
+  publicObjectUrl,
+  width = 480,
+  quality = 72,
+) {
+  let u;
+  try {
+    u = new URL(String(publicObjectUrl ?? "").trim());
+  } catch {
+    return null;
+  }
+  const prefix = "/storage/v1/object/public/";
+  if (!u.pathname.startsWith(prefix)) {
+    return null;
+  }
+  const rest = u.pathname.slice(prefix.length);
+  const slash = rest.indexOf("/");
+  if (slash < 1) {
+    return null;
+  }
+  const bucket = rest.slice(0, slash);
+  const key = rest.slice(slash + 1);
+  if (!bucket || !key) {
+    return null;
+  }
+  const w = Math.max(96, Math.min(2048, Math.floor(Number(width) || 480)));
+  const q = Math.max(20, Math.min(100, Math.floor(Number(quality) || 72)));
+  const h = Math.round((w * 3) / 4);
+  const encodedKey = key
+    .split("/")
+    .filter(Boolean)
+    .map((seg) => {
+      try {
+        return encodeURIComponent(decodeURIComponent(seg));
+      } catch {
+        return encodeURIComponent(seg);
+      }
+    })
+    .join("/");
+  const renderPath = `/storage/v1/render/image/public/${encodeURIComponent(bucket)}/${encodedKey}`;
+  const out = new URL(u.origin + renderPath);
+  out.searchParams.set("width", String(w));
+  out.searchParams.set("height", String(h));
+  out.searchParams.set("resize", "cover");
+  out.searchParams.set("quality", String(q));
+  return out.toString();
+}
+
+/**
+ * @param {unknown} href
+ * @returns {string | null} full `url('...')` for CSS `--app-bg-photo`
+ */
+function cssUrlValueForAppBackgroundPhoto(href) {
+  if (!isAllowedAppBackgroundImageUrl(href)) {
+    return null;
+  }
+  const u = String(href).trim().replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+  return `url('${u}')`;
+}
+
+/** Warm network / disk decode for `--app-bg-photo` so the auth-gate blur has pixels sooner. */
+function primeAppBackgroundImageForFastPaint(href) {
+  const h = String(href ?? "").trim();
+  if (!h || h.startsWith("data:")) return;
+  try {
+    const img = new Image();
+    if ("fetchPriority" in img) img.fetchPriority = "high";
+    if ("decoding" in img) img.decoding = "async";
+    img.src = h;
+  } catch {
+    /* ignore */
+  }
+}
+
+function applyAppBackgroundFromStoredPreference() {
+  const root = document.documentElement;
+  const href = resolveRawAppBackgroundHrefForWallpaper();
+  if (!href) {
+    root.style.setProperty(
+      "--app-bg-photo",
+      cssUrlValueForAppBackgroundPhoto(getBuiltinAppBackgroundHref()) ||
+        "none",
+    );
+    syncHtmlAuthGateOpenClass();
+    return;
+  }
+  const cssVal = cssUrlValueForAppBackgroundPhoto(href);
+  if (!cssVal) {
+    try {
+      if (payslipAppStateMirrorKeyPresent(APP_BG_IMAGE_URL_KEY)) {
+        payslipAppStateRemoveItem(APP_BG_IMAGE_URL_KEY);
+      }
+    } catch {
+      /* ignore */
+    }
+    try {
+      if (authGateEl instanceof HTMLElement && !authGateEl.hidden) {
+        const fromInput =
+          authEmail instanceof HTMLInputElement
+            ? normalizeAuthEmailForCache(authEmail.value)
+            : "";
+        const em = fromInput || rememberedAuthEmailForWallpaper();
+        if (em) {
+          removeCachedAppBackgroundHrefForAuthEmail(em);
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    try {
+      window.localStorage.removeItem(APP_BG_IMAGE_URL_KEY);
+    } catch {
+      /* ignore */
+    }
+    root.style.removeProperty("--app-bg-photo");
+    syncHtmlAuthGateOpenClass();
+    return;
+  }
+  primeAppBackgroundImageForFastPaint(href);
+  root.style.setProperty("--app-bg-photo", cssVal);
+  syncHtmlAuthGateOpenClass();
+}
+
+/**
+ * While the sign-in gate is visible, the global html photo layers are hidden and
+ * `.auth-gate` draws a blurred copy of `--app-bg-photo` (session wallpaper) instead.
+ */
+function syncHtmlAuthGateOpenClass() {
+  try {
+    const gate = authGateEl ?? document.getElementById("authGate");
+    const open = gate instanceof HTMLElement && !gate.hidden;
+    document.documentElement.classList.toggle("rme-auth-gate-open", open);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** @returns {string} trimmed href or "" when using built-in stylesheet default */
+function getCurrentStoredAppBackgroundHref() {
+  try {
+    const raw = payslipAppStateGetItem(APP_BG_IMAGE_URL_KEY);
+    if (raw && typeof raw === "string" && raw.trim()) {
+      return raw.trim();
+    }
+  } catch {
+    /* ignore */
+  }
+  return "";
+}
+
+function syncAppBackgroundPickerSelectionUi() {
+  const cur = getCurrentStoredAppBackgroundHref();
+  appBackgroundPickerUseDefault?.classList.toggle("is-selected", !cur);
+  if (!appBackgroundPickerGrid) {
+    return;
+  }
+  for (const el of appBackgroundPickerGrid.querySelectorAll(
+    ".app-bg-picker-tile",
+  )) {
+    if (!(el instanceof HTMLElement)) {
+      continue;
+    }
+    el.classList.toggle("is-selected", Boolean(cur && el.dataset.bgUrl === cur));
+  }
+}
+
+function pickAppBackgroundDefault() {
+  try {
+    payslipAppStateRemoveItem(APP_BG_IMAGE_URL_KEY);
+  } catch {
+    /* ignore */
+  }
+  void (async () => {
+    try {
+      if (typeof window.teacherAuth?.getSessionUser !== "function") {
+        return;
+      }
+      const { user } = await window.teacherAuth.getSessionUser();
+      if (user?.email) {
+        removeCachedAppBackgroundHrefForAuthEmail(String(user.email));
+      }
+    } catch {
+      /* ignore */
+    }
+  })();
+  applyAppBackgroundFromStoredPreference();
+  syncAppBackgroundPickerSelectionUi();
+  appBackgroundPickerDialog?.close();
+}
+
+/**
+ * @param {string} href
+ */
+function pickAppBackgroundAndPersist(href) {
+  const u = String(href ?? "").trim();
+  if (!u || !isAllowedAppBackgroundImageUrl(u)) {
+    return;
+  }
+  try {
+    payslipAppStateSetItem(APP_BG_IMAGE_URL_KEY, u);
+  } catch {
+    /* ignore */
+  }
+  applyAppBackgroundFromStoredPreference();
+  persistAppBgHrefToEmailCacheAfterPick(u);
+  syncAppBackgroundPickerSelectionUi();
+  appBackgroundPickerDialog?.close();
+}
+
+/** @type {IntersectionObserver | null} Unloads off-screen thumbnails so scrolling stays light. */
+let appBgPickerImgObserver = null;
+
+/** Re-open picker without refetching for a while (snappy repeat opens). */
+const APP_BG_PICKER_CATALOG_TTL_MS = 20 * 60 * 1000;
+
+/** Picker tiles are small on screen — keep transform payloads tiny for fast decode + paint. */
+const APP_BG_PICKER_THUMB_WIDTH = 144;
+const APP_BG_PICKER_THUMB_QUALITY = 42;
+/** First N tiles load immediately (rest still lazy via IntersectionObserver). */
+const APP_BG_PICKER_EAGER_TILE_COUNT = 6;
+/** Cap background priming so sign-in warm-up does not decode the whole catalog. */
+const APP_BG_PICKER_PRIME_MAX = 8;
+const APP_BG_PICKER_PRIME_CHUNK = 3;
+
+/**
+ * @type {{ rows: { image_url: string; label: string; sort_order: number }[]; fetchedAt: number } | null}
+ */
+let appBgPickerCatalogCache = null;
+
+function clearAppBackgroundPickerCatalogCache() {
+  appBgPickerCatalogCache = null;
+}
+
+function isAppBgPickerCatalogCacheFresh() {
+  if (!appBgPickerCatalogCache?.rows?.length) {
+    return false;
+  }
+  return Date.now() - appBgPickerCatalogCache.fetchedAt < APP_BG_PICKER_CATALOG_TTL_MS;
+}
+
+/**
+ * @returns {Promise<{
+ *   rows: { image_url: string; label: string; sort_order: number }[];
+ *   supaErr: string | null;
+ * }>}
+ */
+async function fetchAppBackgroundPickerCatalogRowsFromNetwork() {
+  let supaErr = null;
+  /** @type {{ image_url: string; label: string; sort_order: number }[]} */
+  const rows = [];
+
+  if (typeof window.teacherAuth?.fetchPayslipAppBackgrounds === "function") {
+    try {
+      const r = await window.teacherAuth.fetchPayslipAppBackgrounds();
+      if (r?.ok && Array.isArray(r.rows)) {
+        for (const row of r.rows) {
+          const u = String(row?.image_url ?? "").trim().replace(/\\/g, "/");
+          if (!isAllowedAppBackgroundImageUrl(u)) {
+            continue;
+          }
+          const labelFromRow =
+            row.label && String(row.label).trim()
+              ? String(row.label).trim()
+              : null;
+          const sortOrder =
+            typeof row.sort_order === "number" && Number.isFinite(row.sort_order)
+              ? row.sort_order
+              : 0;
+          rows.push({
+            image_url: u,
+            label:
+              labelFromRow ||
+              prettyBackgroundLabelFromAssetPath(u),
+            sort_order: sortOrder,
+          });
+        }
+      } else if (r && r.ok === false && r.error) {
+        supaErr = String(r.error);
+      }
+    } catch (e) {
+      supaErr = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  rows.sort((a, b) => {
+    const d = a.sort_order - b.sort_order;
+    if (d !== 0) {
+      return d;
+    }
+    return a.label.localeCompare(b.label, "en");
+  });
+
+  return { rows, supaErr };
+}
+
+/**
+ * @param {{ image_url: string; label: string; sort_order: number }[]} rows
+ * @returns {string}
+ */
+function catalogRowsFingerprint(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return "";
+  }
+  return rows.map((r) => String(r.image_url ?? "").trim()).join("|");
+}
+
+/**
+ * Warms the HTTP cache for Supabase render thumbnails so the picker paints quickly.
+ * @param {{ image_url: string; label: string; sort_order: number }[]} rows
+ */
+function primeAppBackgroundPickerThumbnailImages(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return;
+  }
+  if (appBackgroundPickerDialog?.open) {
+    return;
+  }
+  /** @type {string[]} */
+  const urls = [];
+  for (const row of rows) {
+    if (urls.length >= APP_BG_PICKER_PRIME_MAX) {
+      break;
+    }
+    const u = String(row.image_url ?? "").trim();
+    if (!u) {
+      continue;
+    }
+    const t =
+      supabaseStoragePublicObjectUrlToRenderThumbUrl(
+        u,
+        APP_BG_PICKER_THUMB_WIDTH,
+        APP_BG_PICKER_THUMB_QUALITY,
+      ) || u;
+    urls.push(t);
+  }
+  if (!urls.length) {
+    return;
+  }
+  let idx = 0;
+  const chunk = APP_BG_PICKER_PRIME_CHUNK;
+  function step() {
+    const end = Math.min(urls.length, idx + chunk);
+    for (; idx < end; idx++) {
+      const img = new Image();
+      img.decoding = "async";
+      try {
+        img.fetchPriority = "low";
+      } catch {
+        /* ignore */
+      }
+      img.src = urls[idx];
+    }
+    if (idx < urls.length) {
+      window.setTimeout(step, 48);
+    }
+  }
+  const run = () => step();
+  if (typeof window.requestIdleCallback === "function") {
+    window.requestIdleCallback(run, { timeout: 1200 });
+  } else {
+    window.setTimeout(run, 80);
+  }
+}
+
+/** Fetch catalog once after sign-in and prime thumbnails (picker opens from warm cache). */
+async function warmAppBackgroundPickerCatalog() {
+  try {
+    const { rows } = await fetchAppBackgroundPickerCatalogRowsFromNetwork();
+    if (!rows.length) {
+      return;
+    }
+    const prevFp = appBgPickerCatalogCache
+      ? catalogRowsFingerprint(appBgPickerCatalogCache.rows)
+      : "";
+    const nextFp = catalogRowsFingerprint(rows);
+    appBgPickerCatalogCache = { rows, fetchedAt: Date.now() };
+    if (!(prevFp && prevFp === nextFp)) {
+      primeAppBackgroundPickerThumbnailImages(rows);
+    }
+    if (appBackgroundPickerDialog?.open && !(prevFp && prevFp === nextFp)) {
+      buildAppBackgroundPickerGridFromRows(rows);
+    }
+  } catch (e) {
+    console.warn("warm app background catalog:", e);
+  }
+}
+
+/**
+ * @param {{ image_url: string; label: string; sort_order: number }[]} rows
+ */
+function buildAppBackgroundPickerGridFromRows(rows) {
+  if (!appBackgroundPickerGrid) {
+    return;
+  }
+  detachAppBackgroundPickerImgObserver();
+  appBackgroundPickerGrid.innerHTML = "";
+  if (appBackgroundPickerError) {
+    appBackgroundPickerError.hidden = true;
+    appBackgroundPickerError.textContent = "";
+  }
+  const frag = document.createDocumentFragment();
+  /** @type {HTMLImageElement[]} */
+  const lazyImgs = [];
+  let tileIdx = 0;
+  for (const row of rows) {
+    const tile = createAppBackgroundPickerTileEl(row);
+    frag.appendChild(tile);
+    const im = tile.querySelector("img");
+    if (im instanceof HTMLImageElement) {
+      if (tileIdx < APP_BG_PICKER_EAGER_TILE_COUNT) {
+        try {
+          im.fetchPriority = "high";
+        } catch {
+          /* ignore */
+        }
+        const eagerSrc = im.dataset.bgSrc;
+        if (eagerSrc) {
+          im.src = eagerSrc;
+          im.dataset.bgLoaded = "1";
+        }
+      } else {
+        lazyImgs.push(im);
+      }
+    }
+    tileIdx++;
+  }
+  appBackgroundPickerGrid.appendChild(frag);
+  for (const im of lazyImgs) {
+    observeAppBackgroundPickerTileImg(im);
+  }
+  syncAppBackgroundPickerSelectionUi();
+}
+
+function detachAppBackgroundPickerImgObserver() {
+  appBgPickerImgObserver?.disconnect();
+  appBgPickerImgObserver = null;
+}
+
+/**
+ * @param {HTMLImageElement} img
+ */
+function observeAppBackgroundPickerTileImg(img) {
+  if (!(img instanceof HTMLImageElement)) {
+    return;
+  }
+  const root =
+    appBackgroundPickerScroll instanceof HTMLElement
+      ? appBackgroundPickerScroll
+      : null;
+  if (!appBgPickerImgObserver) {
+    appBgPickerImgObserver = new IntersectionObserver(
+      (entries) => {
+        for (const en of entries) {
+          const el = en.target;
+          if (!(el instanceof HTMLImageElement)) {
+            continue;
+          }
+          if (!en.isIntersecting || el.dataset.bgLoaded === "1") {
+            continue;
+          }
+          const url = el.dataset.bgSrc;
+          if (!url) {
+            continue;
+          }
+          if (el.getAttribute("src") !== url) {
+            el.src = url;
+          }
+          el.dataset.bgLoaded = "1";
+          appBgPickerImgObserver?.unobserve(el);
+        }
+      },
+      {
+        root,
+        rootMargin: "80px 0px 120px 0px",
+        threshold: 0.01,
+      },
+    );
+  }
+  appBgPickerImgObserver.observe(img);
+}
+
+/**
+ * @param {{ image_url: string; label: string }} row
+ * @returns {HTMLButtonElement}
+ */
+function createAppBackgroundPickerTileEl(row) {
+  const u = row.image_url;
+  const thumb =
+    supabaseStoragePublicObjectUrlToRenderThumbUrl(
+      u,
+      APP_BG_PICKER_THUMB_WIDTH,
+      APP_BG_PICKER_THUMB_QUALITY,
+    ) || u;
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "app-bg-picker-tile";
+  btn.setAttribute("role", "listitem");
+  btn.dataset.bgUrl = u;
+  const label = row.label || prettyBackgroundLabelFromAssetPath(u);
+  btn.setAttribute("aria-label", label);
+  const img = document.createElement("img");
+  img.className = "app-bg-picker-tile-img";
+  img.alt = "";
+  img.decoding = "async";
+  img.loading = "lazy";
+  img.sizes = "(max-width: 520px) 42vw, 120px";
+  img.dataset.bgSrc = thumb;
+  img.dataset.bgFullSrc = u;
+  img.addEventListener(
+    "error",
+    () => {
+      const fallback = img.dataset.bgFullSrc;
+      if (fallback && img.dataset.bgSrc !== fallback) {
+        img.dataset.bgSrc = fallback;
+        img.src = fallback;
+      }
+    },
+    { once: true },
+  );
+  btn.appendChild(img);
+  btn.addEventListener("click", () => {
+    pickAppBackgroundAndPersist(u);
+  });
+  return btn;
+}
+
+/**
+ * @param {{ forceNetwork?: boolean; silentBackgroundRevalidate?: boolean }} [opts]
+ */
+async function refreshAppBackgroundPickerCatalog(opts = {}) {
+  const forceNetwork = opts.forceNetwork === true;
+  const silentBg = opts.silentBackgroundRevalidate === true;
+
+  if (!appBackgroundPickerGrid) {
+    return;
+  }
+
+  if (!forceNetwork && isAppBgPickerCatalogCacheFresh() && appBgPickerCatalogCache) {
+    buildAppBackgroundPickerGridFromRows(appBgPickerCatalogCache.rows);
+    return;
+  }
+
+  const { rows, supaErr } = await fetchAppBackgroundPickerCatalogRowsFromNetwork();
+
+  if (rows.length === 0) {
+    if (silentBg) {
+      if (supaErr) {
+        console.warn("app background catalog refresh:", supaErr);
+      }
+      return;
+    }
+    detachAppBackgroundPickerImgObserver();
+    appBackgroundPickerGrid.innerHTML = "";
+    if (appBackgroundPickerError) {
+      appBackgroundPickerError.textContent =
+        supaErr ||
+        "No backgrounds in Supabase. Run migration 014, upload images to bucket payslip_app_backgrounds, then add rows (or run npm run sync:app-backgrounds).";
+      appBackgroundPickerError.hidden = false;
+    }
+    syncAppBackgroundPickerSelectionUi();
+    return;
+  }
+
+  const prevFp = appBgPickerCatalogCache
+    ? catalogRowsFingerprint(appBgPickerCatalogCache.rows)
+    : null;
+  const nextFp = catalogRowsFingerprint(rows);
+  const unchanged = Boolean(prevFp && prevFp === nextFp);
+
+  appBgPickerCatalogCache = { rows, fetchedAt: Date.now() };
+
+  if (!(silentBg && unchanged)) {
+    primeAppBackgroundPickerThumbnailImages(rows);
+  }
+  if (silentBg && unchanged) {
+    return;
+  }
+  buildAppBackgroundPickerGridFromRows(rows);
+}
+
+async function openAppBackgroundPickerModal() {
+  closeNavMenu();
+  if (!appBackgroundPickerDialog) {
+    return;
+  }
+  if (appBackgroundPickerError) {
+    appBackgroundPickerError.hidden = true;
+    appBackgroundPickerError.textContent = "";
+  }
+  detachAppBackgroundPickerImgObserver();
+  const cacheHit = isAppBgPickerCatalogCacheFresh() && appBgPickerCatalogCache;
+
+  if (appBackgroundPickerGrid) {
+    if (cacheHit && appBgPickerCatalogCache) {
+      buildAppBackgroundPickerGridFromRows(appBgPickerCatalogCache.rows);
+    } else {
+      appBackgroundPickerGrid.innerHTML =
+        '<p class="app-bg-picker-catalog-loading" role="status">Loading backgrounds…</p>';
+    }
+  }
+  syncAppBackgroundPickerSelectionUi();
+  if (typeof appBackgroundPickerDialog.showModal === "function") {
+    appBackgroundPickerDialog.showModal();
+  }
+  if (cacheHit) {
+    void refreshAppBackgroundPickerCatalog({ silentBackgroundRevalidate: true });
+  } else {
+    await refreshAppBackgroundPickerCatalog({ forceNetwork: true });
+  }
+}
+
+function bindAuthGateEmailWallpaperRefresh() {
+  if (!(authEmail instanceof HTMLInputElement)) {
+    return;
+  }
+  if (authEmail.dataset.rmeBgWallpaperEmailBind === "1") {
+    return;
+  }
+  authEmail.dataset.rmeBgWallpaperEmailBind = "1";
+  let debounceTimer = 0;
+  const schedule = () => {
+    window.clearTimeout(debounceTimer);
+    debounceTimer = window.setTimeout(() => {
+      try {
+        applyAppBackgroundFromStoredPreference();
+      } catch {
+        /* ignore */
+      }
+    }, 140);
+  };
+  authEmail.addEventListener("input", schedule);
+  authEmail.addEventListener("change", schedule);
+}
+
+function initTheme() {
+  applyTheme(DEFAULT_APP_THEME);
 }
 
 initTheme();
+applyAppBackgroundFromStoredPreference();
+bindAuthGateEmailWallpaperRefresh();
 
-function toggleTheme() {
-  const next =
-    document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+// === Password reset + change-email flows ===
+
+/**
+ * Inserts password-reset controls into the auth gate. Supabase recovery links open
+ * outside Electron, so the app lets the user paste the emailed link back in and
+ * then sets the new password from inside the active Supabase client.
+ */
+function setupAuthForgotPasswordLink() {
+  if (!authForm || !authEmail || !authErrorEl) {
+    return;
+  }
+  if (document.getElementById("authForgotPasswordBtn")) {
+    return;
+  }
+  const wrap = document.createElement("div");
+  wrap.className = "auth-reset-email-wrap";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.id = "authForgotPasswordBtn";
+  btn.className = "auth-link-btn auth-reset-password-btn";
+  btn.textContent = "Reset password";
+  wrap.appendChild(btn);
+  const anchor = authToggleRegister?.closest(".auth-mode-toggle");
+  if (anchor && anchor.parentElement) {
+    anchor.parentElement.insertBefore(wrap, anchor);
+  } else {
+    authForm.appendChild(wrap);
+  }
+
+  btn.addEventListener("click", async () => {
+    if (typeof window.teacherAuth?.requestPasswordReset !== "function") {
+      authErrorEl.textContent =
+        "Password reset is unavailable in this build.";
+      authErrorEl.hidden = false;
+      return;
+    }
+    const addr = String(authEmail.value || "").trim();
+    if (!addr || !addr.includes("@")) {
+      authErrorEl.textContent =
+        "Enter the email on your account above, then click Reset password.";
+      authErrorEl.hidden = false;
+      authEmail.focus();
+      return;
+    }
+    btn.disabled = true;
+    const prevText = btn.textContent;
+    btn.textContent = "Sending…";
+    try {
+      const { error } = await window.teacherAuth.requestPasswordReset(addr);
+      if (error) {
+        authErrorEl.textContent = `Could not send reset email: ${error}`;
+      } else {
+        authErrorEl.textContent = `Password reset email sent to ${addr}. Open the link in your email in a browser to set a new password, then sign in here.`;
+      }
+      authErrorEl.hidden = false;
+    } catch (e) {
+      authErrorEl.textContent = `Could not send reset email: ${e instanceof Error ? e.message : String(e)}`;
+      authErrorEl.hidden = false;
+    } finally {
+      btn.textContent = prevText;
+      btn.disabled = false;
+    }
+  });
+}
+
+/**
+ * Adds "Change email" + "Change password" panels under the teacher profile form
+ * (visible to any signed-in user — admin or teacher — wherever the profile card renders).
+ */
+function setupAccountSecurityPanels() {
+  if (!teacherProfileForm) {
+    return;
+  }
+  if (document.getElementById("accountSecurityPanels")) {
+    return;
+  }
+  const root = document.createElement("section");
+  root.id = "accountSecurityPanels";
+  root.className = "account-security-panels";
+  root.style.marginTop = "1.25rem";
+  root.style.paddingTop = "1rem";
+  root.style.borderTop = "1px solid var(--border-subtle)";
+  root.innerHTML = [
+    '<h3 class="teacher-profile-form-title" style="margin-top:0;">Account security</h3>',
+    '<div class="auth-field">',
+    '  <label for="accountChangeEmailInput">New email address</label>',
+    '  <input type="email" id="accountChangeEmailInput" autocomplete="email" placeholder="you@example.com" />',
+    "</div>",
+    '<button type="button" id="accountChangeEmailBtn" class="teacher-profile-save">Send confirmation to new email</button>',
+    '<p class="teacher-profile-form-hint">Supabase will email a confirmation link to the new address. The change only takes effect after you click that link.</p>',
+    '<div id="accountChangeEmailMessage" class="teacher-profile-form-message" hidden></div>',
+    '<h4 class="teacher-profile-form-title" style="margin-top:1.25rem;">Change password</h4>',
+    '<div class="auth-field">',
+    '  <label for="accountChangePasswordInput">New password</label>',
+    '  <input type="password" id="accountChangePasswordInput" autocomplete="new-password" minlength="8" placeholder="At least 8 characters" />',
+    "</div>",
+    '<div class="auth-field">',
+    '  <label for="accountChangePasswordConfirmInput">Confirm new password</label>',
+    '  <input type="password" id="accountChangePasswordConfirmInput" autocomplete="new-password" minlength="8" />',
+    "</div>",
+    '<button type="button" id="accountChangePasswordBtn" class="teacher-profile-save">Update password</button>',
+    '<div id="accountChangePasswordMessage" class="teacher-profile-form-message" hidden></div>',
+  ].join("\n");
+  teacherProfileForm.insertAdjacentElement("afterend", root);
+
+  const emailInput = /** @type {HTMLInputElement | null} */ (
+    document.getElementById("accountChangeEmailInput")
+  );
+  const emailBtn = /** @type {HTMLButtonElement | null} */ (
+    document.getElementById("accountChangeEmailBtn")
+  );
+  const emailMsg = document.getElementById("accountChangeEmailMessage");
+  const pwInput = /** @type {HTMLInputElement | null} */ (
+    document.getElementById("accountChangePasswordInput")
+  );
+  const pwConfirmInput = /** @type {HTMLInputElement | null} */ (
+    document.getElementById("accountChangePasswordConfirmInput")
+  );
+  const pwBtn = /** @type {HTMLButtonElement | null} */ (
+    document.getElementById("accountChangePasswordBtn")
+  );
+  const pwMsg = document.getElementById("accountChangePasswordMessage");
+
+  /**
+   * @param {Element | null} el
+   * @param {string} text
+   * @param {boolean} isErr
+   */
+  function setAccountSecurityMsg(el, text, isErr) {
+    if (!(el instanceof HTMLElement)) {
+      return;
+    }
+    el.textContent = text;
+    el.hidden = !text;
+    el.classList.toggle("is-err", Boolean(isErr));
+    el.classList.toggle("is-ok", !isErr && Boolean(text));
+  }
+
+  if (emailBtn instanceof HTMLButtonElement && emailInput instanceof HTMLInputElement) {
+    emailBtn.addEventListener("click", async () => {
+      setAccountSecurityMsg(emailMsg, "", false);
+      if (typeof window.teacherAuth?.updateEmail !== "function") {
+        setAccountSecurityMsg(emailMsg, "Change email is unavailable in this build.", true);
+        return;
+      }
+      const next = String(emailInput.value || "").trim();
+      if (!next || !next.includes("@")) {
+        setAccountSecurityMsg(emailMsg, "Enter a valid email address.", true);
+        return;
+      }
+      emailBtn.disabled = true;
+      const prev = emailBtn.textContent;
+      emailBtn.textContent = "Sending…";
+      try {
+        const { error, needsConfirmation } =
+          await window.teacherAuth.updateEmail(next);
+        if (error) {
+          setAccountSecurityMsg(emailMsg, error, true);
+        } else if (needsConfirmation) {
+          setAccountSecurityMsg(
+            emailMsg,
+            `Confirmation link sent to ${next}. The change only takes effect after you click it.`,
+            false,
+          );
+          emailInput.value = "";
+        } else {
+          setAccountSecurityMsg(emailMsg, "Email updated.", false);
+          emailInput.value = "";
+        }
+      } catch (e) {
+        setAccountSecurityMsg(
+          emailMsg,
+          e instanceof Error ? e.message : String(e),
+          true,
+        );
+      } finally {
+        emailBtn.textContent = prev;
+        emailBtn.disabled = false;
+      }
+    });
+  }
+
+  if (
+    pwBtn instanceof HTMLButtonElement &&
+    pwInput instanceof HTMLInputElement &&
+    pwConfirmInput instanceof HTMLInputElement
+  ) {
+    pwBtn.addEventListener("click", async () => {
+      setAccountSecurityMsg(pwMsg, "", false);
+      if (typeof window.teacherAuth?.updatePassword !== "function") {
+        setAccountSecurityMsg(pwMsg, "Change password is unavailable in this build.", true);
+        return;
+      }
+      const next = String(pwInput.value || "");
+      const confirm = String(pwConfirmInput.value || "");
+      if (next.length < 8) {
+        setAccountSecurityMsg(pwMsg, "New password must be at least 8 characters.", true);
+        return;
+      }
+      if (next !== confirm) {
+        setAccountSecurityMsg(pwMsg, "Passwords do not match.", true);
+        return;
+      }
+      pwBtn.disabled = true;
+      const prev = pwBtn.textContent;
+      pwBtn.textContent = "Updating…";
+      try {
+        const { error } = await window.teacherAuth.updatePassword(next);
+        if (error) {
+          setAccountSecurityMsg(pwMsg, error, true);
+        } else {
+          setAccountSecurityMsg(pwMsg, "Password updated.", false);
+          pwInput.value = "";
+          pwConfirmInput.value = "";
+        }
+      } catch (e) {
+        setAccountSecurityMsg(
+          pwMsg,
+          e instanceof Error ? e.message : String(e),
+          true,
+        );
+      } finally {
+        pwBtn.textContent = prev;
+        pwBtn.disabled = false;
+      }
+    });
+  }
+}
+
+setupAuthForgotPasswordLink();
+setupAccountSecurityPanels();
+
+// Theme toggle lives in Settings only (nav menu no longer duplicates Light/Dark mode).
+
+// === RME: breadcrumb + back navigation =====================================
+// Back + path sit in the fixed .app-top-chrome row next to the logo (same
+// baseline as the menu burger). Hidden on the auth gate and in teacher portal
+// mode. Tracks an in-memory navigation stack so Back returns through your real
+// click path, not just up the parent tree. Self-contained: reads
+// notionWorkspaceActiveId / notionWorkspacePagesState and calls
+// activateNotionWorkspacePage(id).
+(function rmeSetupBreadcrumbAndBackNav() {
+  function init() {
+    const panesRoot = document.getElementById("notionWsPanes");
+    if (!(panesRoot instanceof HTMLElement)) return;
+    if (document.getElementById("rmeBreadcrumbBar")) return;
+    const logoWrap = document.querySelector(".app-logo-wrap");
+
+    const styleEl = document.createElement("style");
+    styleEl.id = "rmeBreadcrumbStyles";
+    styleEl.textContent = [
+      // In-flow under the logo: plain row (no pill chrome). Flex (not inline-flex)
+      // avoids shrink-to-fit quirks inside the fixed logo column.
+      "#rmeBreadcrumbBar{position:relative;z-index:2000;flex-shrink:0;",
+      "min-height:var(--rme-breadcrumb-bar-stack-height,2.2rem);",
+      "max-width:min(42rem,calc(100vw - 9.5rem));",
+      "display:flex;flex-direction:row;flex-wrap:nowrap;align-items:center;",
+      "justify-content:flex-start;gap:.1rem;",
+      "margin:0;padding:0;",
+      "background:transparent!important;border:0!important;border-radius:0;",
+      "box-shadow:none!important;-webkit-backdrop-filter:none!important;",
+      "backdrop-filter:none!important;",
+      "font-size:.82rem;font-weight:500;letter-spacing:-.005em;",
+      "color:var(--text);}",
+      "#rmeBreadcrumbBar[hidden]{display:none;}",
+      "#rmeBreadcrumbBar button{-webkit-appearance:none;appearance:none;",
+      "box-shadow:none!important;font-weight:500;}",
+      "#rmeBackBtn{position:relative;flex-shrink:0;",
+      "width:auto;min-width:1.2rem;height:auto;padding:.1rem .35rem .1rem 0;margin:0;",
+      "display:inline-flex;align-items:center;justify-content:flex-start;",
+      "border-radius:0;border:0!important;background:transparent!important;",
+      "color:var(--text-muted,#6b7280);cursor:pointer;font:inherit;line-height:0;",
+      "transition:color .15s ease,transform .15s ease,opacity .15s ease;}",
+      "#rmeBackBtn:hover:not(:disabled){color:var(--text);}",
+      "#rmeBackBtn:active:not(:disabled){transform:scale(.96);}",
+      "#rmeBackBtn:focus-visible{outline:2px solid var(--pill-dot,#3b82f6);outline-offset:2px;}",
+      "#rmeBackBtn:disabled{opacity:.28;cursor:not-allowed;}",
+      "#rmeBackBtn .rme-back-triangle{position:relative;display:block;",
+      "width:0;height:0;border-style:solid;",
+      "border-width:.32rem .48rem .32rem 0;",
+      "border-color:transparent currentColor transparent transparent;",
+      "margin-right:.04rem;",
+      "transition:transform .28s cubic-bezier(.34,1.56,.64,1);}",
+      "#rmeBackBtn:hover:not(:disabled) .rme-back-triangle{transform:translateX(-2px);}",
+      "#rmeBreadcrumbList{list-style:none;display:flex;align-items:center;",
+      "flex-wrap:nowrap;gap:0;margin:0;padding:0;padding-inline-start:0;",
+      "min-width:0;overflow:hidden;}",
+      ".rme-breadcrumb-item{display:inline-flex;align-items:center;min-width:0;",
+      "margin:0;padding:0;list-style:none;color:var(--text-muted,#6b7280);}",
+      ".rme-breadcrumb-item[aria-current=\"page\"]{color:var(--text);}",
+      ".rme-breadcrumb-crumb{margin:0;background:transparent!important;",
+      "border:0!important;padding:.08rem .28rem .08rem 0;",
+      "cursor:pointer;color:inherit;font:inherit;font-weight:500;",
+      "border-radius:0;max-width:11rem;overflow:hidden;white-space:nowrap;",
+      "text-overflow:ellipsis;",
+      "transition:background .15s ease,color .15s ease;}",
+      ".rme-breadcrumb-crumb:hover{",
+      "background:color-mix(in srgb,var(--text) 7%,transparent);color:var(--text);}",
+      ".rme-breadcrumb-current{margin:0;padding:.08rem 0;font-weight:600;",
+      "letter-spacing:-.005em;max-width:16rem;overflow:hidden;",
+      "white-space:nowrap;text-overflow:ellipsis;background:transparent!important;",
+      "border-radius:0;}",
+      ".rme-breadcrumb-sep{margin:0 .02rem;opacity:.36;font-size:.88em;",
+      "font-weight:400;user-select:none;}",
+    ].join("");
+    document.head.appendChild(styleEl);
+
+    const bar = document.createElement("nav");
+    bar.id = "rmeBreadcrumbBar";
+    bar.setAttribute("aria-label", "Page navigation");
+    const backBtn = document.createElement("button");
+    backBtn.type = "button";
+    backBtn.id = "rmeBackBtn";
+    backBtn.setAttribute("aria-label", "Go back");
+    backBtn.title = "Go back to previous page";
+    backBtn.disabled = true;
+    const tri = document.createElement("span");
+    tri.className = "rme-back-triangle";
+    tri.setAttribute("aria-hidden", "true");
+    backBtn.appendChild(tri);
+    const listEl = document.createElement("ol");
+    listEl.id = "rmeBreadcrumbList";
+    bar.appendChild(backBtn);
+    bar.appendChild(listEl);
+    if (logoWrap instanceof HTMLElement) {
+      const sidebarToggle = document.getElementById("toggleEditorSidebarBtn");
+      if (sidebarToggle && sidebarToggle.parentNode === logoWrap) {
+        logoWrap.insertBefore(bar, sidebarToggle);
+      } else {
+        logoWrap.appendChild(bar);
+      }
+    } else {
+      document.body.appendChild(bar);
+    }
+
+    const HISTORY_MAX = 64;
+    /** @type {string[]} */
+    const stack = [];
+    let suppressNext = false;
+    /** @type {string | null} */
+    let lastActiveId = null;
+
+    function currentActiveId() {
+      try {
+        if (typeof notionWorkspaceActiveId === "string" && notionWorkspaceActiveId) {
+          return notionWorkspaceActiveId;
+        }
+      } catch (_e) { /* not yet defined */ }
+      const visible = panesRoot.querySelector(
+        ":scope > .notion-ws-pane:not([hidden])",
+      );
+      if (visible instanceof HTMLElement && visible.dataset.workspaceId) {
+        return visible.dataset.workspaceId;
+      }
+      return null;
+    }
+
+    function pageById(id) {
+      try {
+        for (const p of notionWorkspacePagesState) {
+          if (p && p.id === id) return p;
+        }
+      } catch (_e) { /* not yet defined */ }
+      return null;
+    }
+
+    function labelForPage(p) {
+      if (!p) return "Untitled";
+      if (p.kind === "payslips") return "Dashboard";
+      if (p.kind === "vault") return "Vault";
+      if (p.kind === "trash") return "Trash";
+      const t = String(p.title || "").trim();
+      return t || "Untitled";
+    }
+
+    function ancestorsForId(id) {
+      const chain = [];
+      const seen = new Set();
+      let cur = pageById(id);
+      while (cur && !seen.has(cur.id)) {
+        chain.unshift(cur);
+        seen.add(cur.id);
+        const pid = cur.parentId;
+        cur = pid ? pageById(pid) : null;
+      }
+      // Dashboard is always the fixed root crumb. Even if the current
+      // page lives outside the Dashboard tree (e.g. inside Vault), the
+      // breadcrumb still starts with Dashboard so clicking it returns
+      // home. The current page stays last in the chain.
+      const dashId = "__payslips";
+      const alreadyRooted =
+        chain.length > 0 && chain[0] && chain[0].id === dashId;
+      if (!alreadyRooted && id !== dashId) {
+        const dash = pageById(dashId);
+        if (dash) chain.unshift(dash);
+      }
+      return chain;
+    }
+
+    function shouldHideBar() {
+      try {
+        if (typeof isTeacherNavMode !== "undefined" && isTeacherNavMode) return true;
+      } catch (_e) { /* ignore */ }
+      const authGate = document.getElementById("authGate");
+      if (authGate instanceof HTMLElement && !authGate.hidden) return true;
+      const pageHome = document.getElementById("pageHome");
+      if (pageHome instanceof HTMLElement && pageHome.hidden) return true;
+      return false;
+    }
+
+    function renderBreadcrumb() {
+      bar.hidden = shouldHideBar();
+      if (bar.hidden) return;
+      const aid = currentActiveId();
+      listEl.replaceChildren();
+      if (!aid) return;
+      const chain = ancestorsForId(aid);
+      if (chain.length === 0) {
+        const li = document.createElement("li");
+        li.className = "rme-breadcrumb-item";
+        li.setAttribute("aria-current", "page");
+        li.textContent = aid;
+        listEl.appendChild(li);
+        return;
+      }
+      chain.forEach((p, i) => {
+        const li = document.createElement("li");
+        li.className = "rme-breadcrumb-item";
+        const isLast = i === chain.length - 1;
+        if (isLast) {
+          li.setAttribute("aria-current", "page");
+          li.textContent = labelForPage(p);
+        } else {
+          const crumb = document.createElement("button");
+          crumb.type = "button";
+          crumb.className = "rme-breadcrumb-crumb";
+          crumb.textContent = labelForPage(p);
+          crumb.addEventListener("click", () => {
+            try {
+              if (typeof activateNotionWorkspacePage === "function") {
+                activateNotionWorkspacePage(p.id);
+              }
+            } catch (e) { console.warn("breadcrumb activate:", e); }
+          });
+          li.appendChild(crumb);
+          const sep = document.createElement("span");
+          sep.className = "rme-breadcrumb-sep";
+          sep.setAttribute("aria-hidden", "true");
+          sep.textContent = "›";
+          li.appendChild(sep);
+        }
+        listEl.appendChild(li);
+      });
+    }
+
+    function refreshBackBtnEnabled() {
+      backBtn.disabled = stack.length < 2;
+    }
+
+    function pushOntoHistory(id) {
+      if (!id) return;
+      if (stack[stack.length - 1] === id) return;
+      stack.push(id);
+      if (stack.length > HISTORY_MAX) stack.shift();
+      refreshBackBtnEnabled();
+    }
+
+    backBtn.addEventListener("click", () => {
+      if (stack.length < 2) return;
+      stack.pop();
+      const prev = stack[stack.length - 1];
+      if (!prev) { refreshBackBtnEnabled(); return; }
+      suppressNext = true;
+      try {
+        if (typeof activateNotionWorkspacePage === "function") {
+          activateNotionWorkspacePage(prev);
+        }
+      } catch (e) { console.warn("back nav activate:", e); }
+    });
+
+    function sync() {
+      const aid = currentActiveId();
+      if (aid !== lastActiveId) {
+        lastActiveId = aid;
+        if (suppressNext) {
+          suppressNext = false;
+        } else if (aid) {
+          pushOntoHistory(aid);
+        }
+      }
+      renderBreadcrumb();
+    }
+
+    new MutationObserver(sync).observe(panesRoot, {
+      attributes: true,
+      attributeFilter: ["hidden"],
+      subtree: true,
+    });
+    const sidebar = document.getElementById("notionWorkspacePageList");
+    if (sidebar instanceof HTMLElement) {
+      new MutationObserver(renderBreadcrumb).observe(sidebar, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+      });
+    }
+    sync();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init, { once: true });
+  } else {
+    // Defer one tick so module-scoped lets are initialised.
+    window.setTimeout(init, 0);
+  }
+})();
+
+// === RME: admin dashboard analytics ========================================
+// Live analytics tiles at the top of the Dashboard (__payslips) page.
+// Cards: total teachers, online now (live pulse), new this week, active
+// schools (5 — Blueprint §1), pay slips on file, active in last 24h.
+// Auto-refreshes every 30s. Self-contained — hides outside the Dashboard,
+// in teacher portal mode, and on the auth gate. Calls window.teacherAuth.*
+// admin teacher list (probes several known names) and falls back to "—"
+// if no compatible endpoint is bridged.
+(function rmeSetupAdminDashboardAnalytics() {
+  const REFRESH_MS = 30 * 1000;
+  const ONLINE_WINDOW_MS = 90 * 1000;
+  const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+  const ONE_WEEK_MS = 7 * ONE_DAY_MS;
+
+  const CARDS = [
+    { id: "totalTeachers", label: "Total teachers", icon: "\u{1F393}", accent: "blue" },
+    { id: "onlineNow", label: "Online now", icon: "\u{1F4BB}", accent: "green", live: true },
+    { id: "newThisWeek", label: "New this week", icon: "\u{1F331}", accent: "purple" },
+    { id: "activeSchools", label: "Active schools", icon: "\u{1F5FA}\uFE0F", accent: "teal" },
+    { id: "payslipsThisMonth", label: "Pay slips on file", icon: "\u{1F4C4}", accent: "cyan" },
+    { id: "recentSignins", label: "Active (24h)", icon: "\u{1F525}", accent: "sky" },
+  ];
+
+  function init() {
+    const homeEl = document.getElementById("homeContent");
+    if (!(homeEl instanceof HTMLElement)) return;
+    if (document.getElementById("rmeAnalyticsRoot")) return;
+
+    const styleEl = document.createElement("style");
+    styleEl.id = "rmeAnalyticsStyles";
+    styleEl.textContent = [
+      "#rmeAnalyticsRoot{margin:.7rem 0 1.5rem;padding:0 clamp(1.25rem,5vw,2.85rem);box-sizing:border-box;}",
+      "#rmeAnalyticsRoot[hidden]{display:none;}",
+      ".rme-analytics-grid{display:grid;margin-top:0;",
+      "grid-template-columns:repeat(3,minmax(0,15.5rem));",
+      "column-gap:2.15rem;row-gap:1.55rem;",
+      "justify-content:center;align-items:stretch;",
+      "padding:0;box-sizing:border-box;}",
+      "@media (max-width:62rem){.rme-analytics-grid{",
+      "grid-template-columns:repeat(2,minmax(0,16.25rem));",
+      "column-gap:1.85rem;row-gap:1.4rem;}}",
+      "@media (max-width:34rem){.rme-analytics-grid{grid-template-columns:1fr;",
+      "column-gap:1.45rem;row-gap:1.35rem;}}",
+      ".rme-stat-card{position:relative;display:flex;align-items:center;",
+      "gap:1rem;padding:1.18rem 1.22rem 1.25rem;border-radius:26px;overflow:hidden;",
+      "isolation:isolate;max-width:100%;",
+      "background:linear-gradient(165deg,",
+      "color-mix(in srgb,#f8fafc 58%,transparent) 0%,",
+      "color-mix(in srgb,#eef2ff 42%,transparent) 48%,",
+      "color-mix(in srgb,#f1f5f9 36%,transparent) 100%);",
+      "-webkit-backdrop-filter:blur(22px) saturate(138%);",
+      "backdrop-filter:blur(22px) saturate(138%);",
+      "border:1px solid color-mix(in srgb,#fff 40%,#94a3b8 10%);",
+      "box-shadow:inset 0 1px 0 rgba(255,255,255,.32),inset 0 0 0 1px rgba(15,23,42,.05),",
+      "0 10px 38px -8px rgba(15,23,42,.13),",
+      "0 0 40px -10px color-mix(in srgb,var(--rme-accent) 17%,transparent);",
+      "transition:transform .24s cubic-bezier(.34,1.2,.64,1),box-shadow .24s ease,border-color .24s ease,",
+      "-webkit-backdrop-filter .24s ease,backdrop-filter .24s ease;}",
+      "html[data-theme=dark] .rme-stat-card{",
+      "background:linear-gradient(165deg,",
+      "color-mix(in srgb,#1e293b 50%,transparent) 0%,",
+      "color-mix(in srgb,#0f172a 34%,transparent) 55%,",
+      "color-mix(in srgb,#172554 26%,transparent) 100%);",
+      "border:1px solid color-mix(in srgb,#fff 16%,#64748b 12%);",
+      "box-shadow:inset 0 1px 0 rgba(255,255,255,.14),inset 0 0 0 1px rgba(0,0,0,.26),",
+      "0 12px 40px -4px rgba(0,0,0,.3),",
+      "0 0 44px -8px color-mix(in srgb,var(--rme-accent) 14%,transparent);}",
+      ".rme-stat-card:hover{transform:translateY(-4px) scale(1.012);",
+      "-webkit-backdrop-filter:none;backdrop-filter:none;",
+      "box-shadow:inset 0 1px 0 rgba(255,255,255,.36),inset 0 0 0 1px rgba(15,23,42,.07),",
+      "0 20px 52px -10px rgba(15,23,42,.2),",
+      "0 0 0 1px color-mix(in srgb,var(--rme-accent,#3b82f6) 28%,transparent),",
+      "0 0 48px -8px color-mix(in srgb,var(--rme-accent) 26%,transparent);",
+      "border-color:color-mix(in srgb,var(--rme-accent,#3b82f6) 36%,rgba(255,255,255,.34));}",
+      "html[data-theme=dark] .rme-stat-card:hover{",
+      "-webkit-backdrop-filter:none;backdrop-filter:none;",
+      "box-shadow:inset 0 1px 0 rgba(255,255,255,.22),",
+      "0 22px 56px -6px rgba(0,0,0,.42),",
+      "0 0 0 1px color-mix(in srgb,var(--rme-accent,#3b82f6) 30%,transparent),",
+      "0 0 52px -6px color-mix(in srgb,var(--rme-accent) 22%,transparent);}",
+      ".rme-stat-card .rme-stat-icon,.rme-stat-card .rme-stat-body{position:relative;z-index:2;}",
+      ".rme-stat-card .rme-stat-pulse{z-index:3;}",
+      ".rme-stat-card::before{content:\"\";position:absolute;inset:0;z-index:0;",
+      "pointer-events:none;border-radius:inherit;",
+      "background:radial-gradient(70% 56% at 94% -12%,",
+      "color-mix(in srgb,var(--rme-accent) 26%,transparent) 0%,transparent 46%),",
+      "radial-gradient(92% 78% at 8% -8%,rgba(255,255,255,.34) 0%,transparent 56%);",
+      "opacity:.5;}",
+      ".rme-stat-card::after{content:\"\";position:absolute;inset:0;z-index:1;",
+      "pointer-events:none;border-radius:inherit;",
+      "background:linear-gradient(210deg,rgba(255,255,255,.38) 0%,",
+      "rgba(226,232,240,.16) 11%,transparent 36%),",
+      "linear-gradient(25deg,transparent 55%,color-mix(in srgb,var(--rme-accent) 10%,transparent) 100%);",
+      "opacity:.44;}",
+      ".rme-stat-card--blue{--rme-accent:#3b82f6;}",
+      ".rme-stat-card--green{--rme-accent:#10b981;}",
+      ".rme-stat-card--purple{--rme-accent:#8b5cf6;}",
+      ".rme-stat-card--teal{--rme-accent:#0d9488;}",
+      ".rme-stat-card--cyan{--rme-accent:#0891b2;}",
+      ".rme-stat-card--sky{--rme-accent:#0284c7;}",
+      ".rme-stat-card--pink{--rme-accent:#ec4899;}",
+      ".rme-stat-card--orange{--rme-accent:#f97316;}",
+      ".rme-stat-card--violet{--rme-accent:#c084fc;}",
+      "html[data-theme=dark] .rme-stat-card--violet{--rme-accent:#e879f9;}",
+      ".rme-school-stats-grid{margin-top:2.65rem;padding-top:0;",
+      "grid-template-columns:repeat(5,minmax(0,12.25rem));}",
+      "@media (max-width:72rem){.rme-school-stats-grid{",
+      "grid-template-columns:repeat(3,minmax(0,14rem));}}",
+      "@media (max-width:42rem){.rme-school-stats-grid{",
+      "grid-template-columns:repeat(2,minmax(0,14rem));}}",
+      "@media (max-width:26rem){.rme-school-stats-grid{grid-template-columns:1fr;}}",
+      ".rme-school-stats-grid .rme-stat-card{cursor:pointer;}",
+      ".rme-school-stats-grid .rme-stat-card .rme-stat-icon{display:none;}",
+      ".rme-school-stats-grid .rme-stat-label{text-transform:none;letter-spacing:-.01em;",
+      "font-size:.82rem;font-weight:800;line-height:1.25;}",
+      ".rme-school-stats-grid .rme-stat-label--with-anchor{display:flex;align-items:center;",
+      "justify-content:center;gap:.62rem;}",
+      ".rme-school-stats-grid .rme-stat-label-anchor{display:inline-flex;flex-shrink:0;",
+      "align-items:center;justify-content:center;font-size:1.05rem;line-height:1;",
+      "opacity:.95;}",
+      ".rme-school-stats-grid .rme-stat-value{font-size:1.85rem;}",
+      ".rme-school-stats-grid .rme-stat-meta{display:none;}",
+      ".rme-stat-icon{position:relative;z-index:2;flex-shrink:0;width:3.55rem;height:3.55rem;",
+      "display:flex;align-items:center;justify-content:center;font-size:1.95rem;",
+      "line-height:1;border-radius:0;",
+      "background:transparent;border:none;box-shadow:none;",
+      "-webkit-backdrop-filter:none;backdrop-filter:none;",
+      "color:var(--rme-accent,#3b82f6);opacity:.78;}",
+      ".rme-stat-body{position:relative;flex:1;min-width:0;}",
+      ".rme-stat-label{font-size:.76rem;font-weight:750;",
+      "font-family:'Plus Jakarta Sans',system-ui,-apple-system,'Segoe UI',sans-serif;",
+      "color:#0c0c0e;text-transform:uppercase;",
+      "letter-spacing:.035em;margin:0 0 .28rem;}",
+      "html[data-theme=dark] .rme-stat-card .rme-stat-label{",
+      "color:#f8fafc;font-weight:750;}",
+      ".rme-stat-value{font-size:2rem;font-weight:800;letter-spacing:-.03em;",
+      "color:var(--rme-accent,#2563eb);line-height:1.05;font-variant-numeric:tabular-nums;",
+      "text-shadow:0 1px 0 rgba(255,255,255,.25);",
+      "transition:opacity .2s ease;}",
+      "html[data-theme=dark] .rme-stat-value{text-shadow:0 1px 3px rgba(0,0,0,.45);}",
+      ".rme-stat-card[data-card='activeSchools'] .rme-stat-value{color:#dc2626 !important;",
+      "text-shadow:0 1px 0 rgba(255,255,255,.22);}",
+      "html[data-theme=dark] .rme-stat-card[data-card='activeSchools'] .rme-stat-value{color:#f87171 !important;",
+      "text-shadow:0 1px 3px rgba(0,0,0,.55);}",
+      ".rme-stat-value--loading{opacity:.35;}",
+      ".rme-stat-meta{margin-top:.28rem;font-size:.72rem;font-weight:400;",
+      "color:#0c0c0e;min-height:1em;line-height:1.35;}",
+      "html[data-theme=dark] .rme-stat-card .rme-stat-meta{",
+      "color:#e2e8f0;font-weight:400;}",
+      ".rme-stat-pulse{position:absolute;top:1.12rem;right:1.12rem;width:.62rem;height:.62rem;",
+      "border-radius:999px;background:var(--rme-accent,#10b981);",
+      "box-shadow:0 0 0 0 var(--rme-accent,#10b981);",
+      "animation:rmeStatPulse 2s cubic-bezier(.4,0,.6,1) infinite;}",
+      "@keyframes rmeStatPulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--rme-accent,#10b981) 70%,transparent);}",
+      "70%{box-shadow:0 0 0 .55rem color-mix(in srgb,var(--rme-accent,#10b981) 0%,transparent);}",
+      "100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--rme-accent,#10b981) 0%,transparent);}}",
+      ".rme-stat-pulse--idle{animation:none;",
+      "background:color-mix(in srgb,var(--text) 20%,transparent);box-shadow:none;}",
+      // Hide the redundant Dashboard <details> summary bar (chevron toggle);
+      // panel body is force-opened below so its inner content still renders.
+      "#notionDetails > summary.notion-panel-summary{display:none !important;}",
+      "#notionDetails.notion-panel{border:0;background:transparent;overflow:visible;}",
+    ].join("");
+    document.head.appendChild(styleEl);
+
+    const root = document.createElement("section");
+    root.id = "rmeAnalyticsRoot";
+    root.setAttribute("aria-label", "Admin analytics");
+
+    const grid = document.createElement("div");
+    grid.className = "rme-analytics-grid";
+    /** @type {Record<string, { value: HTMLElement; meta: HTMLElement; card: HTMLElement }>} */
+    const cardEls = {};
+    for (const c of CARDS) {
+      const card = document.createElement("article");
+      card.className = "rme-stat-card rme-stat-card--" + c.accent;
+      card.dataset.card = c.id;
+      const ic = document.createElement("div");
+      ic.className = "rme-stat-icon";
+      ic.textContent = c.icon;
+      ic.setAttribute("aria-hidden", "true");
+      const body = document.createElement("div");
+      body.className = "rme-stat-body";
+      const lbl = document.createElement("div");
+      lbl.className = "rme-stat-label";
+      lbl.textContent = c.label;
+      const val = document.createElement("div");
+      val.className = "rme-stat-value rme-stat-value--loading";
+      val.textContent = "—";
+      const meta = document.createElement("div");
+      meta.className = "rme-stat-meta";
+      body.appendChild(lbl);
+      body.appendChild(val);
+      body.appendChild(meta);
+      card.appendChild(ic);
+      card.appendChild(body);
+      if (c.live) {
+        const pulse = document.createElement("span");
+        pulse.className = "rme-stat-pulse rme-stat-pulse--idle";
+        pulse.setAttribute("aria-hidden", "true");
+        card.appendChild(pulse);
+      }
+      grid.appendChild(card);
+      cardEls[c.id] = { value: val, meta: meta, card: card };
+    }
+    root.appendChild(grid);
+
+    const SCHOOL_DASHBOARD_ORDER = [
+      { school: "Talking Global", accent: "blue", labelIcon: "anchor" },
+      { school: "Magic English", accent: "violet" },
+      { school: "Speak English", accent: "green" },
+      { school: "Nice Kid", accent: "pink" },
+      { school: "Sky Line", accent: "orange" },
+    ];
+    const schoolGridEl = document.createElement("div");
+    schoolGridEl.className = "rme-analytics-grid rme-school-stats-grid";
+    schoolGridEl.setAttribute("aria-label", "Teachers per school");
+    /** @type {Record<string, { value: HTMLElement; card: HTMLElement }>} */
+    const schoolCardEls = {};
+    let tpsPageIdForSchoolCards = "";
+    for (const spec of SCHOOL_DASHBOARD_ORDER) {
+      const card = document.createElement("article");
+      card.className = "rme-stat-card rme-stat-card--" + spec.accent;
+      card.dataset.school = spec.school;
+      card.setAttribute("role", "button");
+      card.tabIndex = 0;
+      card.setAttribute(
+        "aria-label",
+        spec.school + " — open Teachers grouped by school",
+      );
+      const body = document.createElement("div");
+      body.className = "rme-stat-body";
+      const lbl = document.createElement("div");
+      if (spec.labelIcon === "anchor") {
+        lbl.className = "rme-stat-label rme-stat-label--with-anchor";
+        const name = document.createElement("span");
+        name.className = "rme-stat-label-text";
+        name.textContent = spec.school;
+        const anchor = document.createElement("span");
+        anchor.className = "rme-stat-label-anchor";
+        anchor.setAttribute("aria-hidden", "true");
+        anchor.textContent = "\u2693";
+        lbl.appendChild(name);
+        lbl.appendChild(anchor);
+      } else {
+        lbl.className = "rme-stat-label";
+        lbl.textContent = spec.school;
+      }
+      const val = document.createElement("div");
+      val.className = "rme-stat-value rme-stat-value--loading";
+      val.textContent = "—";
+      body.appendChild(lbl);
+      body.appendChild(val);
+      card.appendChild(body);
+      const openTpsSchoolPage = () => {
+        const pid = tpsPageIdForSchoolCards;
+        if (!pid) return;
+        try {
+          if (typeof activateNotionWorkspacePage === "function") {
+            activateNotionWorkspacePage(pid);
+          }
+        } catch (e) {
+          console.warn("dashboard school card open TPS:", e);
+        }
+      };
+      card.addEventListener("click", openTpsSchoolPage);
+      card.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") {
+          ev.preventDefault();
+          openTpsSchoolPage();
+        }
+      });
+      schoolGridEl.appendChild(card);
+      schoolCardEls[spec.school] = { value: val, card: card };
+    }
+    root.appendChild(schoolGridEl);
+
+    homeEl.insertBefore(root, homeEl.firstChild);
+
+    // The Dashboard <details> panel's <summary> is hidden via CSS. Force it
+    // open and re-open on any toggle so the panel body — which still hosts
+    // canvas content / draft DBs — stays visible instead of collapsing behind
+    // a hidden summary bar.
+    try {
+      if (notionDetailsEl instanceof HTMLDetailsElement) {
+        if (!notionDetailsEl.open) notionDetailsEl.open = true;
+        notionDetailsEl.addEventListener("toggle", () => {
+          if (!notionDetailsEl.open) notionDetailsEl.open = true;
+        });
+      }
+    } catch (_e) { /* ignore */ }
+
+    function setStat(id, value, meta) {
+      const e = cardEls[id];
+      if (!e) return;
+      e.value.textContent = String(value);
+      e.value.classList.remove("rme-stat-value--loading");
+      if (meta != null) e.meta.textContent = meta;
+    }
+    function setPulse(active) {
+      const pulse = cardEls.onlineNow?.card.querySelector(".rme-stat-pulse");
+      if (!(pulse instanceof HTMLElement)) return;
+      pulse.classList.toggle("rme-stat-pulse--idle", !active);
+    }
+
+    function refreshSchoolTeacherCards() {
+      const fn = window.rmeGetSchoolTeacherCountsForDashboard;
+      if (typeof fn !== "function") return;
+      let snap;
+      try {
+        snap = fn();
+      } catch (e) {
+        console.warn("dashboard school teacher counts:", e);
+        return;
+      }
+      if (!snap || typeof snap !== "object") return;
+      tpsPageIdForSchoolCards = snap.ok && snap.pageId ? String(snap.pageId) : "";
+      const rows = Array.isArray(snap.schools) ? snap.schools : [];
+      for (const row of rows) {
+        const school = row && typeof row.school === "string" ? row.school : "";
+        const el = schoolCardEls[school];
+        if (!el) continue;
+        const n = Number(row.count);
+        const count = Number.isFinite(n) && n >= 0 ? n : 0;
+        el.value.textContent = String(count);
+        el.value.classList.remove("rme-stat-value--loading");
+      }
+      for (const spec of SCHOOL_DASHBOARD_ORDER) {
+        const el = schoolCardEls[spec.school];
+        if (!el || !el.value.classList.contains("rme-stat-value--loading")) continue;
+        el.value.textContent = "0";
+        el.value.classList.remove("rme-stat-value--loading");
+      }
+    }
+
+    async function fetchAdminTeachers() {
+      const ta = window.teacherAuth;
+      if (!ta) return null;
+      const candidates = [
+        "listTeachersForAdmin",
+        "listAdminTeachers",
+        "fetchAdminTeachers",
+        "loadAdminTeachers",
+        "getAdminTeachers",
+        "listAllTeachers",
+        "fetchTeachers",
+        "listTeachers",
+      ];
+      for (const name of candidates) {
+        if (typeof ta[name] === "function") {
+          try {
+            const r = await ta[name]();
+            if (r && Array.isArray(r.teachers)) return r.teachers;
+            if (r && Array.isArray(r.rows)) return r.rows;
+            if (r && Array.isArray(r.data)) return r.data;
+            if (Array.isArray(r)) return r;
+          } catch (e) {
+            console.warn("rme analytics " + name + ":", e);
+          }
+        }
+      }
+      return null;
+    }
+
+    function tsOf(v) {
+      if (!v) return 0;
+      const n = Number(new Date(v).getTime());
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    }
+    function teacherIsActive(t) {
+      if (t && typeof t === "object") {
+        if (t.disabled === true) return false;
+        if (t.is_active === false) return false;
+        if (t.archived === true) return false;
+      }
+      return true;
+    }
+
+    let refreshing = false;
+    async function refresh() {
+      if (refreshing) return;
+      refreshing = true;
+
+      // Static: 5 active schools per Blueprint §1.
+      setStat("activeSchools", "5", "TG · ME · SE · NK · SL");
+
+      // Pay slips on file is owned by rmeMirrorTpsCountInDashboardCards /
+      // rmeForceBottomDashboardCardsFromVaultTeacherSource. Do NOT set it
+      // from rawTable here — rawTable can be the old Notion pay-slip DB row
+      // count (e.g. 6), which causes the visible 33 → 6 flicker.
+      const teachers = await fetchAdminTeachers();
+      if (Array.isArray(teachers)) {
+        const active = teachers.filter(teacherIsActive);
+        const now = Date.now();
+        let online = 0, newWeek = 0, signins24 = 0;
+        for (const t of active) {
+          const ls = tsOf(
+            t?.last_seen_at ?? t?.lastSeenAt ?? t?.last_sign_in_at ?? t?.lastSignInAt,
+          );
+          if (ls && now - ls < ONLINE_WINDOW_MS) online += 1;
+          if (ls && now - ls < ONE_DAY_MS) signins24 += 1;
+          const cr = tsOf(
+            t?.created_at ?? t?.createdAt ?? t?.invited_at ?? t?.invitedAt,
+          );
+          if (cr && now - cr < ONE_WEEK_MS) newWeek += 1;
+        }
+        const disabledCount = teachers.length - active.length;
+        // Total teachers is written by rmeStableDashboardCountOwner only.
+        // Keep this refresh focused on live/online metrics so two functions
+        // do not fight over the same card text.
+        setStat(
+          "onlineNow",
+          String(online),
+          online === 0 ? "no one signed in right now"
+            : online === 1 ? "1 teacher live now"
+            : online + " teachers live now",
+        );
+        setStat("newThisWeek", String(newWeek),
+          newWeek === 1 ? "joined in last 7 days" : "joined in last 7 days");
+        setStat("recentSignins", String(signins24), "signed in within 24h");
+        setPulse(online > 0);
+      } else {
+        // Do not blank Total teachers here. The stable owner keeps the last
+        // valid Supabase count on screen until the next good refresh.
+        setStat("onlineNow", "—", "");
+        setStat("newThisWeek", "—", "");
+        setStat("recentSignins", "—", "");
+        setPulse(false);
+      }
+
+      refreshSchoolTeacherCards();
+      refreshing = false;
+    }
+
+    function syncVisibility() {
+      let aid = "";
+      try {
+        if (typeof notionWorkspaceActiveId === "string") aid = notionWorkspaceActiveId;
+      } catch (_e) { /* not yet defined */ }
+      const inDashboard = aid === "__payslips";
+      const authGate = document.getElementById("authGate");
+      const onAuthGate = authGate instanceof HTMLElement && !authGate.hidden;
+      let teacherMode = false;
+      try {
+        if (typeof isTeacherNavMode !== "undefined") teacherMode = Boolean(isTeacherNavMode);
+      } catch (_e) { /* ignore */ }
+      root.hidden = !inDashboard || onAuthGate || teacherMode;
+    }
+
+    syncVisibility();
+    refreshSchoolTeacherCards();
+    void refresh();
+    window.rmeIdlePower?.runOnAdaptiveInterval?.(
+      () => {
+        void refresh();
+      },
+      {
+        activeMs: REFRESH_MS,
+        idleMs: REFRESH_MS * 2,
+        hiddenMs: REFRESH_MS * 4,
+        shouldRun: () => {
+          const root = document.getElementById("rmeAnalyticsRoot");
+          return root instanceof HTMLElement && !root.hidden;
+        },
+      },
+    ) ??
+      window.setInterval(() => {
+        void refresh();
+      }, REFRESH_MS);
+    window.rmeIdlePower?.runOnAdaptiveInterval?.(
+      refreshSchoolTeacherCards,
+      {
+        activeMs: 5000,
+        idleMs: 15000,
+        hiddenMs: 60000,
+        shouldRun: () => {
+          const root = document.getElementById("rmeAnalyticsRoot");
+          return root instanceof HTMLElement && !root.hidden;
+        },
+      },
+    ) ??
+      window.setInterval(refreshSchoolTeacherCards, 1200);
+    window.rmeIdlePower?.runOnAdaptiveInterval?.(
+      syncVisibility,
+      {
+        activeMs: 3000,
+        idleMs: 12000,
+        hiddenMs: 60000,
+      },
+    ) ?? window.setInterval(syncVisibility, 800);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init, { once: true });
+  } else {
+    // Defer one tick so module-scoped lets are initialised.
+    window.setTimeout(init, 0);
+  }
+})();
+
+// Removed old Teacher Pay Slips dashboard mirror.
+// It used a rendered table-row fallback that could write stale counts like 6.
+// The only remaining owner is rmeForceDashboardAuthoritativeCounts.
+
+// Removed older bottom dashboard card force-sync.
+// It duplicated the final dashboard owner and contributed to flicker.
+
+// === RME: final dashboard source lock ======================================
+// Last visible writer for the dashboard cards.
+// Fixes the old 28/6 bug by writing the actual card text from the requested
+// sources after any older dashboard/chart code has rendered.
+// - Total Teachers = Supabase teacher accounts from listTeachersForAdmin() only.
+// - Teacher Pay Slips = child pages under the Teacher Pay Slips page in Vault/sidebar.
+// - No generic Teachers-page fallback. No rendered pay-slip table fallback.
+// === RME: clean rebuilt Teacher Pay Slips page ==============================
+// The old Teacher Pay Slips page had several patch layers fighting each other:
+// old ledger wording, duplicate headings/dividers, and anti-flicker observers.
+// This rebuild owns the page with one stable DOM tree. It does not use the old
+// rendered pay-slip table fallback, so stale counts like 6 cannot leak in here.
+(function rmeRecreateTeacherPaySlipsPageCleanly() {
+  const ROOT_ID = "rmeCleanTeacherPaySlipsPage";
+  const STYLE_ID = "rmeCleanTeacherPaySlipsPageStyles";
+
+  function norm(v) {
+    return String(v ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  function esc(v) {
+    return String(v ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function pageHost() {
+    // Disabled: mounting here replaced #pageTeacherPaySlips with innerHTML and removed
+    // the real teacher pay-slip table (#teacherPaySlipsSection). Teacher portal now
+    // uses the same data-sheet as the admin payslip grid.
+    return null;
+  }
+
+  function pageVisible(host) {
+    return host instanceof HTMLElement && !host.hidden;
+  }
+
+  function exactTeacherPaySlipsRows() {
+    const rows = Array.from(
+      document.querySelectorAll(".notion-editor-page-row"),
+    ).filter((row) => {
+      const btn = row.querySelector(".notion-editor-page-btn");
+      const label = norm(btn?.textContent || "");
+      return label === "teacher pay slips" || label === "teacher payslips";
+    });
+
+    // Prefer the row that has real child pages. This avoids archive pages and
+    // avoids the generic Teachers page.
+    for (const row of rows) {
+      const branch = row.closest(".notion-editor-page-branch");
+      const childrenWrap = branch?.querySelector(".notion-editor-page-children-wrap");
+      const childRows = childrenWrap
+        ? Array.from(childrenWrap.querySelectorAll(".notion-editor-page-row"))
+        : [];
+      if (childRows.length > 0) {
+        return childRows;
+      }
+    }
+    return [];
+  }
+
+  function teacherPageItems() {
+    const seen = new Set();
+    return exactTeacherPaySlipsRows()
+      .map((row) => {
+        const btn = row.querySelector(".notion-editor-page-btn");
+        const title = String(btn?.textContent || "").replace(/\s+/g, " ").trim();
+        const id =
+          row.getAttribute("data-workspace-id") ||
+          row.dataset?.workspaceId ||
+          row.closest("[data-workspace-id]")?.getAttribute("data-workspace-id") ||
+          "";
+        return { id, title };
+      })
+      .filter((item) => {
+        if (!item.title) return false;
+        const key = (item.id || item.title).toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return norm(item.title) !== "trash";
+      });
+  }
+
+  function injectStyles() {
+    if (document.getElementById(STYLE_ID)) return;
+    const style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = [
+      "#pageTeacherPaySlips.rme-clean-tps-mounted{",
+      "  flex:1;min-height:0;display:flex!important;flex-direction:column;",
+      "  padding:0!important;background:var(--bg)!important;border:0!important;",
+      "}",
+      "#pageTeacherPaySlips.rme-clean-tps-mounted > :not(#" + ROOT_ID + "){",
+      "  display:none!important;",
+      "}",
+      "#" + ROOT_ID + "{",
+      "  flex:1;min-height:0;display:flex;flex-direction:column;",
+      "  padding:clamp(.75rem,2vw,1.15rem);box-sizing:border-box;",
+      "  background:",
+      "    radial-gradient(circle at 8% 0%,color-mix(in srgb,#ec4899 14%,transparent) 0,transparent 22rem),",
+      "    radial-gradient(circle at 92% 8%,color-mix(in srgb,#3b82f6 12%,transparent) 0,transparent 24rem),",
+      "    var(--bg);",
+      "  color:var(--text);overflow:auto;",
+      "}",
+      ".rme-clean-tps-shell{width:min(1180px,100%);margin:0 auto;display:flex;flex-direction:column;gap:1rem;}",
+      ".rme-clean-tps-hero{",
+      "  position:relative;overflow:hidden;border:1px solid color-mix(in srgb,var(--text) 9%,transparent);",
+      "  border-radius:24px;padding:1.15rem 1.2rem;",
+      "  background:linear-gradient(135deg,color-mix(in srgb,var(--surface) 94%,transparent),color-mix(in srgb,var(--surface) 72%,#ec4899 8%));",
+      "  box-shadow:0 18px 55px -32px rgba(0,0,0,.42);",
+      "}",
+      ".rme-clean-tps-eyebrow{margin:0 0 .4rem;font-size:.72rem;font-weight:850;letter-spacing:.12em;text-transform:uppercase;color:#ec4899;}",
+      ".rme-clean-tps-title{margin:0;font-size:clamp(1.7rem,4vw,3rem);line-height:1;letter-spacing:-.06em;font-weight:850;color:var(--text);}",
+      ".rme-clean-tps-subtitle{max-width:62rem;margin:.7rem 0 0;color:var(--text-muted);line-height:1.6;font-size:.95rem;}",
+      ".rme-clean-tps-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:.85rem;}",
+      ".rme-clean-tps-stat,.rme-clean-tps-list{",
+      "  border:1px solid color-mix(in srgb,var(--text) 9%,transparent);",
+      "  border-radius:20px;background:color-mix(in srgb,var(--surface) 88%,transparent);",
+      "  box-shadow:0 14px 42px -30px rgba(0,0,0,.36);",
+      "}",
+      ".rme-clean-tps-stat{padding:1rem;display:flex;align-items:flex-start;gap:.85rem;}",
+      ".rme-clean-tps-icon{width:2.55rem;height:2.55rem;border-radius:15px;display:flex;align-items:center;justify-content:center;font-size:1.18rem;background:color-mix(in srgb,var(--accent,#3b82f6) 15%,transparent);color:var(--accent,#3b82f6);}",
+      ".rme-clean-tps-stat:nth-child(1){--accent:#3b82f6}.rme-clean-tps-stat:nth-child(2){--accent:#ec4899}.rme-clean-tps-stat:nth-child(3){--accent:#10b981}",
+      ".rme-clean-tps-label{margin:0 0 .25rem;font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);}",
+      ".rme-clean-tps-value{font-size:2rem;line-height:1;font-weight:850;letter-spacing:-.05em;color:var(--text);font-variant-numeric:tabular-nums;}",
+      ".rme-clean-tps-meta{margin:.35rem 0 0;font-size:.78rem;color:var(--text-muted);line-height:1.35;}",
+      ".rme-clean-tps-list{overflow:hidden;}",
+      ".rme-clean-tps-list-head{display:flex;align-items:flex-end;justify-content:space-between;gap:1rem;padding:1rem 1.1rem;border-bottom:1px solid color-mix(in srgb,var(--text) 8%,transparent);}",
+      ".rme-clean-tps-list-title{margin:0;font-size:1.05rem;font-weight:800;letter-spacing:-.02em;color:var(--text);}",
+      ".rme-clean-tps-list-note{margin:.2rem 0 0;color:var(--text-muted);font-size:.84rem;}",
+      ".rme-clean-tps-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:.65rem;padding:1rem;}",
+      ".rme-clean-tps-teacher{display:flex;align-items:center;gap:.7rem;text-align:left;padding:.75rem;border:1px solid color-mix(in srgb,var(--text) 8%,transparent);border-radius:15px;background:color-mix(in srgb,var(--surface) 92%,transparent);color:var(--text);cursor:pointer;transition:transform .16s ease,background .16s ease,border-color .16s ease;}",
+      ".rme-clean-tps-teacher:hover{transform:translateY(-1px);background:color-mix(in srgb,var(--text) 4%,var(--surface));border-color:color-mix(in srgb,#3b82f6 34%,var(--border));}",
+      ".rme-clean-tps-avatar{width:2.05rem;height:2.05rem;border-radius:12px;display:flex;align-items:center;justify-content:center;font-weight:850;background:linear-gradient(135deg,#3b82f6,#ec4899);color:white;}",
+      ".rme-clean-tps-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:750;}",
+      ".rme-clean-tps-empty{padding:1rem;color:var(--text-muted);line-height:1.5;}",
+      "@media(max-width:720px){#" + ROOT_ID + "{padding:.65rem}.rme-clean-tps-hero{border-radius:18px}.rme-clean-tps-grid{grid-template-columns:1fr}}",
+    ].join("\n");
+    document.head.appendChild(style);
+  }
+
+  function render() {
+    injectStyles();
+    const host = pageHost();
+    if (!(host instanceof HTMLElement) || !pageVisible(host)) return;
+
+    const items = teacherPageItems();
+    const signature = items.map((item) => item.id + ":" + item.title).join("|");
+    const existing = document.getElementById(ROOT_ID);
+    if (existing?.dataset.signature === signature) {
+      host.classList.add("rme-clean-tps-mounted");
+      return;
+    }
+
+    host.classList.add("rme-clean-tps-mounted");
+    const listHtml = items.length
+      ? items.map((item, idx) => {
+          const initial = esc(item.title.slice(0, 1).toUpperCase() || "T");
+          return (
+            "<button type=\"button\" class=\"rme-clean-tps-teacher\" data-workspace-id=\"" + esc(item.id) + "\">" +
+              "<span class=\"rme-clean-tps-avatar\">" + initial + "</span>" +
+              "<span class=\"rme-clean-tps-name\">" + esc(String(idx + 1).padStart(2, "0") + ". " + item.title) + "</span>" +
+            "</button>"
+          );
+        }).join("")
+      : "<div class=\"rme-clean-tps-empty\">No teacher pages found yet. Add teacher pages under the Teacher Pay Slips page in the Vault/sidebar.</div>";
+
+    host.innerHTML =
+      "<section id=\"" + ROOT_ID + "\" data-signature=\"" + esc(signature) + "\">" +
+        "<div class=\"rme-clean-tps-shell\">" +
+          "<header class=\"rme-clean-tps-hero\">" +
+            "<p class=\"rme-clean-tps-eyebrow\">💸 Vault source</p>" +
+            "<h1 class=\"rme-clean-tps-title\">Teacher Pay Slips</h1>" +
+            "<p class=\"rme-clean-tps-subtitle\">A clean, stable page rebuilt from the Teacher Pay Slips child pages in the Vault/sidebar. No old pay-slip ledger, no duplicate bottom title, and no flickering card layer.</p>" +
+          "</header>" +
+          "<section class=\"rme-clean-tps-stats\" aria-label=\"Teacher pay slip summary\">" +
+            "<article class=\"rme-clean-tps-stat\"><div class=\"rme-clean-tps-icon\">👥</div><div><p class=\"rme-clean-tps-label\">Teacher pages</p><div class=\"rme-clean-tps-value\">" + items.length + "</div><p class=\"rme-clean-tps-meta\">Child pages under Teacher Pay Slips</p></div></article>" +
+            "<article class=\"rme-clean-tps-stat\"><div class=\"rme-clean-tps-icon\">📄</div><div><p class=\"rme-clean-tps-label\">Pay-slip files</p><div class=\"rme-clean-tps-value\">" + items.length + "</div><p class=\"rme-clean-tps-meta\">One teacher page equals one pay-slip file</p></div></article>" +
+            "<article class=\"rme-clean-tps-stat\"><div class=\"rme-clean-tps-icon\">✅</div><div><p class=\"rme-clean-tps-label\">Page status</p><div class=\"rme-clean-tps-value\">Stable</div><p class=\"rme-clean-tps-meta\">Old ledger page is bypassed</p></div></article>" +
+          "</section>" +
+          "<section class=\"rme-clean-tps-list\">" +
+            "<div class=\"rme-clean-tps-list-head\"><div><h2 class=\"rme-clean-tps-list-title\">Teachers</h2><p class=\"rme-clean-tps-list-note\">Numbered from 1. Click a teacher to open their page.</p></div></div>" +
+            "<div class=\"rme-clean-tps-grid\">" + listHtml + "</div>" +
+          "</section>" +
+        "</div>" +
+      "</section>";
+
+    host.querySelectorAll(".rme-clean-tps-teacher[data-workspace-id]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.getAttribute("data-workspace-id");
+        if (!id) return;
+        try {
+          if (typeof activateNotionWorkspacePage === "function") {
+            activateNotionWorkspacePage(id);
+          }
+        } catch (e) {
+          console.warn("open teacher pay slip page:", e);
+        }
+      });
+    });
+  }
+
+  function scheduleRender() {
+    window.requestAnimationFrame(() => {
+      try {
+        render();
+      } catch (e) {
+        console.warn("clean Teacher Pay Slips page:", e);
+      }
+    });
+  }
+
+  function start() {
+    const hub = document.getElementById("pageTeachersPaySlipsHub");
+    if (hub instanceof HTMLElement) {
+      hub.classList.remove("rme-clean-tps-mounted");
+    }
+    scheduleRender();
+    document.getElementById("notionWorkspacePageList")?.addEventListener("click", scheduleRender);
+    const host = pageHost();
+    if (host instanceof HTMLElement) {
+      new MutationObserver(scheduleRender).observe(host, {
+        attributes: true,
+        attributeFilter: ["hidden", "class"],
+        childList: true,
+      });
+    }
+    const list = document.getElementById("notionWorkspacePageList");
+    if (list instanceof HTMLElement) {
+      new MutationObserver(scheduleRender).observe(list, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+      });
+    }
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start, { once: true });
+  } else {
+    window.setTimeout(start, 0);
+  }
+})();
+
+// === RME: Teacher Pay Slips sidebar children ===============================
+// Keeps the Teacher Pay Slips parent as a clean parent page in the sidebar.
+// The teacher rows become real child pages under it, and the expand/collapse
+// toggle is hidden so the teacher pages are always visible.
+(function rmeTeacherPaySlipsAsChildPages() {
+  const STYLE_ID = "rmeTeacherPaySlipsChildPagesStyles";
+
+  function norm(v) {
+    return String(v ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  function slug(v) {
+    return norm(v)
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 70) || "teacher";
+  }
+
+  function isTeacherPaySlipsTitle(title) {
+    const n = norm(title);
+    return n === "teacher pay slips" || n === "teacher payslips";
+  }
+
+  function findParentPage() {
+    try {
+      if (!Array.isArray(notionWorkspacePagesState)) return null;
+      return notionWorkspacePagesState.find((p) => isTeacherPaySlipsTitle(p?.title)) || null;
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  function cleanTeacherName(value) {
+    const name = String(value ?? "")
+      .replace(/^\s*\d+\s*[.)-]\s*/, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!name) return "";
+    const n = norm(name);
+    if (
+      n === "teacher pay slips" ||
+      n === "teacher payslips" ||
+      n === "teachers" ||
+      n === "trash" ||
+      n.includes("notion row") ||
+      n.includes("ledger")
+    ) {
+      return "";
+    }
+    return name;
+  }
+
+  function namesFromExistingChildren(parentId) {
+    try {
+      if (!Array.isArray(notionWorkspacePagesState)) return [];
+      return notionWorkspacePagesState
+        .filter((p) => p && p.parentId === parentId)
+        .map((p) => cleanTeacherName(p.title))
+        .filter(Boolean);
+    } catch (_e) {
+      return [];
+    }
+  }
+
+  function namesFromMappingRows() {
+    try {
+      if (!Array.isArray(payslipNotionLinkRows)) return [];
+      return payslipNotionLinkRows
+        .map((row) => cleanTeacherName(row?.personName || row?.name || row?.teacherName || row?.label))
+        .filter(Boolean);
+    } catch (_e) {
+      return [];
+    }
+  }
+
+  function namesFromCleanPageCards() {
+    return Array.from(document.querySelectorAll(".rme-clean-tps-name"))
+      .map((el) => cleanTeacherName(el.textContent || ""))
+      .filter(Boolean);
+  }
+
+  function uniqueNames(names) {
+    const seen = new Set();
+    const out = [];
+    for (const name of names) {
+      const clean = cleanTeacherName(name);
+      const key = norm(clean);
+      if (!clean || seen.has(key)) continue;
+      seen.add(key);
+      out.push(clean);
+    }
+    return out;
+  }
+
+  function saveWorkspacePages() {
+    try {
+      if (typeof saveNotionWorkspacePages === "function") {
+        saveNotionWorkspacePages();
+      } else if (typeof payslipAppStateSetItem === "function") {
+        payslipAppStateSetItem(
+          WORKSPACE_PAGES_KEY,
+          JSON.stringify(notionWorkspacePagesState),
+        );
+      }
+    } catch (e) {
+      console.warn("save Teacher Pay Slips child pages:", e);
+    }
+  }
+
+  function ensureChildPages() {
+    const parent = findParentPage();
+    if (!parent || !Array.isArray(notionWorkspacePagesState)) return false;
+
+    const names = uniqueNames([
+      ...namesFromExistingChildren(parent.id),
+      ...namesFromMappingRows(),
+      ...namesFromCleanPageCards(),
+    ]);
+
+    if (!names.length) return false;
+
+    let changed = false;
+    const byTitle = new Map(
+      notionWorkspacePagesState
+        .filter((p) => p && p.title)
+        .map((p) => [norm(p.title), p]),
+    );
+
+    for (const name of names) {
+      const key = norm(name);
+      const existing = byTitle.get(key);
+      if (existing) {
+        if (existing.parentId !== parent.id) {
+          existing.parentId = parent.id;
+          changed = true;
+        }
+        continue;
+      }
+
+      const page = {
+        id: "tps-teacher-" + slug(name),
+        title: name,
+        kind: "blank",
+        parentId: parent.id,
+        bodyHtml: "",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      notionWorkspacePagesState.push(page);
+      byTitle.set(key, page);
+      changed = true;
+    }
+
+    if (changed) {
+      saveWorkspacePages();
+      try {
+        if (typeof syncWorkspaceSubpageEmbedsForAllParents === "function") {
+          syncWorkspaceSubpageEmbedsForAllParents();
+        }
+        if (typeof renderNotionWorkspacePageList === "function") {
+          renderNotionWorkspacePageList();
+        }
+      } catch (e) {
+        console.warn("render Teacher Pay Slips child pages:", e);
+      }
+    }
+
+    return changed;
+  }
+
+  function injectStyle() {
+    if (document.getElementById(STYLE_ID)) return;
+    const style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = [
+      ".rme-tps-parent-row .notion-editor-page-children-toggle{display:none!important;}",
+      ".rme-tps-parent-row .notion-editor-page-leading-spacer{display:none!important;}",
+      ".rme-tps-parent-branch > .notion-editor-page-children-wrap{display:flex!important;}",
+      ".rme-tps-parent-branch > .notion-editor-page-children-wrap[hidden]{display:flex!important;}",
+    ].join("\n");
+    document.head.appendChild(style);
+  }
+
+  function forceSidebarOpenAndHideToggle() {
+    injectStyle();
+    const rows = Array.from(document.querySelectorAll(".notion-editor-page-row"));
+    for (const row of rows) {
+      const btn = row.querySelector(".notion-editor-page-btn");
+      if (!isTeacherPaySlipsTitle(btn?.textContent || "")) continue;
+      row.classList.add("rme-tps-parent-row");
+      const branch = row.closest(".notion-editor-page-branch");
+      if (branch instanceof HTMLElement) {
+        branch.classList.add("rme-tps-parent-branch");
+        const wrap = branch.querySelector(":scope > .notion-editor-page-children-wrap");
+        if (wrap instanceof HTMLElement) {
+          wrap.hidden = false;
+          wrap.removeAttribute("hidden");
+        }
+      }
+      const toggle = row.querySelector(".notion-editor-page-children-toggle");
+      if (toggle instanceof HTMLElement) {
+        toggle.hidden = true;
+        toggle.setAttribute("aria-hidden", "true");
+        toggle.tabIndex = -1;
+      }
+    }
+  }
+
+  function run() {
+    ensureChildPages();
+    forceSidebarOpenAndHideToggle();
+  }
+
+  function start() {
+    run();
+    document.getElementById("notionWorkspacePageList")?.addEventListener("click", () => {
+      window.setTimeout(run, 0);
+    });
+    const list = document.getElementById("notionWorkspacePageList");
+    if (list instanceof HTMLElement) {
+      new MutationObserver(run).observe(list, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+      });
+    }
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start, { once: true });
+  } else {
+    window.setTimeout(start, 0);
+  }
+})();
+
+(function rmeFinalDashboardSourceLock() {
+  // Disabled: this fast 650ms DOM lock caused dashboard/Teacher Pay Slips
+  // card flicker and could resurface stale counts like 6. The calm
+  // rmeStableDashboardCountOwner owns these counts now.
+  return;
+  const TICK_MS = 650;
+  let lastSupabaseCount = null;
+  let supabaseInFlight = false;
+  let lastSupabaseFetchAt = 0;
+
+  function norm(v) {
+    return String(v ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  function isActiveTeacher(t) {
+    if (t && typeof t === "object") {
+      if (t.disabled === true) return false;
+      if (t.is_active === false) return false;
+      if (t.archived === true) return false;
+    }
+    return true;
+  }
+
+  async function refreshSupabaseCount() {
+    if (supabaseInFlight) return;
+    if (Date.now() - lastSupabaseFetchAt < 4000) return;
+    if (typeof window.teacherAuth?.listTeachersForAdmin !== "function") return;
+    supabaseInFlight = true;
+    lastSupabaseFetchAt = Date.now();
+    try {
+      const r = await window.teacherAuth.listTeachersForAdmin();
+      const teachers = Array.isArray(r?.teachers)
+        ? r.teachers
+        : Array.isArray(r?.rows)
+          ? r.rows
+          : Array.isArray(r?.data)
+            ? r.data
+            : Array.isArray(r)
+              ? r
+              : null;
+      if (Array.isArray(teachers)) {
+        lastSupabaseCount = teachers.filter(isActiveTeacher).length;
+      }
+    } catch (e) {
+      console.warn("RME final dashboard Supabase count:", e);
+    } finally {
+      supabaseInFlight = false;
+    }
+  }
+
+  function childBlankPagesOf(parentId) {
+    try {
+      if (!Array.isArray(notionWorkspacePagesState)) return [];
+      return notionWorkspacePagesState.filter((p) => (
+        p && p.kind === "blank" && p.parentId === parentId
+      ));
+    } catch (_e) {
+      return [];
+    }
+  }
+
+  function teacherPaySlipPageCount() {
+    try {
+      if (!Array.isArray(notionWorkspacePagesState)) return null;
+      const exact = new Set([
+        "teacher pay slips",
+        "teacher payslips",
+        "teachers pay slips",
+        "teachers payslips",
+      ]);
+
+      let parent = null;
+      for (const p of notionWorkspacePagesState) {
+        if (!p || p.kind !== "blank") continue;
+        if (!exact.has(norm(p.title))) continue;
+        parent = p;
+        break;
+      }
+
+      if (!parent) {
+        // Soft fallback still requires "pay slip" or "payslip" in the title.
+        // Never use a plain "Teachers" page, because that is the 28-count source.
+        let best = null;
+        let bestCount = -1;
+        for (const p of notionWorkspacePagesState) {
+          if (!p || p.kind !== "blank") continue;
+          const title = norm(p.title);
+          if (!/(pay\s*slip|payslip)/.test(title)) continue;
+          const n = childBlankPagesOf(p.id).length;
+          if (n > bestCount) {
+            best = p;
+            bestCount = n;
+          }
+        }
+        parent = best;
+      }
+
+      if (!parent) return null;
+      return childBlankPagesOf(parent.id).length;
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  function setTopCard(cardId, value, meta) {
+    const valueEl = document.querySelector(
+      '.rme-stat-card[data-card="' + cardId + '"] .rme-stat-value',
+    );
+    const metaEl = document.querySelector(
+      '.rme-stat-card[data-card="' + cardId + '"] .rme-stat-meta',
+    );
+    if (valueEl instanceof HTMLElement) {
+      valueEl.textContent = String(value);
+      valueEl.classList.remove("rme-stat-value--loading");
+    }
+    if (metaEl instanceof HTMLElement) {
+      metaEl.textContent = String(meta ?? "");
+    }
+  }
+
+  function cardText(card) {
+    return norm(card?.textContent ?? "");
+  }
+
+  function setBottomTeacherPayslipCard(value) {
+    const cards = Array.from(document.querySelectorAll(
+      ".rme-dashboard-card, .rme-analytics-action-card, .teacher-dashboard-card, article, .card",
+    ));
+    for (const card of cards) {
+      if (!(card instanceof HTMLElement)) continue;
+      const text = cardText(card);
+      if (!/(teacher\s+pay\s+slips|teacher\s+payslips)/.test(text)) continue;
+      if (/total\s+teachers/.test(text)) continue;
+
+      const valueEl =
+        card.querySelector(".rme-dashboard-card-value, .rme-action-card-value, .teacher-dashboard-card-value, .rme-stat-value, strong, h3, h2") ||
+        card.querySelector("[data-value]");
+
+      if (valueEl instanceof HTMLElement) {
+        valueEl.textContent = String(value);
+      }
+
+      const metaEl =
+        card.querySelector(".rme-dashboard-card-meta, .rme-action-card-meta, .teacher-dashboard-card-meta, .rme-stat-meta, p");
+
+      if (metaEl instanceof HTMLElement) {
+        metaEl.textContent =
+          value === 1
+            ? "1 page in Teacher Pay Slips"
+            : value + " pages in Teacher Pay Slips";
+      }
+    }
+  }
+
+  function dashboardIsVisible() {
+    try {
+      if (typeof notionWorkspaceActiveId === "string") {
+        return notionWorkspaceActiveId === "__payslips";
+      }
+    } catch (_e) {
+      /* ignore */
+    }
+    const dashboardPane = document.getElementById("notionWsPanePaySlips");
+    return (
+      dashboardPane instanceof HTMLElement &&
+      dashboardPane.classList.contains("notion-ws-pane--visible") &&
+      !dashboardPane.hidden
+    );
+  }
+
+  function tick() {
+    // This lock is for the Dashboard only. Do not touch the Teacher Pay Slips
+    // page cards, or they will blink while that page is open.
+    if (!dashboardIsVisible()) return;
+
+    void refreshSupabaseCount();
+
+    if (typeof lastSupabaseCount === "number") {
+      setTopCard(
+        "totalTeachers",
+        lastSupabaseCount,
+        lastSupabaseCount === 1
+          ? "1 Supabase teacher account"
+          : lastSupabaseCount + " Supabase teacher accounts",
+      );
+    }
+
+    const tpsCount = teacherPaySlipPageCount();
+    if (typeof tpsCount === "number") {
+      setTopCard(
+        "payslipsThisMonth",
+        tpsCount,
+        tpsCount === 1
+          ? "1 page in Teacher Pay Slips"
+          : tpsCount + " pages in Teacher Pay Slips",
+      );
+      setBottomTeacherPayslipCard(tpsCount);
+    }
+  }
+
+  function start() {
+    tick();
+    window.setInterval(tick, TICK_MS);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start, { once: true });
+  } else {
+    window.setTimeout(start, 0);
+  }
+})();
+
+// === RME: stable dashboard count owner =====================================
+// One calm owner for the dashboard numbers. No rendered pay-slip table fallback.
+// Sources:
+// - Total teachers = Supabase teacher accounts.
+// - Pay slips on file + bottom Teacher Pay Slips = child pages under the
+//   Teacher Pay Slips page in the Vault/sidebar only.
+// - Column Names & Notion Row IDs = only the rows in that mapping table/page.
+(function rmeStableDashboardCountOwner() {
+  let lastSignature = "";
+
+  function norm(v) {
+    return String(v ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  function isVisible(el) {
+    return el instanceof HTMLElement && !el.hidden && el.offsetParent !== null;
+  }
+
+  function childBlankPagesOf(parentId) {
+    try {
+      if (!Array.isArray(notionWorkspacePagesState)) return [];
+      return notionWorkspacePagesState.filter((p) => (
+        p && p.kind === "blank" && p.parentId === parentId
+      ));
+    } catch (_e) {
+      return [];
+    }
+  }
+
+  function findTeacherPaySlipsParentPage() {
+    try {
+      if (!Array.isArray(notionWorkspacePagesState)) return null;
+      const exactNames = new Set([
+        "teacher pay slips",
+        "teacher payslips",
+        "teachers pay slips",
+        "teachers payslips",
+      ]);
+
+      // Strict source: only the Teacher Pay Slips parent page in the Vault/sidebar.
+      // Do NOT fall back to a generic "Teachers" page, because that can make the
+      // dashboard card show the wrong number.
+      for (const p of notionWorkspacePagesState) {
+        if (!p || p.kind !== "blank") continue;
+        const title = norm(p.title);
+        if (!exactNames.has(title)) continue;
+        return p;
+      }
+
+      // Soft fallback: still require "pay slip" / "payslip" in the title.
+      // Never use a plain "Teachers" page as the pay-slip source.
+      let best = null;
+      let bestCount = -1;
+      for (const p of notionWorkspacePagesState) {
+        if (!p || p.kind !== "blank") continue;
+        const title = norm(p.title);
+        if (!/(pay\s*slip|payslip)/.test(title)) continue;
+        const n = childBlankPagesOf(p.id).length;
+        if (n > bestCount) {
+          best = p;
+          bestCount = n;
+        }
+      }
+      return best;
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  function teacherPaySlipPageCount() {
+    const parent = findTeacherPaySlipsParentPage();
+    if (!parent) return null;
+    return childBlankPagesOf(parent.id).filter((p) => {
+      const title = norm(p.title);
+      return title && !/notion row|row ids?|name.*notion|trash|dashboard/.test(title);
+    }).length;
+  }
+
+  /** Same leaf list as {@link teacherPaySlipPageCount}; used by dashboard charts. */
+  function vaultTeacherPaySlipLeafPages() {
+    try {
+      const parent = findTeacherPaySlipsParentPage();
+      if (!parent) return [];
+      return childBlankPagesOf(parent.id).filter((p) => {
+        const title = norm(p.title);
+        return title && !/notion row|row ids?|name.*notion|trash|dashboard/.test(title);
+      });
+    } catch (_e) {
+      return [];
+    }
+  }
+
+  window.rmeDashboardVaultTeacherPaySlipLeaves = vaultTeacherPaySlipLeafPages;
+
+  function notionRowIdCount() {
+    try {
+      if (Array.isArray(payslipNotionLinkRows)) {
+        return payslipNotionLinkRows.filter((r) => r && Object.keys(r).length > 0).length;
+      }
+    } catch (_e) { /* ignore */ }
+
+    try {
+      const tbody = document.getElementById("payslipNotionLinksTbody");
+      if (tbody instanceof HTMLElement) {
+        return [...tbody.querySelectorAll("tr")].filter((tr) => {
+          const text = norm(tr.textContent);
+          return text && !/empty|no rows|no links/.test(text);
+        }).length;
+      }
+    } catch (_e) { /* ignore */ }
+
+    return null;
+  }
+
+  async function supabaseTeacherAccountCount() {
+    const ta = window.teacherAuth;
+    if (!ta) return null;
+    const names = [
+      "listTeachersForAdmin",
+      "listAdminTeachers",
+      "fetchAdminTeachers",
+      "loadAdminTeachers",
+      "getAdminTeachers",
+      "listAllTeachers",
+      "fetchTeachers",
+      "listTeachers",
+    ];
+
+    for (const name of names) {
+      if (typeof ta[name] !== "function") continue;
+      try {
+        const r = await ta[name]();
+        let rows = null;
+        if (Array.isArray(r)) rows = r;
+        else if (r && Array.isArray(r.teachers)) rows = r.teachers;
+        else if (r && Array.isArray(r.rows)) rows = r.rows;
+        else if (r && Array.isArray(r.data)) rows = r.data;
+        if (!Array.isArray(rows)) continue;
+        return rows.filter((t) => !(
+          t && (t.disabled === true || t.is_active === false || t.archived === true)
+        )).length;
+      } catch (e) {
+        console.warn("dashboard teacher count " + name + ":", e);
+      }
+    }
+    return null;
+  }
+
+  function setTopCard(cardId, value, meta) {
+    const root = document.getElementById("rmeAnalyticsRoot");
+    const card =
+      (root instanceof HTMLElement
+        ? root.querySelector('.rme-stat-card[data-card="' + cardId + '"]')
+        : null) ||
+      document.querySelector('.rme-stat-card[data-card="' + cardId + '"]');
+    if (!(card instanceof HTMLElement)) return;
+    const val = card.querySelector(".rme-stat-value");
+    if (val instanceof HTMLElement) {
+      val.textContent = String(value);
+      val.classList.remove("rme-stat-value--loading");
+    }
+    const metaEl = card.querySelector(".rme-stat-meta");
+    if (metaEl instanceof HTMLElement && meta != null) {
+      metaEl.textContent = meta;
+    }
+  }
+
+  function likelyNumberNode(card) {
+    if (!(card instanceof HTMLElement)) return null;
+    const direct = card.querySelector(
+      ".rme-stat-value, .rme-card-value, .card-value, .metric-value, " +
+      "[class*='stat-value'], [class*='card-value'], [class*='metric-value'], strong, b"
+    );
+    if (direct instanceof HTMLElement) return direct;
+
+    const numeric = [...card.querySelectorAll("span, div, p")].filter((el) => (
+      el instanceof HTMLElement && /^\d+$/.test(norm(el.textContent))
+    ));
+    numeric.sort((a, b) => {
+      const af = parseFloat(getComputedStyle(a).fontSize || "0") || 0;
+      const bf = parseFloat(getComputedStyle(b).fontSize || "0") || 0;
+      return bf - af;
+    });
+    return numeric[0] || null;
+  }
+
+  function setMetaText(card, text) {
+    if (!(card instanceof HTMLElement)) return;
+    const meta = card.querySelector(".rme-stat-meta, .rme-card-meta, .card-meta, [class*='meta'], [class*='subtitle'], small");
+    if (meta instanceof HTMLElement) {
+      if (meta.textContent !== text) meta.textContent = text;
+      return;
+    }
+
+    const walker = document.createTreeWalker(card, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node) {
+      const raw = node.nodeValue || "";
+      if (/\b\d+\s+(slips?|teachers?|rows?|pages?)\b/i.test(raw)) {
+        node.nodeValue = raw.replace(/\b\d+\s+(slips?|teachers?|rows?|pages?)\b[^·›]*/i, text);
+        return;
+      }
+      node = walker.nextNode();
+    }
+  }
+
+  function setBottomCard(labelRegex, value, meta, source) {
+    const roots = [
+      document.getElementById("homeContent"),
+      document.getElementById("pageHome"),
+      document.body,
+    ].filter((el) => el instanceof HTMLElement);
+    const analyticsGrid = document.querySelector("#rmeAnalyticsRoot .rme-analytics-grid");
+    const seen = new WeakSet();
+
+    for (const root of roots) {
+      const cards = root.querySelectorAll("article, section, button, a, [class*='card'], [data-card], [data-rme-card], [data-rme-tps-card]");
+      for (const card of cards) {
+        if (!(card instanceof HTMLElement)) continue;
+        if (seen.has(card)) continue;
+        seen.add(card);
+        if (!isVisible(card)) continue;
+        if (analyticsGrid instanceof HTMLElement && analyticsGrid.contains(card)) continue;
+
+        const text = norm(card.textContent);
+        if (!labelRegex.test(text)) continue;
+
+        const node = likelyNumberNode(card);
+        if (node instanceof HTMLElement && node.textContent !== String(value)) {
+          node.textContent = String(value);
+          node.classList.remove("rme-stat-value--loading");
+        }
+        setMetaText(card, meta);
+        card.setAttribute("data-rme-count-source", source);
+      }
+    }
+  }
+
+  async function sync() {
+    const totalTeachers = await supabaseTeacherAccountCount();
+    const paySlipPages = teacherPaySlipPageCount();
+    const notionRows = notionRowIdCount();
+
+    // Always repaint the two top-row cards from the live sources. A previous
+    // early-return on unchanged signature let other code stomp only the big
+    // number (e.g. payslip row counts) while meta stayed correct.
+    if (totalTeachers != null) {
+      setTopCard(
+        "totalTeachers",
+        totalTeachers,
+        totalTeachers === 1 ? "1 Supabase teacher account" : totalTeachers + " Supabase teacher accounts",
+      );
+    }
+
+    if (paySlipPages != null) {
+      const paySlipMeta = paySlipPages === 1 ? "1 teacher pay slip page" : paySlipPages + " teacher pay slip pages";
+      setTopCard("payslipsThisMonth", paySlipPages, paySlipMeta);
+    }
+
+    const signature = [totalTeachers, paySlipPages, notionRows].join("|");
+    if (signature === lastSignature) return;
+    lastSignature = signature;
+
+    if (paySlipPages != null) {
+      const paySlipMeta = paySlipPages === 1 ? "1 teacher pay slip page" : paySlipPages + " teacher pay slip pages";
+      setBottomCard(
+        /teacher\s*pay\s*slips?|teacher\s*payslips?/,
+        paySlipPages,
+        paySlipMeta,
+        "teacher-pay-slip-child-pages",
+      );
+    }
+
+    if (notionRows != null) {
+      const rowMeta = notionRows === 1 ? "1 row — tap for IDs" : notionRows + " rows — tap for IDs";
+      setBottomCard(
+        /column.*names?.*notion.*row|column.*notion.*row|name.*notion.*row|notion.*row.*id|(?:column\s*names?|names?)\s*(and|&|\+)\s*notion/,
+        notionRows,
+        rowMeta,
+        "name-notion-row-table",
+      );
+    }
+  }
+
+  function scheduleSync() {
+    window.setTimeout(() => { void sync(); }, 0);
+  }
+
+  function init() {
+    scheduleSync();
+
+    const sidebar = document.getElementById("notionWorkspacePageList");
+    if (sidebar instanceof HTMLElement) {
+      try {
+        new MutationObserver(scheduleSync).observe(sidebar, {
+          childList: true,
+          subtree: true,
+          characterData: true,
+        });
+      } catch (_e) { /* ignore */ }
+    }
+
+    const rowTable = document.getElementById("payslipNotionLinksTbody");
+    if (rowTable instanceof HTMLElement) {
+      try {
+        new MutationObserver(scheduleSync).observe(rowTable, {
+          childList: true,
+          subtree: true,
+          characterData: true,
+        });
+      } catch (_e) { /* ignore */ }
+    }
+
+    // Slow backup only. No fast UI fight loop.
+    window.rmeIdlePower?.runOnAdaptiveInterval?.(
+      () => {
+        void sync();
+      },
+      {
+        activeMs: 15000,
+        idleMs: 45000,
+        hiddenMs: 120000,
+        shouldRun: () =>
+          window.rmeIdlePower?.isDomPageVisible?.("pageHome") !== false,
+      },
+    ) ??
+      window.setInterval(() => {
+        void sync();
+      }, 15000);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init, { once: true });
+  } else {
+    window.setTimeout(init, 0);
+  }
+})();
+
+// Removed Teacher Pay Slips page stabilizer.
+// It cloned/restored DOM cards and could create the visible vanish/reappear flicker.
+// Duplicate headings/dividers should be removed with static CSS, not by a loop.
+(function rmeHideDuplicateTeacherPaySlipsBottomTitleCssOnly() {
+  function init() {
+    if (document.getElementById("rmeHideDuplicateTpsTitleCssOnly")) return;
+    const style = document.createElement("style");
+    style.id = "rmeHideDuplicateTpsTitleCssOnly";
+    style.textContent = [
+      "#pageTeacherPaySlips > h1,",
+      "#pageTeacherPaySlips > h2,",
+      "#pageTeacherPaySlips > h3{display:none!important;}",
+      "#pageTeacherPaySlips > hr{display:none!important;}",
+      "#pageTeacherPaySlips > .divider,",
+      "#pageTeacherPaySlips > [class*='divider'],",
+      "#pageTeacherPaySlips > [class*='progress'],",
+      "#pageTeacherPaySlips > [class*='rule']{display:none!important;}",
+    ].join("");
+    document.head.appendChild(style);
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init, { once: true });
+  } else {
+    init();
+  }
+})();
+
+// === RME: dashboard analytics card charts =================================
+// Clicking any analytics card on the Dashboard expands a big chart panel at
+// the bottom of the grid: a donut chart of the slice breakdown and a line
+// chart of the trend for that specific card. Clicking the same card again
+// collapses the panel back into the card. Clicking a different card just
+// swaps the data without closing the panel. All-inline SVG — no deps.
+(function rmeAddAnalyticsCardCharts() {
+  function init() {
+    const root = document.getElementById("rmeAnalyticsRoot");
+    if (!(root instanceof HTMLElement)) {
+      window.setTimeout(init, 250);
+      return;
+    }
+    if (document.getElementById("rmeAnalyticsChartsPanel")) return;
+    const grid = root.querySelector(".rme-analytics-grid");
+    if (!(grid instanceof HTMLElement)) return;
+
+    const styleEl = document.createElement("style");
+    styleEl.id = "rmeAnalyticsChartsStyles";
+    styleEl.textContent = [
+      ".rme-stat-card{cursor:pointer;user-select:none;}",
+      ".rme-stat-card.rme-stat-card--active{",
+      "border-color:color-mix(in srgb,var(--rme-accent,#3b82f6) 60%,transparent) !important;",
+      "box-shadow:0 0 0 2px color-mix(in srgb,var(--rme-accent,#3b82f6) 25%,transparent),",
+      "0 14px 36px -12px rgba(0,0,0,.28) !important;}",
+      "#rmeAnalyticsChartsPanel{margin-top:1.1rem;border-radius:26px;",
+      "background:linear-gradient(165deg,",
+      "color-mix(in srgb,#f8fafc 34%,transparent) 0%,",
+      "color-mix(in srgb,#eef2ff 26%,transparent) 55%,",
+      "color-mix(in srgb,#f1f5f9 22%,transparent) 100%);",
+      "-webkit-backdrop-filter:blur(22px) saturate(138%);",
+      "backdrop-filter:blur(22px) saturate(138%);",
+      "border:1px solid color-mix(in srgb,#fff 38%,#94a3b8 10%);",
+      "box-shadow:inset 0 1px 0 rgba(255,255,255,.22),",
+      "0 14px 40px -12px rgba(15,23,42,.12);",
+      "display:grid;grid-template-rows:0fr;overflow:hidden;",
+      "transition:grid-template-rows .35s cubic-bezier(.4,0,.2,1),margin-top .35s ease;}",
+      "html[data-theme=dark] #rmeAnalyticsChartsPanel{",
+      "background:linear-gradient(165deg,",
+      "color-mix(in srgb,#1e293b 36%,transparent) 0%,",
+      "color-mix(in srgb,#0f172a 28%,transparent) 55%,",
+      "color-mix(in srgb,#172554 22%,transparent) 100%);",
+      "border:1px solid color-mix(in srgb,#fff 12%,#64748b 12%);",
+      "box-shadow:inset 0 1px 0 rgba(255,255,255,.1),",
+      "0 16px 44px -8px rgba(0,0,0,.28);}",
+      "#rmeAnalyticsChartsPanel[hidden]{display:none;}",
+      "#rmeAnalyticsChartsPanel.rme-charts-open{grid-template-rows:1fr;}",
+      "#rmeAnalyticsChartsPanel .rme-charts-inner{min-height:0;overflow:hidden;}",
+      "#rmeAnalyticsChartsPanel .rme-charts-body{padding:1rem 1.2rem 1.15rem;max-width:1180px;margin:0 auto;}",
+      ".rme-charts-header{display:flex;align-items:center;justify-content:space-between;",
+      "gap:1rem;margin:0 0 0.75rem;flex-wrap:wrap;}",
+      ".rme-charts-title-row{display:flex;align-items:center;gap:.7rem;min-width:0;}",
+      ".rme-charts-title-icon{width:2.2rem;height:2.2rem;border-radius:11px;",
+      "display:inline-flex;align-items:center;justify-content:center;font-size:1.05rem;",
+      "background:color-mix(in srgb,var(--rme-charts-accent,#3b82f6) 10%,transparent);",
+      "color:var(--rme-charts-accent,#3b82f6);flex-shrink:0;}",
+      ".rme-charts-title{margin:0;font-size:1.05rem;font-weight:700;",
+      "letter-spacing:-.015em;color:var(--text);}",
+      ".rme-charts-sub{margin:.1rem 0 0;font-size:.78rem;",
+      "color:var(--text-muted,#6b7280);}",
+      ".rme-charts-close{display:inline-flex;align-items:center;justify-content:center;",
+      "width:2rem;height:2rem;padding:0;border-radius:999px;border:0;",
+      "background:transparent;color:var(--text-muted,#6b7280);cursor:pointer;",
+      "font:inherit;font-size:1.25rem;line-height:1;",
+      "transition:background .15s ease,color .15s ease;}",
+      ".rme-charts-close:hover{",
+      "background:color-mix(in srgb,var(--text) 8%,transparent);color:var(--text);}",
+      ".rme-charts-grid{display:grid;grid-template-columns:1fr;gap:0.85rem;}",
+      ".rme-charts-row-main{display:grid;",
+      "grid-template-columns:minmax(0,1fr) minmax(0,1.55fr);gap:0.85rem;",
+      "align-items:stretch;}",
+      "@media (max-width:860px){.rme-charts-row-main{grid-template-columns:1fr;}}",
+      ".rme-charts-row-secondary{display:grid;",
+      "grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:0.85rem;align-items:stretch;}",
+      "@media (max-width:860px){.rme-charts-row-secondary{grid-template-columns:1fr;}}",
+      "#rmeAnalyticsChartsPanel .rme-chart-box--glass{--rme-accent:var(--rme-charts-accent,#3b82f6);",
+      "position:relative;display:flex;flex-direction:column;gap:0.55rem;",
+      "padding:1.05rem 1.12rem 1.12rem;border-radius:26px;overflow:hidden;",
+      "isolation:isolate;min-height:200px;",
+      "background:linear-gradient(165deg,",
+      "color-mix(in srgb,#f8fafc 40%,transparent) 0%,",
+      "color-mix(in srgb,#eef2ff 30%,transparent) 48%,",
+      "color-mix(in srgb,#f1f5f9 26%,transparent) 100%);",
+      "-webkit-backdrop-filter:blur(22px) saturate(138%);",
+      "backdrop-filter:blur(22px) saturate(138%);",
+      "border:1px solid color-mix(in srgb,#fff 40%,#94a3b8 10%);",
+      "box-shadow:inset 0 1px 0 rgba(255,255,255,.26),inset 0 0 0 1px rgba(15,23,42,.04),",
+      "0 10px 38px -8px rgba(15,23,42,.11),",
+      "0 0 40px -10px color-mix(in srgb,var(--rme-accent) 14%,transparent);}",
+      "html[data-theme=dark] #rmeAnalyticsChartsPanel .rme-chart-box--glass{",
+      "background:linear-gradient(165deg,",
+      "color-mix(in srgb,#1e293b 38%,transparent) 0%,",
+      "color-mix(in srgb,#0f172a 28%,transparent) 55%,",
+      "color-mix(in srgb,#172554 22%,transparent) 100%);",
+      "border:1px solid color-mix(in srgb,#fff 14%,#64748b 12%);",
+      "box-shadow:inset 0 1px 0 rgba(255,255,255,.12),inset 0 0 0 1px rgba(0,0,0,.22),",
+      "0 12px 40px -4px rgba(0,0,0,.26),",
+      "0 0 44px -8px color-mix(in srgb,var(--rme-accent) 12%,transparent);}",
+      "#rmeAnalyticsChartsPanel .rme-charts-row-main .rme-chart-box--glass{min-height:168px;}",
+      "#rmeAnalyticsChartsPanel .rme-charts-row-secondary .rme-chart-box--glass{min-height:auto;}",
+      "#rmeAnalyticsChartsPanel .rme-charts-row-main .rme-chart-svg{max-height:168px;}",
+      "#rmeAnalyticsChartsPanel .rme-charts-row-main .rme-chart-line-svg{max-height:168px;}",
+      "#rmeAnalyticsChartsPanel .rme-chart-box--glass::before{content:\"\";position:absolute;inset:0;z-index:0;",
+      "pointer-events:none;border-radius:inherit;",
+      "background:radial-gradient(70% 56% at 94% -12%,",
+      "color-mix(in srgb,var(--rme-accent) 22%,transparent) 0%,transparent 46%),",
+      "radial-gradient(92% 78% at 8% -8%,rgba(255,255,255,.28) 0%,transparent 56%);",
+      "opacity:.38;}",
+      "#rmeAnalyticsChartsPanel .rme-chart-box--glass::after{content:\"\";position:absolute;inset:0;z-index:1;",
+      "pointer-events:none;border-radius:inherit;",
+      "background:linear-gradient(210deg,rgba(255,255,255,.28) 0%,",
+      "rgba(226,232,240,.12) 11%,transparent 36%),",
+      "linear-gradient(25deg,transparent 55%,color-mix(in srgb,var(--rme-accent) 8%,transparent) 100%);",
+      "opacity:.34;}",
+      "html[data-theme=dark] #rmeAnalyticsChartsPanel .rme-chart-box--glass::before{",
+      "opacity:.32;}",
+      "html[data-theme=dark] #rmeAnalyticsChartsPanel .rme-chart-box--glass::after{",
+      "opacity:.28;}",
+      "#rmeAnalyticsChartsPanel .rme-chart-box--glass > *{position:relative;z-index:2;}",
+      ".rme-chart-box--secondary{min-height:auto;}",
+      "#rmeAnalyticsChartsPanel .rme-donut-mount,",
+      "#rmeAnalyticsChartsPanel .rme-line-mount,",
+      "#rmeAnalyticsChartsPanel .rme-bar-mount{",
+      "background:transparent!important;}",
+      ".rme-donut-mount,.rme-line-mount,.rme-bar-mount{",
+      "flex:1;display:flex;flex-direction:column;align-items:stretch;",
+      "justify-content:center;min-height:0;}",
+      ".rme-chart-box-title{margin:0 0 .35rem;font-size:.72rem;font-weight:750;",
+      "letter-spacing:.06em;text-transform:uppercase;",
+      "font-family:'Plus Jakarta Sans',system-ui,-apple-system,'Segoe UI',sans-serif;",
+      "color:var(--text-muted,#6b7280);}",
+      ".rme-chart-svg{width:auto;max-width:100%;height:100%;max-height:200px;",
+      "display:block;margin:0 auto;overflow:visible;}",
+      ".rme-chart-line-svg{width:100%;height:100%;max-height:200px;",
+      "display:block;overflow:visible;}",
+      ".rme-chart-bar-svg{width:100%;height:auto;display:block;overflow:visible;}",
+      ".rme-chart-bar-svg--months .rme-bar-label{font-size:8.75px;letter-spacing:.01em;}",
+      ".rme-bar-track{fill:color-mix(in srgb,var(--text) 3%,transparent);}",
+      ".rme-bar-label{font-size:10px;fill:var(--text);font-weight:600;}",
+      ".rme-bar-value{font-size:10px;fill:var(--text-muted,#6b7280);",
+      "font-weight:600;font-variant-numeric:tabular-nums;}",
+      ".rme-chart-empty{padding:2rem .5rem;text-align:center;",
+      "color:var(--text-muted,#6b7280);font-size:.85rem;}",
+      ".rme-chart-legend{display:flex;flex-wrap:wrap;gap:.45rem .75rem;",
+      "margin-top:.55rem;font-size:.72rem;color:var(--text-muted,#6b7280);}",
+      ".rme-chart-legend-item{display:inline-flex;align-items:center;gap:.4rem;}",
+      ".rme-chart-legend-dot{width:.6rem;height:.6rem;border-radius:3px;flex-shrink:0;}",
+      ".rme-chart-legend-label{color:var(--text);font-weight:500;}",
+      ".rme-chart-legend-value{color:var(--text-muted,#6b7280);}",
+      ".rme-donut-center{font-size:1.35rem;font-weight:700;fill:var(--text);",
+      "font-variant-numeric:tabular-nums;}",
+      ".rme-donut-center-sub{font-size:.58rem;font-weight:600;",
+      "fill:var(--text-muted,#6b7280);text-transform:uppercase;letter-spacing:.06em;}",
+      ".rme-line-grid{stroke:color-mix(in srgb,var(--text) 8%,transparent);",
+      "stroke-width:1;fill:none;}",
+      ".rme-line-axis-label{font-size:.65rem;fill:var(--text-muted,#6b7280);font-weight:500;}",
+      ".rme-line-stroke{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round;}",
+    ].join("");
+    document.head.appendChild(styleEl);
+
+    const panel = document.createElement("section");
+    panel.id = "rmeAnalyticsChartsPanel";
+    panel.setAttribute("aria-label", "Card detail charts");
+    panel.hidden = true;
+    const inner = document.createElement("div");
+    inner.className = "rme-charts-inner";
+    const body = document.createElement("div");
+    body.className = "rme-charts-body";
+    const header = document.createElement("header");
+    header.className = "rme-charts-header";
+    const titleRow = document.createElement("div");
+    titleRow.className = "rme-charts-title-row";
+    const titleIcon = document.createElement("span");
+    titleIcon.className = "rme-charts-title-icon";
+    titleIcon.setAttribute("aria-hidden", "true");
+    const titleWrap = document.createElement("div");
+    const titleEl = document.createElement("h3");
+    titleEl.className = "rme-charts-title";
+    titleEl.textContent = "—";
+    const subEl = document.createElement("p");
+    subEl.className = "rme-charts-sub";
+    subEl.textContent = "";
+    titleWrap.appendChild(titleEl);
+    titleWrap.appendChild(subEl);
+    titleRow.appendChild(titleIcon);
+    titleRow.appendChild(titleWrap);
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "rme-charts-close";
+    closeBtn.setAttribute("aria-label", "Close charts");
+    closeBtn.textContent = "×";
+    header.appendChild(titleRow);
+    header.appendChild(closeBtn);
+
+    const chartsGrid = document.createElement("div");
+    chartsGrid.className = "rme-charts-grid";
+    const rowMain = document.createElement("div");
+    rowMain.className = "rme-charts-row-main";
+    const donutBox = document.createElement("div");
+    donutBox.className = "rme-chart-box rme-chart-box--glass";
+    const donutTitle = document.createElement("h4");
+    donutTitle.className = "rme-chart-box-title";
+    donutTitle.textContent = "Distribution";
+    const donutMount = document.createElement("div");
+    donutMount.className = "rme-donut-mount";
+    donutBox.appendChild(donutTitle);
+    donutBox.appendChild(donutMount);
+    const lineBox = document.createElement("div");
+    lineBox.className = "rme-chart-box rme-chart-box--glass";
+    const lineTitle = document.createElement("h4");
+    lineTitle.className = "rme-chart-box-title";
+    lineTitle.textContent = "Trend";
+    const lineMount = document.createElement("div");
+    lineMount.className = "rme-line-mount";
+    lineBox.appendChild(lineTitle);
+    lineBox.appendChild(lineMount);
+    rowMain.appendChild(donutBox);
+    rowMain.appendChild(lineBox);
+    const rowSecondary = document.createElement("div");
+    rowSecondary.className = "rme-charts-row-secondary";
+    const barBox = document.createElement("div");
+    barBox.className = "rme-chart-box rme-chart-box--secondary rme-chart-box--glass";
+    const barTitle = document.createElement("h4");
+    barTitle.className = "rme-chart-box-title";
+    barTitle.textContent = "Breakdown";
+    const barMount = document.createElement("div");
+    barMount.className = "rme-bar-mount";
+    barBox.appendChild(barTitle);
+    barBox.appendChild(barMount);
+    const barBox2 = document.createElement("div");
+    barBox2.className = "rme-chart-box rme-chart-box--secondary rme-chart-box--glass rme-charts-bar2";
+    const barTitle2 = document.createElement("h4");
+    barTitle2.className = "rme-chart-box-title";
+    barTitle2.textContent = "";
+    const barMount2 = document.createElement("div");
+    barMount2.className = "rme-bar-mount";
+    barBox2.appendChild(barTitle2);
+    barBox2.appendChild(barMount2);
+    rowSecondary.appendChild(barBox);
+    rowSecondary.appendChild(barBox2);
+    chartsGrid.appendChild(rowMain);
+    chartsGrid.appendChild(rowSecondary);
+
+    body.appendChild(header);
+    body.appendChild(chartsGrid);
+    inner.appendChild(body);
+    panel.appendChild(inner);
+    grid.insertAdjacentElement("afterend", panel);
+
+    let activeCardId = null;
+    let teacherCache = null;
+    let teacherCacheAt = 0;
+
+    function accentForCard(card) {
+      const cs = getComputedStyle(card);
+      return cs.getPropertyValue("--rme-accent").trim() || "#3b82f6";
+    }
+
+    function setActiveCard(card) {
+      grid.querySelectorAll(".rme-stat-card--active").forEach((el) => {
+        el.classList.remove("rme-stat-card--active");
+      });
+      if (card instanceof HTMLElement) card.classList.add("rme-stat-card--active");
+    }
+
+    function openPanelForCard(card) {
+      const id = card.dataset.card || "";
+      const label = card.querySelector(".rme-stat-label")?.textContent || "";
+      const icon = card.querySelector(".rme-stat-icon")?.textContent || "";
+      const accent = accentForCard(card);
+      activeCardId = id;
+      panel.style.setProperty("--rme-charts-accent", accent);
+      titleIcon.textContent = icon;
+      titleEl.textContent = label;
+      subEl.textContent = subtitleForCardId(id);
+      setActiveCard(card);
+      const data = computeChartDataForCardId(id);
+      renderDonut(donutMount, data.donut, accent);
+      renderLine(lineMount, data.line, accent);
+      renderBar(barMount, data.bar, accent);
+      barTitle.textContent = (data.bar && data.bar.title) ? data.bar.title : "Breakdown";
+      barTitle2.textContent = (data.bar2 && data.bar2.title) ? data.bar2.title : "More";
+      renderBar(barMount2, data.bar2, accent);
+      panel.hidden = false;
+      void panel.offsetHeight;
+      panel.classList.add("rme-charts-open");
+    }
+
+    function closePanel() {
+      activeCardId = null;
+      setActiveCard(null);
+      panel.classList.remove("rme-charts-open");
+      window.setTimeout(() => {
+        if (!panel.classList.contains("rme-charts-open")) panel.hidden = true;
+      }, 380);
+    }
+
+    closeBtn.addEventListener("click", closePanel);
+
+    grid.addEventListener("click", (ev) => {
+      const card = ev.target instanceof Element
+        ? ev.target.closest(".rme-stat-card") : null;
+      if (!(card instanceof HTMLElement)) return;
+      const id = card.dataset.card || "";
+      if (!id) return;
+      if (id === activeCardId) closePanel();
+      else openPanelForCard(card);
+    });
+
+    function subtitleForCardId(id) {
+      switch (id) {
+        case "totalTeachers": return "Account status · sign-ups over time";
+        case "onlineNow": return "Activity right now · presence over last 24 hours";
+        case "newThisWeek": return "Joined in last 7 days · daily sign-ups";
+        case "activeSchools": return "Client mix · placements over time";
+        case "payslipsThisMonth": return "By school · monthly volume";
+        case "recentSignins": return "Recency buckets · activity by hour";
+        default: return "";
+      }
+    }
+
+    function tsOf(v) {
+      if (!v) return 0;
+      const n = Number(new Date(v).getTime());
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    }
+
+    function emptyChartData(label) {
+      return {
+        donut: { slices: [], total: 0, centerLabel: "0", centerSub: label || "" },
+        line: { points: [], xLabels: [], yLabel: "" },
+      };
+    }
+
+    function fetchTeachersAsync() {
+      const now = Date.now();
+      if (teacherCache && now - teacherCacheAt < 20 * 1000) return;
+      teacherCacheAt = now;
+      void (async () => {
+        const ta = window.teacherAuth;
+        if (!ta) return;
+        const names = ["listAdminTeachers", "fetchAdminTeachers", "loadAdminTeachers",
+          "getAdminTeachers", "listTeachersForAdmin", "listAllTeachers",
+          "fetchTeachers", "listTeachers"];
+        for (const name of names) {
+          if (typeof ta[name] === "function") {
+            try {
+              const r = await ta[name]();
+              let list = null;
+              if (r && Array.isArray(r.teachers)) list = r.teachers;
+              else if (r && Array.isArray(r.rows)) list = r.rows;
+              else if (r && Array.isArray(r.data)) list = r.data;
+              else if (Array.isArray(r)) list = r;
+              if (list) {
+                teacherCache = list;
+                if (activeCardId) {
+                  const c = grid.querySelector('.rme-stat-card[data-card="' + activeCardId + '"]');
+                  if (c instanceof HTMLElement) {
+                    const accent = accentForCard(c);
+                    const data = computeChartDataForCardId(activeCardId);
+                    renderDonut(donutMount, data.donut, accent);
+                    renderLine(lineMount, data.line, accent);
+                    renderBar(barMount, data.bar, accent);
+                    barTitle.textContent = (data.bar && data.bar.title) ? data.bar.title : "Breakdown";
+                    barTitle2.textContent = (data.bar2 && data.bar2.title) ? data.bar2.title : "More";
+                    renderBar(barMount2, data.bar2, accent);
+                  }
+                }
+                return;
+              }
+            } catch (_e) { /* try next */ }
+          }
+        }
+      })();
+    }
+
+    function teachersList() {
+      fetchTeachersAsync();
+      return Array.isArray(teacherCache) ? teacherCache : [];
+    }
+
+    function monthlyBucketsFromList(list, months, getTsFn) {
+      const today0 = new Date();
+      today0.setDate(1); today0.setHours(0, 0, 0, 0);
+      const items = [];
+      for (let i = months - 1; i >= 0; i--) {
+        const d = new Date(today0);
+        d.setMonth(d.getMonth() - i);
+        items.push({ label: d.toLocaleString("default", { month: "short" }), value: 0 });
+      }
+      if (Array.isArray(list)) {
+        for (const t of list) {
+          const ts = getTsFn(t);
+          if (!ts) continue;
+          const d = new Date(ts);
+          const idx = (today0.getFullYear() - d.getFullYear()) * 12
+            + (today0.getMonth() - d.getMonth());
+          if (idx >= 0 && idx < months) items[months - 1 - idx].value += 1;
+        }
+      }
+      return items;
+    }
+
+    function dayOfWeekBucketsFromList(list, getTsFn) {
+      const names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+      const counts = new Array(7).fill(0);
+      if (Array.isArray(list)) {
+        for (const t of list) {
+          const ts = getTsFn(t);
+          if (!ts) continue;
+          const d = new Date(ts);
+          counts[d.getDay()] += 1;
+        }
+      }
+      const order = [1, 2, 3, 4, 5, 6, 0];
+      return order.map((ix) => ({ label: names[ix], value: counts[ix] }));
+    }
+
+    function dashboardStatNumber(cardId) {
+      try {
+        const card = document.querySelector('.rme-stat-card[data-card="' + cardId + '"]');
+        if (!(card instanceof HTMLElement)) return null;
+        const val = card.querySelector(".rme-stat-value");
+        if (!(val instanceof HTMLElement)) return null;
+        const n = Number(String(val.textContent || "").replace(/[^\d.-]/g, ""));
+        return Number.isFinite(n) ? n : null;
+      } catch (_e) {
+        return null;
+      }
+    }
+
+    function teacherSourceTotalForCharts() {
+      const list = teachersList();
+      if (!Array.isArray(list)) return 0;
+      return list.filter((t) =>
+        !(t && (t.disabled === true || t.is_active === false || t.archived === true))
+      ).length;
+    }
+
+    function vaultTeacherPaySlipLeavesForCharts() {
+      try {
+        if (typeof window.rmeDashboardVaultTeacherPaySlipLeaves === "function") {
+          const a = window.rmeDashboardVaultTeacherPaySlipLeaves();
+          return Array.isArray(a) ? a : [];
+        }
+      } catch (_e) { /* ignore */ }
+      return [];
+    }
+
+    function pChartNorm(v) {
+      return String(v ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+    }
+
+    /** Mirrors Teacher Pay Slips school grouping so the donut matches the Vault tree. */
+    function vaultTeacherPageSchoolLabel(page) {
+      const text = " " + pChartNorm(String(page?.title || "") + " " + String(page?.bodyHtml || ""))
+        .replace(/[$€£₽¥₩•·|]+/g, " ")
+        .replace(/\s+/g, " ") + " ";
+      const count = (re) => (text.match(re) || []).length;
+      const scores = {
+        "Talking Global":
+          count(/\btalking global\b/g) +
+          count(/\btg\s*\d*\b/g) +
+          count(/\badults?\s+tg\s*\d*\b/g) +
+          count(/\btrials?\s+tg\s*\d*\b/g) +
+          count(/\bkids?\s+tg\s*\d*\b/g),
+        "Magic English":
+          count(/\bmagic english\b/g) +
+          count(/\bmagic english\s+sa\b/g) +
+          count(/\bmagic english\s+(america|europe)\b/g) +
+          count(/\bm\s*e\s*(sa|america|europe)?\b/g) +
+          count(/\bme\s*(sa|america|europe)\b/g),
+        "Speak English":
+          count(/\bspeak english\b/g) +
+          count(/\bse\s*\d+(\.\d+)?\b/g) +
+          count(/\bclass amount se\b/g) +
+          count(/\bfees se\b/g),
+        "Nice Kid":
+          count(/\bnice\s*kid\b/g) +
+          count(/\bnicekid\b/g) +
+          count(/\bnk\s*\d+\b/g) +
+          count(/\bclass amount nk\b/g) +
+          count(/\bfees nk\b/g),
+        "Sky Line":
+          count(/\bsky\s*line\b/g) +
+          count(/\bskyline\b/g) +
+          count(/\bskyline\s*\d+\b/g) +
+          count(/\bsl\s*\d+\b/g),
+      };
+      let bestSchool = "";
+      let bestScore = 0;
+      for (const [school, score] of Object.entries(scores)) {
+        if (score > bestScore) {
+          bestSchool = school;
+          bestScore = score;
+        }
+      }
+      return bestScore > 0 ? bestSchool : "Other / Needs school check";
+    }
+
+    function buildVaultPayslipChartsCore(leaves) {
+      const months = 6;
+      const today0 = new Date();
+      today0.setDate(1);
+      today0.setHours(0, 0, 0, 0);
+      const items = [];
+      const labels = [];
+      for (let i = months - 1; i >= 0; i -= 1) {
+        const d = new Date(today0);
+        d.setMonth(d.getMonth() - i);
+        const lab = d.toLocaleString("default", { month: "short" });
+        labels.push(lab);
+        items.push({ label: lab, value: 0 });
+      }
+      const points = new Array(months).fill(0);
+      const tsGetter = (p) => tsOf(p?.updatedAt ?? p?.createdAt ?? p?.updated_at ?? p?.created_at);
+      let filled = false;
+      for (const page of leaves) {
+        const tms = tsGetter(page);
+        if (!tms) continue;
+        const d = new Date(tms);
+        const idx = (today0.getFullYear() - d.getFullYear()) * 12
+          + (today0.getMonth() - d.getMonth());
+        if (idx >= 0 && idx < months) {
+          const ix = months - 1 - idx;
+          items[ix].value += 1;
+          points[ix] += 1;
+          filled = true;
+        }
+      }
+      if (!filled && leaves.length > 0) {
+        const base = Math.max(1, Math.floor(leaves.length / months));
+        for (let i = 0; i < months; i += 1) {
+          items[i].value = base;
+          points[i] = base;
+        }
+        items[months - 1].value += leaves.length - base * months;
+        points[months - 1] += leaves.length - base * months;
+      }
+      return { items, points, labels };
+    }
+
+    function payslipSourceTotalForCharts() {
+      const leaves = vaultTeacherPaySlipLeavesForCharts();
+      if (leaves.length > 0) return leaves.length;
+      const fromCard = dashboardStatNumber("payslipsThisMonth");
+      if (fromCard != null) return fromCard;
+      try {
+        const rt = (typeof rawTable !== "undefined") ? rawTable : null;
+        if (rt && Array.isArray(rt.rows)) return rt.rows.length;
+      } catch (_e) { /* ignore */ }
+      return 0;
+    }
+
+    function buildBarForCardId(id) {
+      const list = teachersList();
+      switch (id) {
+        case "totalTeachers": {
+          if (!Array.isArray(list) || list.length === 0) return null;
+          const items = monthlyBucketsFromList(list, 6, (t) =>
+            tsOf(t?.created_at ?? t?.createdAt ?? t?.invited_at ?? t?.invitedAt));
+          return { title: "Sign-ups per month (last 6)", items, layout: "months-columns" };
+        }
+        case "newThisWeek": {
+          if (!Array.isArray(list) || list.length === 0) return null;
+          const items = dayOfWeekBucketsFromList(list, (t) =>
+            tsOf(t?.created_at ?? t?.createdAt ?? t?.invited_at ?? t?.invitedAt));
+          return { title: "Sign-ups by day of week", items };
+        }
+        case "onlineNow":
+        case "recentSignins": {
+          if (!Array.isArray(list) || list.length === 0) return null;
+          const items = dayOfWeekBucketsFromList(list, (t) =>
+            tsOf(t?.last_seen_at ?? t?.lastSeenAt ?? t?.last_sign_in_at ?? t?.lastSignInAt));
+          return { title: "Activity by day of week", items };
+        }
+        case "activeSchools": {
+          const schools = [
+            { code: "TG", label: "Talking Global", color: "#f97316" },
+            { code: "ME", label: "Magic English", color: "#22d3ee" },
+            { code: "SE", label: "Speak English", color: "#8b5cf6" },
+            { code: "NK", label: "Nice Kid", color: "#10b981" },
+            { code: "SL", label: "Sky Line", color: "#f59e0b" },
+          ];
+          const counts = new Map(schools.map((s) => [s.code, 0]));
+          if (Array.isArray(list)) {
+            for (const t of list) {
+              const sc = String(t?.school ?? t?.school_code ?? t?.school_id ?? "")
+                .trim().toUpperCase();
+              if (counts.has(sc)) counts.set(sc, (counts.get(sc) || 0) + 1);
+            }
+          }
+          const items = schools.map((s) => ({
+            label: s.label, value: counts.get(s.code) || 0, color: s.color,
+          })).sort((a, b) => b.value - a.value);
+          return { title: "Teachers per school", items };
+        }
+        case "payslipsThisMonth": {
+          const leaves = vaultTeacherPaySlipLeavesForCharts();
+          if (leaves.length > 0) {
+            const core = buildVaultPayslipChartsCore(leaves);
+            return { title: "Pay slips per month", items: core.items, layout: "months-columns" };
+          }
+          const rt = (typeof rawTable !== "undefined") ? rawTable : null;
+          if (!rt || !Array.isArray(rt.rows) || rt.rows.length === 0) return null;
+          let dateColIx = -1;
+          if (Array.isArray(rt.columns)) {
+            for (let i = 0; i < rt.columns.length; i++) {
+              if (/date|pay\s*period|month/i.test(String(rt.columns[i] || ""))) {
+                dateColIx = i; break;
+              }
+            }
+          }
+          const months = 6;
+          const today0 = new Date();
+          today0.setDate(1); today0.setHours(0, 0, 0, 0);
+          const items = [];
+          for (let i = months - 1; i >= 0; i--) {
+            const d = new Date(today0);
+            d.setMonth(d.getMonth() - i);
+            items.push({ label: d.toLocaleString("default", { month: "short" }), value: 0 });
+          }
+          let filled = false;
+          if (dateColIx >= 0) {
+            for (const row of rt.rows) {
+              const ts = tsOf(row?.[dateColIx]);
+              if (!ts) continue;
+              const d = new Date(ts);
+              const idx = (today0.getFullYear() - d.getFullYear()) * 12
+                + (today0.getMonth() - d.getMonth());
+              if (idx >= 0 && idx < months) {
+                items[months - 1 - idx].value += 1;
+                filled = true;
+              }
+            }
+          }
+          if (!filled) {
+            const base = Math.max(1, Math.floor(rt.rows.length / months));
+            for (let i = 0; i < months; i++) items[i].value = base;
+            items[months - 1].value += rt.rows.length - base * months;
+          }
+          return { title: "Pay slips per month", items, layout: "months-columns" };
+        }
+        default: return null;
+      }
+    }
+
+    function buildBar2ForCardId(id) {
+      const list = teachersList();
+      const monthsCols = (title, getTs) => ({
+        title: title,
+        items: monthlyBucketsFromList(list, 6, getTs),
+        layout: "months-columns",
+      });
+      switch (id) {
+        case "totalTeachers": {
+          if (!Array.isArray(list) || list.length === 0) {
+            return {
+              title: "Account age",
+              items: [
+                { label: "< 30 days", value: 0 },
+                { label: "30–90 days", value: 0 },
+                { label: "90+ days", value: 0 },
+              ],
+            };
+          }
+          const now = Date.now();
+          const D30 = 30 * 86400000;
+          const D90 = 90 * 86400000;
+          let b30 = 0;
+          let b90 = 0;
+          let bold = 0;
+          for (const t of list) {
+            const cr = tsOf(t?.created_at ?? t?.createdAt ?? t?.invited_at ?? t?.invitedAt);
+            if (!cr) {
+              bold += 1;
+              continue;
+            }
+            const age = now - cr;
+            if (age < D30) b30 += 1;
+            else if (age < D90) b90 += 1;
+            else bold += 1;
+          }
+          return {
+            title: "Account age",
+            items: [
+              { label: "< 30 days", value: b30 },
+              { label: "30–90 days", value: b90 },
+              { label: "90+ days", value: bold },
+            ],
+          };
+        }
+        case "onlineNow":
+          return monthsCols("Presence by month (last 6)", (t) =>
+            tsOf(t?.last_seen_at ?? t?.lastSeenAt ?? t?.last_sign_in_at ?? t?.lastSignInAt));
+        case "newThisWeek":
+          return monthsCols("Joins by month (last 6)", (t) =>
+            tsOf(t?.created_at ?? t?.createdAt ?? t?.invited_at ?? t?.invitedAt));
+        case "activeSchools":
+          return monthsCols("Teacher growth by month", (t) =>
+            tsOf(t?.created_at ?? t?.createdAt ?? t?.invited_at ?? t?.invitedAt));
+        case "recentSignins":
+          return monthsCols("Sign-ins by month (last 6)", (t) =>
+            tsOf(t?.last_sign_in_at ?? t?.lastSignInAt ?? t?.last_seen_at ?? t?.lastSeenAt));
+        case "payslipsThisMonth": {
+          const leaves = vaultTeacherPaySlipLeavesForCharts();
+          if (leaves.length > 0) {
+            const buckets = new Map();
+            for (const page of leaves) {
+              const key = vaultTeacherPageSchoolLabel(page);
+              buckets.set(key, (buckets.get(key) || 0) + 1);
+            }
+            const items = [...buckets.entries()]
+              .map(([label, value]) => ({
+                label: String(label).length > 20 ? String(label).slice(0, 18) + "…" : String(label),
+                value,
+              }))
+              .sort((a, b) => b.value - a.value)
+              .slice(0, 8);
+            return { title: "Slips by school (vault)", items };
+          }
+          const schools = [
+            { code: "TG", label: "Talking Global", color: "#f97316" },
+            { code: "ME", label: "Magic English", color: "#22d3ee" },
+            { code: "SE", label: "Speak English", color: "#8b5cf6" },
+            { code: "NK", label: "Nice Kid", color: "#10b981" },
+            { code: "SL", label: "Sky Line", color: "#f59e0b" },
+          ];
+          const counts = new Map(schools.map((s) => [s.code, 0]));
+          if (Array.isArray(list)) {
+            for (const t of list) {
+              const sc = String(t?.school ?? t?.school_code ?? t?.school_id ?? "")
+                .trim().toUpperCase();
+              if (counts.has(sc)) counts.set(sc, (counts.get(sc) || 0) + 1);
+            }
+          }
+          const items = schools.map((s) => ({
+            label: s.label,
+            value: counts.get(s.code) || 0,
+            color: s.color,
+          })).sort((a, b) => b.value - a.value);
+          return { title: "Teachers per school", items };
+        }
+        default:
+          return { title: "More", items: [{ label: "—", value: 0 }] };
+      }
+    }
+
+    function computeChartDataForCardId(id) {
+      let r;
+      switch (id) {
+        case "totalTeachers": r = buildTotalTeachersData(); break;
+        case "onlineNow": r = buildOnlineNowData(); break;
+        case "newThisWeek": r = buildNewThisWeekData(); break;
+        case "activeSchools": r = buildActiveSchoolsData(); break;
+        case "payslipsThisMonth": r = buildPayslipsData(); break;
+        case "recentSignins": r = buildRecentSigninsData(); break;
+        default: r = emptyChartData(""); break;
+      }
+      if (r && !r.bar) r.bar = buildBarForCardId(id);
+      if (r) r.bar2 = buildBar2ForCardId(id);
+      return r;
+    }
+
+    function buildTotalTeachersData() {
+      const list = teachersList();
+      if (!Array.isArray(list) || list.length === 0) return emptyChartData("teachers");
+      let active = 0, disabled = 0;
+      for (const t of list) {
+        const off = t && (t.disabled === true || t.is_active === false || t.archived === true);
+        if (off) disabled += 1; else active += 1;
+      }
+      const donut = {
+        slices: [
+          { label: "Signed up / active", value: active, color: "#10b981" },
+          { label: "Disabled", value: disabled, color: "#94a3b8" },
+        ],
+        total: list.length,
+        centerLabel: String(active),
+        centerSub: "teachers",
+      };
+      const buckets = 8;
+      const points = new Array(buckets).fill(0);
+      const labels = [];
+      const now = Date.now();
+      const start = now - (buckets - 1) * 7 * 24 * 3600 * 1000;
+      for (let i = 0; i < buckets; i++) {
+        const d = new Date(start + i * 7 * 24 * 3600 * 1000);
+        labels.push((d.getMonth() + 1) + "/" + d.getDate());
+      }
+      for (const t of list) {
+        const cr = tsOf(t?.created_at ?? t?.createdAt ?? t?.invited_at ?? t?.invitedAt);
+        if (!cr) continue;
+        const ix = Math.floor((cr - start) / (7 * 24 * 3600 * 1000));
+        if (ix >= 0 && ix < buckets) points[ix] += 1;
+      }
+      let running = 0;
+      const cum = points.map((v) => (running += v));
+      return { donut, line: { points: cum, xLabels: labels, yLabel: "Cumulative sign-ups" } };
+    }
+
+    function buildOnlineNowData() {
+      const list = teachersList();
+      const now = Date.now();
+      const HR = 3600 * 1000;
+      let online = 0, recent = 0, today = 0, older = 0;
+      if (Array.isArray(list)) {
+        for (const t of list) {
+          const ls = tsOf(t?.last_seen_at ?? t?.lastSeenAt ?? t?.last_sign_in_at ?? t?.lastSignInAt);
+          if (!ls) { older += 1; continue; }
+          const age = now - ls;
+          if (age < 90 * 1000) online += 1;
+          else if (age < HR) recent += 1;
+          else if (age < 24 * HR) today += 1;
+          else older += 1;
+        }
+      }
+      const total = online + recent + today + older;
+      if (total === 0) return emptyChartData("online");
+      const donut = {
+        slices: [
+          { label: "Online now", value: online, color: "#10b981" },
+          { label: "< 1 hour", value: recent, color: "#22d3ee" },
+          { label: "< 24 hours", value: today, color: "#a78bfa" },
+          { label: "Older", value: older, color: "#cbd5e1" },
+        ],
+        total,
+        centerLabel: String(online),
+        centerSub: "live",
+      };
+      const buckets = 24;
+      const points = new Array(buckets).fill(0);
+      const labels = [];
+      const nowH = new Date();
+      for (let i = buckets - 1; i >= 0; i--) {
+        const h = (nowH.getHours() - i + 24) % 24;
+        labels.push(String(h).padStart(2, "0") + "h");
+      }
+      if (Array.isArray(list)) {
+        for (const t of list) {
+          const ls = tsOf(t?.last_seen_at ?? t?.lastSeenAt ?? t?.last_sign_in_at ?? t?.lastSignInAt);
+          if (!ls) continue;
+          const ageHr = Math.floor((now - ls) / HR);
+          if (ageHr >= 0 && ageHr < buckets) points[buckets - 1 - ageHr] += 1;
+        }
+      }
+      return { donut, line: { points, xLabels: labels, yLabel: "Last seen by hour" } };
+    }
+
+    function buildNewThisWeekData() {
+      const list = teachersList();
+      const now = Date.now();
+      const DAY = 24 * 3600 * 1000;
+      if (!Array.isArray(list) || list.length === 0) return emptyChartData("new joiners");
+      let weekN = 0, monthN = 0, older = 0;
+      for (const t of list) {
+        const cr = tsOf(t?.created_at ?? t?.createdAt ?? t?.invited_at ?? t?.invitedAt);
+        if (!cr) { older += 1; continue; }
+        const age = now - cr;
+        if (age < 7 * DAY) weekN += 1;
+        else if (age < 30 * DAY) monthN += 1;
+        else older += 1;
+      }
+      const donut = {
+        slices: [
+          { label: "This week", value: weekN, color: "#8b5cf6" },
+          { label: "This month", value: monthN, color: "#22d3ee" },
+          { label: "Older", value: older, color: "#cbd5e1" },
+        ],
+        total: weekN + monthN + older,
+        centerLabel: String(weekN),
+        centerSub: "this wk",
+      };
+      const buckets = 14;
+      const points = new Array(buckets).fill(0);
+      const labels = [];
+      const today0 = new Date();
+      today0.setHours(0, 0, 0, 0);
+      const startMs = today0.getTime() - (buckets - 1) * DAY;
+      for (let i = 0; i < buckets; i++) {
+        const d = new Date(startMs + i * DAY);
+        labels.push((d.getMonth() + 1) + "/" + d.getDate());
+      }
+      for (const t of list) {
+        const cr = tsOf(t?.created_at ?? t?.createdAt ?? t?.invited_at ?? t?.invitedAt);
+        if (!cr) continue;
+        const ix = Math.floor((cr - startMs) / DAY);
+        if (ix >= 0 && ix < buckets) points[ix] += 1;
+      }
+      return { donut, line: { points, xLabels: labels, yLabel: "Daily sign-ups" } };
+    }
+
+    function buildActiveSchoolsData() {
+      const schools = [
+        { label: "Talking Global", code: "TG", color: "#f97316" },
+        { label: "Magic English", code: "ME", color: "#22d3ee" },
+        { label: "Speak English", code: "SE", color: "#8b5cf6" },
+        { label: "Nice Kid", code: "NK", color: "#10b981" },
+        { label: "Sky Line", code: "SL", color: "#f59e0b" },
+      ];
+      const list = teachersList();
+      const counts = new Map(schools.map((s) => [s.code, 0]));
+      if (Array.isArray(list)) {
+        for (const t of list) {
+          const sc = String(t?.school ?? t?.school_code ?? t?.school_id ?? "")
+            .trim().toUpperCase();
+          if (counts.has(sc)) counts.set(sc, (counts.get(sc) || 0) + 1);
+        }
+      }
+      const hasCounts = [...counts.values()].some((v) => v > 0);
+      const slices = schools.map((s) => ({
+        label: s.code,
+        value: hasCounts ? counts.get(s.code) || 0 : 1,
+        color: s.color,
+      }));
+      const total = slices.reduce((a, b) => a + b.value, 0) || 5;
+      const donut = { slices, total, centerLabel: "5", centerSub: "schools" };
+      const months = 6;
+      const points = new Array(months).fill(0);
+      const labels = [];
+      const today0 = new Date();
+      today0.setDate(1); today0.setHours(0, 0, 0, 0);
+      for (let i = months - 1; i >= 0; i--) {
+        const d = new Date(today0);
+        d.setMonth(d.getMonth() - i);
+        labels.push(d.toLocaleString("default", { month: "short" }));
+      }
+      try {
+        const rt = (typeof rawTable !== "undefined") ? rawTable : null;
+        if (rt && Array.isArray(rt.rows) && rt.rows.length > 0) {
+          const base = Math.max(1, Math.floor(rt.rows.length / months));
+          for (let i = 0; i < months; i++) points[i] = base;
+          points[months - 1] += rt.rows.length - base * months;
+        }
+      } catch (_e) { /* ignore */ }
+      return { donut, line: { points, xLabels: labels, yLabel: "Active placements" } };
+    }
+
+    function buildPayslipsData() {
+      const leaves = vaultTeacherPaySlipLeavesForCharts();
+      if (leaves.length > 0) {
+        const buckets = new Map();
+        for (const page of leaves) {
+          const key = vaultTeacherPageSchoolLabel(page);
+          buckets.set(key, (buckets.get(key) || 0) + 1);
+        }
+        const palette = ["#ec4899", "#22d3ee", "#a78bfa", "#10b981", "#f97316", "#3b82f6", "#cbd5e1"];
+        const entries = [...buckets.entries()].sort((a, b) => b[1] - a[1]);
+        const slices = entries.map(([label, value], i) => ({
+          label, value, color: palette[i % palette.length],
+        }));
+        const total = leaves.length;
+        const donut = { slices, total, centerLabel: String(total), centerSub: "slips" };
+        const core = buildVaultPayslipChartsCore(leaves);
+        return {
+          donut,
+          line: { points: core.points, xLabels: core.labels, yLabel: "Pay slips per month" },
+        };
+      }
+
+      const rt = (typeof rawTable !== "undefined") ? rawTable : null;
+      if (!rt || !Array.isArray(rt.rows) || rt.rows.length === 0) return emptyChartData("pay slips");
+      let schoolColIx = -1;
+      if (Array.isArray(rt.columns)) {
+        for (let i = 0; i < rt.columns.length; i++) {
+          if (/^school$/i.test(String(rt.columns[i] || ""))) { schoolColIx = i; break; }
+        }
+      }
+      const bucketsRt = new Map();
+      for (const row of rt.rows) {
+        const key = schoolColIx >= 0
+          ? String(row?.[schoolColIx] ?? "").trim() || "Unknown"
+          : "All slips";
+        bucketsRt.set(key, (bucketsRt.get(key) || 0) + 1);
+      }
+      const paletteRt = ["#ec4899", "#22d3ee", "#a78bfa", "#10b981", "#f97316", "#3b82f6", "#cbd5e1"];
+      const entriesRt = [...bucketsRt.entries()].sort((a, b) => b[1] - a[1]);
+      const slicesRt = entriesRt.map(([label, value], i) => ({
+        label, value, color: paletteRt[i % paletteRt.length],
+      }));
+      const donutRt = { slices: slicesRt, total: rt.rows.length, centerLabel: String(rt.rows.length), centerSub: "slips" };
+      const months = 6;
+      const points = new Array(months).fill(0);
+      const labels = [];
+      const today0 = new Date();
+      today0.setDate(1); today0.setHours(0, 0, 0, 0);
+      for (let i = months - 1; i >= 0; i--) {
+        const d = new Date(today0);
+        d.setMonth(d.getMonth() - i);
+        labels.push(d.toLocaleString("default", { month: "short" }));
+      }
+      let dateColIx = -1;
+      if (Array.isArray(rt.columns)) {
+        for (let i = 0; i < rt.columns.length; i++) {
+          if (/date|pay\s*period|month/i.test(String(rt.columns[i] || ""))) { dateColIx = i; break; }
+        }
+      }
+      let filled = false;
+      if (dateColIx >= 0) {
+        for (const row of rt.rows) {
+          const ts = tsOf(row?.[dateColIx]);
+          if (!ts) continue;
+          const d = new Date(ts);
+          const idx = (today0.getFullYear() - d.getFullYear()) * 12
+            + (today0.getMonth() - d.getMonth());
+          if (idx >= 0 && idx < months) { points[months - 1 - idx] += 1; filled = true; }
+        }
+      }
+      if (!filled) {
+        const base = Math.max(1, Math.floor(rt.rows.length / months));
+        for (let i = 0; i < months; i++) points[i] = base;
+        points[months - 1] += rt.rows.length - base * months;
+      }
+      return { donut: donutRt, line: { points, xLabels: labels, yLabel: "Pay slips per month" } };
+    }
+
+    function buildRecentSigninsData() {
+      const list = teachersList();
+      const now = Date.now();
+      const HR = 3600 * 1000;
+      if (!Array.isArray(list) || list.length === 0) return emptyChartData("active");
+      let under1h = 0, under6h = 0, under24h = 0, older = 0;
+      for (const t of list) {
+        const ls = tsOf(t?.last_seen_at ?? t?.lastSeenAt ?? t?.last_sign_in_at ?? t?.lastSignInAt);
+        if (!ls) { older += 1; continue; }
+        const age = now - ls;
+        if (age < HR) under1h += 1;
+        else if (age < 6 * HR) under6h += 1;
+        else if (age < 24 * HR) under24h += 1;
+        else older += 1;
+      }
+      const donut = {
+        slices: [
+          { label: "< 1h", value: under1h, color: "#f59e0b" },
+          { label: "< 6h", value: under6h, color: "#22d3ee" },
+          { label: "< 24h", value: under24h, color: "#a78bfa" },
+          { label: "Older", value: older, color: "#cbd5e1" },
+        ],
+        total: under1h + under6h + under24h + older,
+        centerLabel: String(under1h + under6h + under24h),
+        centerSub: "active 24h",
+      };
+      const buckets = 24;
+      const points = new Array(buckets).fill(0);
+      const labels = [];
+      const nowH = new Date();
+      for (let i = buckets - 1; i >= 0; i--) {
+        const h = (nowH.getHours() - i + 24) % 24;
+        labels.push(String(h).padStart(2, "0"));
+      }
+      for (const t of list) {
+        const ls = tsOf(t?.last_seen_at ?? t?.lastSeenAt ?? t?.last_sign_in_at ?? t?.lastSignInAt);
+        if (!ls) continue;
+        const ageHr = Math.floor((now - ls) / HR);
+        if (ageHr >= 0 && ageHr < buckets) points[buckets - 1 - ageHr] += 1;
+      }
+      return { donut, line: { points, xLabels: labels, yLabel: "Sign-ins / hour" } };
+    }
+
+    const SVGNS = "http://www.w3.org/2000/svg";
+    function svgEl(name, attrs) {
+      const el = document.createElementNS(SVGNS, name);
+      if (attrs) for (const k of Object.keys(attrs)) el.setAttribute(k, String(attrs[k]));
+      return el;
+    }
+
+    /**
+     * Distinct, saturated bar fills for month-column charts (scales with many months).
+     * @param {number} ix
+     * @param {number} n
+     * @returns {string}
+     */
+    function rmeBarMonthFillByIndex(ix, n) {
+      const ns = Math.max(1, Math.floor(Number(n)) || 1);
+      const i = Math.max(0, Math.floor(Number(ix)) || 0);
+      const vivid = [
+        "#dc2626",
+        "#ea580c",
+        "#ca8a04",
+        "#84cc16",
+        "#16a34a",
+        "#059669",
+        "#0d9488",
+        "#0891b2",
+        "#0284c7",
+        "#2563eb",
+        "#4f46e5",
+        "#6d28d9",
+        "#7c3aed",
+        "#a21caf",
+        "#db2777",
+        "#e11d48",
+      ];
+      if (ns <= vivid.length) {
+        const stride = Math.max(1, Math.floor(vivid.length / ns));
+        const j = (i * stride + i * 7 + ns) % vivid.length;
+        return vivid[j];
+      }
+      const golden = (i * 137.50776405003785) % 360;
+      const spread = (360 * i) / ns;
+      const h = Math.round((golden * 0.42 + spread * 0.58) % 360);
+      const s = 94 + (i % 4);
+      const l = 44 + (i % 5) * 2.8;
+      return `hsl(${h} ${Math.min(s, 98)}% ${Math.min(Math.max(l, 40), 58)}%)`;
+    }
+
+    function renderBarMonthsRow(mount, data, _accent) {
+      if (!(mount instanceof HTMLElement)) return;
+      mount.replaceChildren();
+      const items = (data && Array.isArray(data.items)) ? data.items : [];
+      if (items.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "rme-chart-empty";
+        empty.textContent = "No monthly sign-ups yet.";
+        mount.appendChild(empty);
+        return;
+      }
+      const maxV = Math.max(1, ...items.map((it) => Number(it.value) || 0));
+      const W = 680;
+      const padX = 20;
+      const padTop = 6;
+      const labY = 106;
+      const baseline = 88;
+      const maxBarH = baseline - padTop - 4;
+      const n = items.length;
+      const gap = 10;
+      const innerW = W - 2 * padX;
+      const barW = Math.max(5, Math.min(11, (innerW - gap * (n - 1)) / n));
+      const totalW = n * barW + (n - 1) * gap;
+      const xStart = padX + (innerW - totalW) / 2;
+      const H = 120;
+      const sv = svgEl("svg", {
+        class: "rme-chart-bar-svg rme-chart-bar-svg--months",
+        viewBox: "0 0 " + W + " " + H,
+        role: "img",
+        "aria-label": "Monthly sign-ups",
+      });
+      for (let ix = 0; ix < n; ix++) {
+        const it = items[ix];
+        const v = Number(it.value) || 0;
+        const h = (v / maxV) * maxBarH;
+        const x = xStart + ix * (barW + gap);
+        const y = baseline - h;
+        sv.appendChild(svgEl("rect", {
+          class: "rme-bar-track",
+          x: x, y: padTop, width: barW, height: baseline - padTop, rx: 4, ry: 4,
+        }));
+        if (h > 0) {
+          const fill = svgEl("rect", {
+            x: x, y: y, width: barW, height: h, rx: 3, ry: 3,
+          });
+          fill.setAttribute(
+            "fill",
+            it.color || rmeBarMonthFillByIndex(ix, n),
+          );
+          sv.appendChild(fill);
+        }
+        if (v > 0 && h > 14) {
+          const vt = svgEl("text", {
+            class: "rme-bar-value",
+            x: x + barW / 2, y: y - 4,
+            "text-anchor": "middle",
+          });
+          vt.textContent = String(v);
+          sv.appendChild(vt);
+        }
+        const lbl = svgEl("text", {
+          class: "rme-bar-label",
+          x: x + barW / 2, y: labY,
+          "text-anchor": "middle",
+        });
+        lbl.textContent = String(it.label || "");
+        sv.appendChild(lbl);
+      }
+      mount.appendChild(sv);
+    }
+
+    function renderBar(mount, data, accent) {
+      if (!(mount instanceof HTMLElement)) return;
+      mount.replaceChildren();
+      if (!data || !Array.isArray(data.items)) {
+        const empty = document.createElement("div");
+        empty.className = "rme-chart-empty";
+        empty.textContent = "No breakdown data yet. \uD83D\uDCCA Fills in as activity grows.";
+        mount.appendChild(empty);
+        return;
+      }
+      if (data.layout === "months-columns") {
+        renderBarMonthsRow(mount, data, accent);
+        return;
+      }
+      const items = data.items;
+      if (items.length === 0 || items.every((it) => (Number(it.value) || 0) === 0)) {
+        const empty = document.createElement("div");
+        empty.className = "rme-chart-empty";
+        empty.textContent = "No breakdown data yet. \uD83D\uDCCA Fills in as activity grows.";
+        mount.appendChild(empty);
+        return;
+      }
+      const maxV = Math.max(1, ...items.map((it) => Number(it.value) || 0));
+      const rowH = 13;
+      const gap = 4;
+      const padTop = 5;
+      const padBot = 5;
+      const padL = 88;
+      const padR = 40;
+      const W = 560;
+      const H = padTop + padBot + items.length * rowH + (items.length - 1) * gap;
+      const innerW = W - padL - padR;
+      const sv = svgEl("svg", {
+        class: "rme-chart-bar-svg",
+        viewBox: "0 0 " + W + " " + H,
+        role: "img",
+        "aria-label": "Bar chart",
+      });
+      items.forEach((it, ix) => {
+        const y = padTop + ix * (rowH + gap);
+        const v = Number(it.value) || 0;
+        const w = (v / maxV) * innerW;
+        const lbl = svgEl("text", {
+          class: "rme-bar-label",
+          x: padL - 8, y: y + rowH / 2 + 4, "text-anchor": "end",
+        });
+        lbl.textContent = String(it.label || "");
+        sv.appendChild(lbl);
+        sv.appendChild(svgEl("rect", {
+          class: "rme-bar-track",
+          x: padL, y: y, width: innerW, height: rowH, rx: 4, ry: 4,
+        }));
+        if (w > 0) {
+          const fill = svgEl("rect", {
+            x: padL, y: y, width: w, height: rowH, rx: 4, ry: 4,
+          });
+          fill.setAttribute("fill", it.color || accent);
+          sv.appendChild(fill);
+        }
+        const val = svgEl("text", {
+          class: "rme-bar-value",
+          x: padL + Math.max(w, 0) + 6, y: y + rowH / 2 + 4,
+          "text-anchor": "start",
+        });
+        val.textContent = String(v);
+        sv.appendChild(val);
+      });
+      mount.appendChild(sv);
+    }
+
+    function renderDonut(mount, data, accent) {
+      if (!(mount instanceof HTMLElement)) return;
+      mount.replaceChildren();
+      const slices = (data.slices || []).filter((s) => s.value > 0);
+      const total = slices.reduce((a, b) => a + b.value, 0);
+      if (total === 0) {
+        const empty = document.createElement("div");
+        empty.className = "rme-chart-empty";
+        empty.textContent = "No data yet — once teachers sign up this fills in. ✨";
+        mount.appendChild(empty);
+        return;
+      }
+      const size = 220, cx = size / 2, cy = size / 2;
+      const rOuter = 90, rInner = 74;
+      const sv = svgEl("svg", {
+        class: "rme-chart-svg",
+        viewBox: "0 0 " + size + " " + size,
+        role: "img",
+        "aria-label": "Donut chart",
+      });
+      if (slices.length === 1) {
+        const ringD = [
+          "M", (cx - rOuter), cy,
+          "a", rOuter, rOuter, 0, 1, 0, (rOuter * 2), 0,
+          "a", rOuter, rOuter, 0, 1, 0, (-rOuter * 2), 0,
+          "M", (cx - rInner), cy,
+          "a", rInner, rInner, 0, 1, 1, (rInner * 2), 0,
+          "a", rInner, rInner, 0, 1, 1, (-rInner * 2), 0,
+          "Z",
+        ].join(" ");
+        const p = svgEl("path", { d: ringD, fill: slices[0].color, "fill-rule": "evenodd" });
+        const ttl = svgEl("title");
+        ttl.textContent = slices[0].label + ": " + slices[0].value + " (100%)";
+        p.appendChild(ttl);
+        sv.appendChild(p);
+      } else {
+        let a0 = -Math.PI / 2;
+        for (const s of slices) {
+          const frac = s.value / total;
+          const a1 = a0 + frac * Math.PI * 2;
+          const large = frac > 0.5 ? 1 : 0;
+          const x0 = cx + rOuter * Math.cos(a0);
+          const y0 = cy + rOuter * Math.sin(a0);
+          const x1 = cx + rOuter * Math.cos(a1);
+          const y1 = cy + rOuter * Math.sin(a1);
+          const xi1 = cx + rInner * Math.cos(a1);
+          const yi1 = cy + rInner * Math.sin(a1);
+          const xi0 = cx + rInner * Math.cos(a0);
+          const yi0 = cy + rInner * Math.sin(a0);
+          const d = [
+            "M", x0, y0,
+            "A", rOuter, rOuter, 0, large, 1, x1, y1,
+            "L", xi1, yi1,
+            "A", rInner, rInner, 0, large, 0, xi0, yi0,
+            "Z",
+          ].join(" ");
+          const p = svgEl("path", { d: d, fill: s.color });
+          const ttl = svgEl("title");
+          ttl.textContent = s.label + ": " + s.value + " (" + Math.round(frac * 100) + "%)";
+          p.appendChild(ttl);
+          sv.appendChild(p);
+          a0 = a1;
+        }
+      }
+      const cText = svgEl("text", {
+        x: cx, y: cy - 2,
+        "text-anchor": "middle", "dominant-baseline": "central",
+        class: "rme-donut-center",
+      });
+      cText.textContent = data.centerLabel || String(total);
+      sv.appendChild(cText);
+      if (data.centerSub) {
+        const sText = svgEl("text", {
+          x: cx, y: cy + 17,
+          "text-anchor": "middle", "dominant-baseline": "central",
+          class: "rme-donut-center-sub",
+        });
+        sText.textContent = data.centerSub;
+        sv.appendChild(sText);
+      }
+      mount.appendChild(sv);
+      const legend = document.createElement("div");
+      legend.className = "rme-chart-legend";
+      for (const s of slices) {
+        const item = document.createElement("span");
+        item.className = "rme-chart-legend-item";
+        const dot = document.createElement("span");
+        dot.className = "rme-chart-legend-dot";
+        dot.style.background = s.color;
+        const lab = document.createElement("span");
+        lab.className = "rme-chart-legend-label";
+        lab.textContent = s.label;
+        const val = document.createElement("span");
+        val.className = "rme-chart-legend-value";
+        val.textContent = " · " + s.value;
+        item.appendChild(dot);
+        item.appendChild(lab);
+        item.appendChild(val);
+        legend.appendChild(item);
+      }
+      mount.appendChild(legend);
+    }
+
+    function renderLine(mount, data, accent) {
+      if (!(mount instanceof HTMLElement)) return;
+      mount.replaceChildren();
+      const points = (data.points || []).map((n) => Number(n) || 0);
+      const labels = data.xLabels || [];
+      if (points.length === 0 || points.every((v) => v === 0)) {
+        const empty = document.createElement("div");
+        empty.className = "rme-chart-empty";
+        empty.textContent = "No trend data yet. \uD83D\uDCC9 Charts fill in as data grows.";
+        mount.appendChild(empty);
+        return;
+      }
+      const W = 480, H = 200, padL = 32, padR = 10, padT = 12, padB = 24;
+      const innerW = W - padL - padR, innerH = H - padT - padB;
+      const maxY = Math.max(1, ...points);
+      const xStep = points.length > 1 ? innerW / (points.length - 1) : innerW;
+      const xy = points.map((v, i) => [
+        padL + i * xStep,
+        padT + innerH - (v / maxY) * innerH,
+      ]);
+      const sv = svgEl("svg", {
+        class: "rme-chart-line-svg",
+        viewBox: "0 0 " + W + " " + H,
+        preserveAspectRatio: "xMidYMid meet",
+        role: "img",
+        "aria-label": "Line chart",
+      });
+      const gradId = "rmeLineAreaGradient_" + Math.random().toString(36).slice(2, 8);
+      const defs = svgEl("defs");
+      const grad = svgEl("linearGradient", {
+        id: gradId, x1: "0", y1: "0", x2: "0", y2: "1",
+      });
+      grad.appendChild(svgEl("stop", { offset: "0%", "stop-color": accent, "stop-opacity": "0.26" }));
+      grad.appendChild(svgEl("stop", { offset: "100%", "stop-color": accent, "stop-opacity": "0" }));
+      defs.appendChild(grad);
+      sv.appendChild(defs);
+      for (let i = 0; i <= 4; i++) {
+        const y = padT + (innerH / 4) * i;
+        sv.appendChild(svgEl("line", {
+          class: "rme-line-grid",
+          x1: padL, x2: padL + innerW, y1: y, y2: y,
+        }));
+        const lab = svgEl("text", {
+          class: "rme-line-axis-label",
+          x: padL - 6, y: y + 3, "text-anchor": "end",
+        });
+        lab.textContent = String(Math.round(maxY - (maxY / 4) * i));
+        sv.appendChild(lab);
+      }
+      const xLabelStep = Math.max(1, Math.ceil(points.length / 6));
+      for (let i = 0; i < points.length; i += xLabelStep) {
+        const lab = svgEl("text", {
+          class: "rme-line-axis-label",
+          x: xy[i][0], y: H - 8, "text-anchor": "middle",
+        });
+        lab.textContent = labels[i] || "";
+        sv.appendChild(lab);
+      }
+      const areaD = [
+        "M", padL, padT + innerH,
+        ...xy.flatMap(([x, y]) => ["L", x, y]),
+        "L", padL + (points.length - 1) * xStep, padT + innerH,
+        "Z",
+      ].join(" ");
+      const areaPath = svgEl("path", { d: areaD });
+      areaPath.setAttribute("fill", "url(#" + gradId + ")");
+      sv.appendChild(areaPath);
+      const strokeD = xy.map(([x, y], i) => (i === 0 ? "M " + x + " " + y : "L " + x + " " + y)).join(" ");
+      const stroke = svgEl("path", { class: "rme-line-stroke", d: strokeD });
+      stroke.setAttribute("stroke", accent);
+      sv.appendChild(stroke);
+      for (let i = 0; i < xy.length; i++) {
+        const [x, y] = xy[i];
+        const dot = svgEl("circle", { cx: x, cy: y, r: 3 });
+        dot.setAttribute("fill", accent);
+        dot.setAttribute("stroke", "#fff");
+        dot.setAttribute("stroke-width", "1.25");
+        const t = svgEl("title");
+        t.textContent = (labels[i] || ("#" + (i + 1))) + ": " + points[i];
+        dot.appendChild(t);
+        sv.appendChild(dot);
+      }
+      mount.appendChild(sv);
+    }
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init, { once: true });
+  } else {
+    window.setTimeout(init, 0);
+  }
+})();
+
+// === RME: dashboard extra sections (pay slips + teacher IDs) ==============
+(function rmeAddDashboardExtraSections() {
+  let initialized = false;
+  let payslipsBody = null;
+  let teachersBody = null;
+  let extraRoot = null;
+  let extraTeacherCache = null;
+
+  function injectStyles() {
+    if (document.getElementById("rmeExtraSectionsStyles")) return;
+    const style = document.createElement("style");
+    style.id = "rmeExtraSectionsStyles";
+    style.textContent = [
+      ".rme-extra-sections{display:grid;grid-template-columns:1fr;",
+      "gap:1.1rem;margin:1.6rem auto .4rem;max-width:1320px;",
+      "padding:0 1.6rem;box-sizing:border-box;}",
+      "@media (min-width:1080px){.rme-extra-sections{grid-template-columns:1fr 1fr;}}",
+      ".rme-extra-card{position:relative;display:flex;flex-direction:column;",
+      "padding:1.15rem 1.2rem 1.2rem;border-radius:16px;min-height:280px;",
+      "background:color-mix(in srgb,var(--surface,#fff) 55%,transparent);",
+      "border:1px solid color-mix(in srgb,var(--text) 6%,transparent);",
+      "box-shadow:0 1px 2px color-mix(in srgb,#000 4%,transparent);}",
+      ".rme-extra-card::before{content:\"\";position:absolute;top:0;left:0;right:0;",
+      "height:3px;border-radius:16px 16px 0 0;",
+      "background:var(--rme-accent,#3b82f6);opacity:.9;}",
+      ".rme-extra-card-head{display:flex;align-items:flex-start;gap:.7rem;",
+      "margin-bottom:.95rem;}",
+      ".rme-extra-card-icon{display:flex;align-items:center;justify-content:center;",
+      "width:34px;height:34px;border-radius:10px;flex:0 0 auto;font-size:1.05rem;",
+      "background:color-mix(in srgb,var(--rme-accent,#3b82f6) 14%,transparent);",
+      "color:var(--rme-accent,#3b82f6);}",
+      ".rme-extra-card-titles{display:flex;flex-direction:column;gap:.15rem;",
+      "min-width:0;flex:1;}",
+      ".rme-extra-card-title{font-size:.95rem;font-weight:600;color:var(--text);",
+      "line-height:1.2;margin:0;}",
+      ".rme-extra-card-subtitle{font-size:.78rem;color:var(--text-muted,#6b7280);",
+      "line-height:1.3;margin:0;}",
+      ".rme-extra-card-count{font-size:.72rem;color:var(--text-muted,#6b7280);",
+      "font-weight:600;font-variant-numeric:tabular-nums;",
+      "padding:.2rem .55rem;border-radius:999px;",
+      "background:color-mix(in srgb,var(--text) 6%,transparent);}",
+      ".rme-extra-card-body{flex:1;min-height:0;overflow:auto;border-radius:10px;",
+      "max-height:340px;}",
+      ".rme-extra-table{width:100%;border-collapse:collapse;font-size:.82rem;}",
+      ".rme-extra-table th{position:sticky;top:0;z-index:1;",
+      "background:color-mix(in srgb,var(--surface,#fff) 94%,transparent);",
+      "backdrop-filter:blur(4px);text-align:left;font-weight:600;",
+      "color:var(--text-muted,#6b7280);padding:.55rem .65rem;",
+      "border-bottom:1px solid color-mix(in srgb,var(--text) 8%,transparent);",
+      "font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;}",
+      ".rme-extra-table td{padding:.55rem .65rem;color:var(--text);",
+      "border-bottom:1px solid color-mix(in srgb,var(--text) 5%,transparent);",
+      "vertical-align:top;}",
+      ".rme-extra-table tr:last-child td{border-bottom:none;}",
+      ".rme-extra-table tbody tr:hover td{",
+      "background:color-mix(in srgb,var(--rme-accent,#3b82f6) 6%,transparent);}",
+      ".rme-extra-id-pill{display:inline-block;padding:.2rem .6rem;",
+      "border-radius:999px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;",
+      "font-size:.72rem;cursor:pointer;border:none;color:var(--text);",
+      "background:color-mix(in srgb,var(--text) 8%,transparent);",
+      "transition:background .15s ease;}",
+      ".rme-extra-id-pill:hover{",
+      "background:color-mix(in srgb,var(--rme-accent,#3b82f6) 22%,transparent);}",
+      ".rme-extra-id-pill.is-copied{",
+      "background:color-mix(in srgb,#10b981 30%,transparent);color:#065f46;}",
+      ".rme-extra-empty{padding:1.5rem 1rem;text-align:center;",
+      "color:var(--text-muted,#6b7280);font-size:.85rem;}",
+      ".rme-extra-card--blue{--rme-accent:#3b82f6;}",
+      ".rme-extra-card--purple{--rme-accent:#8b5cf6;}",
+    ].join("");
+    document.head.appendChild(style);
+  }
+
+  function makeSection(opts) {
+    const root = document.createElement("div");
+    root.id = opts.id;
+    root.className = "rme-extra-card rme-extra-card--" + (opts.accent || "blue");
+    const head = document.createElement("div");
+    head.className = "rme-extra-card-head";
+    const icon = document.createElement("div");
+    icon.className = "rme-extra-card-icon";
+    icon.textContent = opts.icon || "\uD83D\uDCCA";
+    const titles = document.createElement("div");
+    titles.className = "rme-extra-card-titles";
+    const t = document.createElement("h4");
+    t.className = "rme-extra-card-title";
+    t.textContent = opts.title || "";
+    const s = document.createElement("p");
+    s.className = "rme-extra-card-subtitle";
+    s.textContent = opts.subtitle || "";
+    titles.appendChild(t);
+    titles.appendChild(s);
+    const count = document.createElement("span");
+    count.className = "rme-extra-card-count";
+    count.textContent = "";
+    head.appendChild(icon);
+    head.appendChild(titles);
+    head.appendChild(count);
+    const body = document.createElement("div");
+    body.className = "rme-extra-card-body";
+    root.appendChild(head);
+    root.appendChild(body);
+    return { root, body, count };
+  }
+
+  let payslipsCount = null;
+  let teachersCount = null;
+
+  function init() {
+    if (initialized) return;
+    const home = document.getElementById("homeContent");
+    if (!home) return;
+    initialized = true;
+
+    injectStyles();
+
+    extraRoot = document.createElement("section");
+    extraRoot.id = "rmeDashboardExtraSections";
+    extraRoot.className = "rme-extra-sections";
+
+    const psBox = makeSection({
+      id: "rmeExtraPayslips",
+      accent: "blue",
+      icon: "\uD83D\uDCC4",
+      title: "Recent teacher pay slips",
+      subtitle: "Latest entries from the pay slips database",
+    });
+    payslipsBody = psBox.body;
+    payslipsCount = psBox.count;
+
+    const tBox = makeSection({
+      id: "rmeExtraTeachers",
+      accent: "purple",
+      icon: "\uD83E\uDEAA",
+      title: "Teachers — names & Notion row IDs",
+      subtitle: "Click an ID to copy it to your clipboard",
+    });
+    teachersBody = tBox.body;
+    teachersCount = tBox.count;
+
+    extraRoot.appendChild(psBox.root);
+    extraRoot.appendChild(tBox.root);
+
+    const charts = document.getElementById("rmeAnalyticsChartsPanel");
+    const analyticsRoot = document.getElementById("rmeAnalyticsRoot");
+    const anchor = charts || analyticsRoot;
+    if (anchor && anchor.parentNode) {
+      anchor.insertAdjacentElement("afterend", extraRoot);
+    } else {
+      home.appendChild(extraRoot);
+    }
+
+    render();
+    fetchExtraTeachersAsync();
+    setInterval(() => { try { render(); } catch (_) {} }, 10000);
+  }
+
+  async function fetchExtraTeachersAsync() {
+    if (!window.teacherAuth) return;
+    const candidates = [
+      "listAdminTeachers", "fetchAdminTeachers", "loadAdminTeachers",
+      "getAdminTeachers", "listTeachersForAdmin", "listAllTeachers",
+      "fetchTeachers", "listTeachers",
+    ];
+    for (const fn of candidates) {
+      try {
+        if (typeof window.teacherAuth[fn] === "function") {
+          const res = await window.teacherAuth[fn]();
+          const list = Array.isArray(res) ? res
+            : (res && Array.isArray(res.data) ? res.data
+            : (res && Array.isArray(res.teachers) ? res.teachers : null));
+          if (list) {
+            extraTeacherCache = list;
+            render();
+            return;
+          }
+        }
+      } catch (_) { /* ignore */ }
+    }
+  }
+
+  function render() {
+    if (!payslipsBody || !teachersBody) return;
+    try { renderPayslips(); } catch (_) {}
+    try { renderTeachers(); } catch (_) {}
+  }
+
+  function renderPayslips() {
+    payslipsBody.replaceChildren();
+    const rt = (typeof rawTable !== "undefined") ? rawTable : null;
+    if (!rt || !Array.isArray(rt.rows) || rt.rows.length === 0) {
+      if (payslipsCount) payslipsCount.textContent = "";
+      const e = document.createElement("div");
+      e.className = "rme-extra-empty";
+      e.textContent = "No pay slips loaded yet. \uD83D\uDCED";
+      payslipsBody.appendChild(e);
+      return;
+    }
+    if (payslipsCount) payslipsCount.textContent = String(rt.rows.length) + " total";
+    const columns = Array.isArray(rt.columns) ? rt.columns : [];
+    const showCols = columns.slice(0, 5);
+    const table = document.createElement("table");
+    table.className = "rme-extra-table";
+    const thead = document.createElement("thead");
+    const htr = document.createElement("tr");
+    if (showCols.length === 0) {
+      const th = document.createElement("th");
+      th.textContent = "Row";
+      htr.appendChild(th);
+    } else {
+      showCols.forEach((c) => {
+        const th = document.createElement("th");
+        th.textContent = String(c || "");
+        htr.appendChild(th);
+      });
+    }
+    thead.appendChild(htr);
+    table.appendChild(thead);
+    const tbody = document.createElement("tbody");
+    const rows = rt.rows.slice(0, 15);
+    rows.forEach((row) => {
+      const tr = document.createElement("tr");
+      const cells = showCols.length === 0 ? [row] : showCols.map((_, i) => row?.[i]);
+      cells.forEach((v) => {
+        const td = document.createElement("td");
+        td.textContent = v == null ? "—" : String(v);
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    payslipsBody.appendChild(table);
+  }
+
+  function renderTeachers() {
+    teachersBody.replaceChildren();
+    const list = extraTeacherCache;
+    if (!Array.isArray(list) || list.length === 0) {
+      if (teachersCount) teachersCount.textContent = "";
+      const e = document.createElement("div");
+      e.className = "rme-extra-empty";
+      e.textContent = "Loading teachers… ⏳ (or none added yet)";
+      teachersBody.appendChild(e);
+      return;
+    }
+    if (teachersCount) teachersCount.textContent = String(list.length) + " total";
+    const table = document.createElement("table");
+    table.className = "rme-extra-table";
+    const thead = document.createElement("thead");
+    const htr = document.createElement("tr");
+    ["Name", "Email", "Notion row ID"].forEach((c) => {
+      const th = document.createElement("th");
+      th.textContent = c;
+      htr.appendChild(th);
+    });
+    thead.appendChild(htr);
+    table.appendChild(thead);
+    const tbody = document.createElement("tbody");
+    list.slice(0, 50).forEach((t) => {
+      const tr = document.createElement("tr");
+      const nameTd = document.createElement("td");
+      const name = t?.name ?? t?.full_name ?? t?.display_name
+        ?? t?.fullName ?? t?.displayName ?? "";
+      nameTd.textContent = String(name || "—");
+      const emailTd = document.createElement("td");
+      const email = t?.email ?? t?.email_address ?? t?.emailAddress ?? "";
+      emailTd.textContent = String(email || "—");
+      const idTd = document.createElement("td");
+      const id = t?.notion_id ?? t?.notion_page_id ?? t?.notionId
+        ?? t?.notionPageId ?? t?.page_id ?? t?.pageId ?? t?.id ?? "";
+      if (id) {
+        const pill = document.createElement("button");
+        pill.className = "rme-extra-id-pill";
+        pill.type = "button";
+        const idStr = String(id);
+        const short = idStr.length > 20 ? idStr.slice(0, 8) + "…" + idStr.slice(-6) : idStr;
+        pill.textContent = short;
+        pill.title = idStr + " — click to copy";
+        pill.addEventListener("click", () => {
+          try {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(idStr);
+            }
+            const prev = pill.textContent;
+            pill.classList.add("is-copied");
+            pill.textContent = "Copied ✓";
+            setTimeout(() => {
+              pill.classList.remove("is-copied");
+              pill.textContent = prev;
+            }, 1100);
+          } catch (_) { /* ignore */ }
+        });
+        idTd.appendChild(pill);
+      } else {
+        idTd.textContent = "—";
+      }
+      tr.appendChild(nameTd);
+      tr.appendChild(emailTd);
+      tr.appendChild(idTd);
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    teachersBody.appendChild(table);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => setTimeout(init, 60));
+  } else {
+    setTimeout(init, 60);
+  }
+})();
+
+// === RME: dashboard pay slips + IDs nav cards =============================
+// Compact stat-card-style nav tiles on the Dashboard. They look identical to
+// the analytics cards above. Click behavior:
+//   - Pay slips  -> activate __payslips and scroll to the pay slips section
+//   - IDs        -> activate Vault > Names & Notion row IDs (__vaultNotionLinks)
+// Also strips the previous big extra-sections build so the dashboard stays clean.
+(function rmeAddDashboardNavCards() {
+  function init() {
+    const root = document.getElementById("rmeAnalyticsRoot");
+    if (!(root instanceof HTMLElement)) { window.setTimeout(init, 250); return; }
+    if (document.getElementById("rmeNavCardsGrid")) return;
+
+    // Strip the previous bigger extra-sections build if present.
+    const oldEl = document.getElementById("rmeDashboardExtraSections");
+    if (oldEl) oldEl.remove();
+
+    const styleEl = document.createElement("style");
+    styleEl.id = "rmeNavCardsStyles";
+    styleEl.textContent = [
+      "#rmeNavCardsGrid{display:grid;",
+      "grid-template-columns:repeat(auto-fit,minmax(230px,1fr));",
+      "gap:.85rem;margin:.95rem 0 0;}",
+      "#rmeNavCardsGrid .rme-stat-card{cursor:pointer;user-select:none;",
+      "transition:transform .2s ease,box-shadow .2s ease,border-color .2s ease;}",
+      "#rmeNavCardsGrid .rme-stat-card:hover{transform:translateY(-2px);",
+      "border-color:color-mix(in srgb,var(--rme-accent,#3b82f6) 45%,transparent);",
+      "box-shadow:0 2px 4px rgba(0,0,0,.05),0 14px 36px -14px rgba(0,0,0,.26);}",
+      "#rmeNavCardsGrid .rme-stat-card:active{transform:translateY(0);}",
+      "#rmeNavCardsGrid .rme-stat-card:focus-visible{outline:2px solid var(--rme-accent,#3b82f6);outline-offset:3px;}",
+      "#rmeNavCardsGrid .rme-stat-cta{position:absolute;top:1.1rem;right:1.1rem;",
+      "color:var(--text-muted,#6b7280);font-size:1.1rem;line-height:1;font-weight:600;",
+      "transition:transform .2s ease,color .2s ease;}",
+      "#rmeNavCardsGrid .rme-stat-card:hover .rme-stat-cta{",
+      "color:var(--rme-accent,#3b82f6);transform:translateX(3px);}",
+    ].join("");
+    document.head.appendChild(styleEl);
+
+    function makeCard(opts) {
+      const card = document.createElement("article");
+      card.className = "rme-stat-card rme-stat-card--" + (opts.accent || "blue");
+      card.setAttribute("role", "button");
+      card.setAttribute("tabindex", "0");
+      card.setAttribute("aria-label", opts.label);
+      const ic = document.createElement("div");
+      ic.className = "rme-stat-icon";
+      ic.textContent = opts.icon;
+      ic.setAttribute("aria-hidden", "true");
+      const body = document.createElement("div");
+      body.className = "rme-stat-body";
+      const lbl = document.createElement("div");
+      lbl.className = "rme-stat-label";
+      lbl.textContent = opts.label;
+      const val = document.createElement("div");
+      val.className = "rme-stat-value rme-stat-value--loading";
+      val.textContent = "—";
+      const meta = document.createElement("div");
+      meta.className = "rme-stat-meta";
+      meta.textContent = opts.meta || "";
+      body.appendChild(lbl); body.appendChild(val); body.appendChild(meta);
+      const cta = document.createElement("span");
+      cta.className = "rme-stat-cta";
+      cta.setAttribute("aria-hidden", "true");
+      cta.textContent = "›";
+      card.appendChild(ic); card.appendChild(body); card.appendChild(cta);
+      card.addEventListener("click", opts.onActivate);
+      card.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") {
+          ev.preventDefault();
+          opts.onActivate();
+        }
+      });
+      return { card, val, meta };
+    }
+
+    function openPayslipsPage() {
+      try {
+        if (typeof activateNotionWorkspacePage === "function") {
+          activateNotionWorkspacePage("__payslips");
+        }
+      } catch (e) { console.warn("nav card payslips:", e); }
+      // Already on the dashboard? Scroll down to the pay slips section so
+      // tapping the card always lands the user on the slips view.
+      window.setTimeout(() => {
+        try {
+          const det = document.getElementById("notionDetails");
+          if (det instanceof HTMLElement) {
+            det.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
+        } catch (_e) { /* ignore */ }
+      }, 60);
+    }
+
+    function openVaultIdsPage() {
+      try {
+        if (typeof activateNotionWorkspacePage === "function") {
+          activateNotionWorkspacePage("__vaultNotionLinks");
+        }
+      } catch (e) { console.warn("nav card vault ids:", e); }
+    }
+
+    const psCard = makeCard({
+      accent: "blue",
+      icon: "\uD83D\uDCC4",
+      label: "Teacher pay slips",
+      meta: "Open the pay slips section",
+      onActivate: openPayslipsPage,
+    });
+    const idCard = makeCard({
+      accent: "purple",
+      icon: "\uD83E\uDEAA",
+      label: "Names & Notion row IDs",
+      meta: "Open Vault → Notion links",
+      onActivate: openVaultIdsPage,
+    });
+
+    const grid = document.createElement("div");
+    grid.id = "rmeNavCardsGrid";
+    grid.appendChild(psCard.card);
+    grid.appendChild(idCard.card);
+
+    const analyticsGrid = root.querySelector(".rme-analytics-grid");
+    if (analyticsGrid instanceof HTMLElement) {
+      analyticsGrid.insertAdjacentElement("afterend", grid);
+    } else {
+      root.appendChild(grid);
+    }
+
+    function refreshPayslips() {
+      try {
+        const rt = (typeof rawTable !== "undefined") ? rawTable : null;
+        if (rt && Array.isArray(rt.rows)) {
+          psCard.val.textContent = String(rt.rows.length);
+          psCard.val.classList.remove("rme-stat-value--loading");
+          psCard.meta.textContent = rt.rows.length === 1
+            ? "1 slip on file · tap to open"
+            : rt.rows.length + " slips on file · tap to open";
+        }
+      } catch (_e) { /* ignore */ }
+    }
+
+    async function refreshTeacherCount() {
+      const ta = window.teacherAuth;
+      if (!ta) return;
+      const names = ["listAdminTeachers", "fetchAdminTeachers", "loadAdminTeachers",
+        "getAdminTeachers", "listTeachersForAdmin", "listAllTeachers",
+        "fetchTeachers", "listTeachers"];
+      for (const name of names) {
+        if (typeof ta[name] === "function") {
+          try {
+            const r = await ta[name]();
+            let list = null;
+            if (r && Array.isArray(r.teachers)) list = r.teachers;
+            else if (r && Array.isArray(r.rows)) list = r.rows;
+            else if (r && Array.isArray(r.data)) list = r.data;
+            else if (Array.isArray(r)) list = r;
+            if (list) {
+              idCard.val.textContent = String(list.length);
+              idCard.val.classList.remove("rme-stat-value--loading");
+              idCard.meta.textContent = list.length === 1
+                ? "1 teacher · tap for IDs"
+                : list.length + " teachers · tap for IDs";
+              return;
+            }
+          } catch (_e) { /* try next */ }
+        }
+      }
+    }
+
+    refreshPayslips();
+    void refreshTeacherCount();
+    window.rmeIdlePower?.runOnAdaptiveInterval?.(refreshPayslips, {
+      activeMs: 20000,
+      idleMs: 60000,
+      hiddenMs: 180000,
+      shouldRun: () => {
+        const ng = document.getElementById("rmeNavCardsGrid");
+        return ng instanceof HTMLElement && ng.isConnected;
+      },
+    }) ?? window.setInterval(refreshPayslips, 8000);
+    window.rmeIdlePower?.runOnAdaptiveInterval?.(
+      () => {
+        void refreshTeacherCount();
+      },
+      {
+        activeMs: 60000,
+        idleMs: 180000,
+        hiddenMs: 300000,
+        shouldRun: () => {
+          const ng = document.getElementById("rmeNavCardsGrid");
+          return ng instanceof HTMLElement && ng.isConnected;
+        },
+      },
+    ) ?? window.setInterval(() => void refreshTeacherCount(), 30000);
+
+    // Defense in depth: if the previous build's sections sneak back in, drop them.
+    window.rmeIdlePower?.runOnAdaptiveInterval?.(
+      () => {
+        const stale = document.getElementById("rmeDashboardExtraSections");
+        if (stale) stale.remove();
+      },
+      {
+        activeMs: 30000,
+        idleMs: 120000,
+        hiddenMs: 300000,
+        shouldRun: () => window.rmeIdlePower?.isDomPageVisible?.("pageHome"),
+      },
+    ) ??
+      window.setInterval(() => {
+        const stale = document.getElementById("rmeDashboardExtraSections");
+        if (stale) stale.remove();
+      }, 5000);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init, { once: true });
+  } else {
+    window.setTimeout(init, 80);
+  }
+})();
+
+// === RME: pay slips nav card -> open "Teacher pay slips" sidebar page ====
+// Turn 24 wired the dashboard pay-slip card to activate "__payslips" (the
+// Dashboard pane itself), which is a no-op visually. The user wants the card
+// to open the sidebar page literally titled "Teacher pay slips". This IIFE
+// intercepts the card's click in the capture phase and routes to the
+// workspace page whose title matches that name (case-insensitive). If no such
+// page exists yet, it falls back to __payslips so the click is never silent.
+(function rmeRoutePayslipsCardToTeacherPaySlipsPage() {
+  function findTeacherPaySlipsPageId() {
+    try {
+      if (!Array.isArray(notionWorkspacePagesState)) return null;
+      for (const p of notionWorkspacePagesState) {
+        const t = String(p && p.title ? p.title : "").trim().toLowerCase();
+        if (!t) continue;
+        if (t === "teacher pay slips" || t === "teacher payslips" ||
+            t === "teachers pay slips" || t === "teachers payslips" ||
+            t === "teacher pay-slips" ||
+            (t.indexOf("teacher") >= 0 && t.indexOf("pay") >= 0 &&
+             t.indexOf("slip") >= 0)) {
+          return p.id;
+        }
+      }
+    } catch (_e) { /* ignore */ }
+    return null;
+  }
+
+  function attach() {
+    const ng = document.getElementById("rmeNavCardsGrid");
+    if (!(ng instanceof HTMLElement)) return false;
+    const cards = ng.querySelectorAll(".rme-stat-card");
+    if (cards.length === 0) return false;
+    let bound = false;
+    cards.forEach((card) => {
+      if (!(card instanceof HTMLElement)) return;
+      if (card.dataset.rmePayslipsRouted === "1") { bound = true; return; }
+      const icoEl = card.querySelector(".rme-stat-icon");
+      const ico = icoEl ? String(icoEl.textContent || "").trim() : "";
+      const txt = String(card.textContent || "").toLowerCase();
+      const isPayslips = ico.indexOf("\uD83D\uDCC4") >= 0 ||
+        /pay\s*slip/.test(txt);
+      if (!isPayslips) return;
+      card.dataset.rmePayslipsRouted = "1";
+      bound = true;
+      function handler(ev) {
+        try {
+          if (typeof ev.stopImmediatePropagation === "function") {
+            ev.stopImmediatePropagation();
+          }
+          if (typeof ev.preventDefault === "function") ev.preventDefault();
+        } catch (_e) { /* ignore */ }
+        const id = findTeacherPaySlipsPageId() || "__payslips";
+        try {
+          if (typeof activateNotionWorkspacePage === "function") {
+            activateNotionWorkspacePage(id);
+          }
+        } catch (e) { console.warn("payslips card nav:", e); }
+      }
+      card.addEventListener("click", handler, true);
+      card.addEventListener("keydown", function (ev) {
+        if (ev.key === "Enter" || ev.key === " ") handler(ev);
+      }, true);
+    });
+    return bound;
+  }
+
+  function init() {
+    if (!attach()) {
+      let tries = 0;
+      const iv = window.setInterval(() => {
+        tries += 1;
+        if (attach() || tries > 60) window.clearInterval(iv);
+      }, 200);
+    }
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init, { once: true });
+  } else {
+    // Defer so turn-24 nav cards exist when we look for them.
+    window.setTimeout(init, 160);
+  }
+})();
+
+// === RME: style the "Teacher Pay Slips" sidebar page ====================
+// Decorates the user-created blank sidebar page titled "Teacher Pay Slips"
+// with a glowing hero banner, three info pills (total slips, this month,
+// teachers), and a horizontally scrolling row of colorful teacher chips
+// pulled from rawTable. Also hides the small `\u203A` collapse toggle that
+// appears next to the empty editable body so the page reads clean. Title
+// gets a subtle gradient + glow treatment. Hero auto-refreshes every 12s.
+(function rmeStyleTeacherPaySlipsPage() {
+  // Disabled: the Teacher Pay Slips page is rebuilt from scratch by
+  // rmeRecreateTeacherPaySlipsPageCleanly, including its own styling.
+  return;
+  function findPaySlipsPageId() {
+    try {
+      if (!Array.isArray(notionWorkspacePagesState)) return null;
+      for (const p of notionWorkspacePagesState) {
+        const t = String(p && p.title ? p.title : "").trim().toLowerCase();
+        if (!t) continue;
+        if (t === "teacher pay slips" || t === "teacher payslips" ||
+            t === "teachers pay slips" || t === "teachers payslips" ||
+            (t.indexOf("teacher") >= 0 && t.indexOf("pay") >= 0 &&
+             t.indexOf("slip") >= 0)) {
+          return p.id;
+        }
+      }
+    } catch (_e) { /* ignore */ }
+    return null;
+  }
+
+  function findPane() {
+    const id = findPaySlipsPageId();
+    if (!id) return null;
+    const sel = '.notion-ws-pane[data-workspace-id="' + id + '"]';
+    const pane = document.querySelector(sel);
+    return pane instanceof HTMLElement ? pane : null;
+  }
+
+  function colorForIndex(i) {
+    const palette = ["#3b82f6","#8b5cf6","#ec4899","#f97316","#10b981",
+      "#22d3ee","#f59e0b","#a78bfa","#14b8a6","#ef4444"];
+    return palette[i % palette.length];
+  }
+  function initialsFor(name) {
+    const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) return "·";
+    if (parts.length === 1) return parts[0].slice(0,2).toUpperCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }
+  function uniqueTeacherNames() {
+    try {
+      const rt = (typeof rawTable !== "undefined") ? rawTable : null;
+      if (!rt || !Array.isArray(rt.columns) || !Array.isArray(rt.rows)) return [];
+      let nameIx = -1;
+      for (let i = 0; i < rt.columns.length; i++) {
+        if (/(^|\b)(teacher|name|person|full\s*name)(\b|$)/i.test(
+          String(rt.columns[i] || "")
+        )) { nameIx = i; break; }
+      }
+      if (nameIx < 0) nameIx = 0;
+      const seen = new Set();
+      const out = [];
+      for (const row of rt.rows) {
+        const v = String(row && row[nameIx] != null ? row[nameIx] : "").trim();
+        if (!v) continue;
+        const key = v.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(v);
+        if (out.length >= 30) break;
+      }
+      return out;
+    } catch (_e) { return []; }
+  }
+  function payslipsThisMonth() {
+    try {
+      const rt = (typeof rawTable !== "undefined") ? rawTable : null;
+      if (!rt || !Array.isArray(rt.rows) || rt.rows.length === 0) return 0;
+      let dateIx = -1;
+      if (Array.isArray(rt.columns)) {
+        for (let i = 0; i < rt.columns.length; i++) {
+          if (/date|pay\s*period|month/i.test(String(rt.columns[i] || ""))) {
+            dateIx = i; break;
+          }
+        }
+      }
+      if (dateIx < 0) return 0;
+      const now = new Date();
+      const m = now.getMonth(), y = now.getFullYear();
+      let count = 0;
+      for (const row of rt.rows) {
+        const v = row && row[dateIx];
+        if (!v) continue;
+        const d = new Date(v);
+        if (Number.isFinite(d.getTime()) &&
+            d.getMonth() === m && d.getFullYear() === y) {
+          count += 1;
+        }
+      }
+      return count;
+    } catch (_e) { return 0; }
+  }
+
+  function ensureStyles() {
+    if (document.getElementById("rmeTeacherPaySlipsPageStyles")) return;
+    const styleEl = document.createElement("style");
+    styleEl.id = "rmeTeacherPaySlipsPageStyles";
+    styleEl.textContent = [
+      // Hide the small collapse/chevron toggle that appears next to the
+      // empty editable body on the Teacher Pay Slips page.
+      ".notion-ws-pane[data-rme-tps=\"1\"] .notion-page-toggle,",
+      ".notion-ws-pane[data-rme-tps=\"1\"] .notion-toggle,",
+      ".notion-ws-pane[data-rme-tps=\"1\"] [class*=\"toggle-arrow\"],",
+      ".notion-ws-pane[data-rme-tps=\"1\"] [class*=\"chevron\"],",
+      ".notion-ws-pane[data-rme-tps=\"1\"] .ws-pane-toggle,",
+      ".notion-ws-pane[data-rme-tps=\"1\"] > summary,",
+      ".notion-ws-pane[data-rme-tps=\"1\"] details > summary{",
+      "display:none !important;visibility:hidden !important;",
+      "width:0 !important;height:0 !important;}",
+      // Title: gradient text + soft glow.
+      ".notion-ws-pane[data-rme-tps=\"1\"] .ws-pane-title,",
+      ".notion-ws-pane[data-rme-tps=\"1\"] .notion-page-title,",
+      ".notion-ws-pane[data-rme-tps=\"1\"] [class*=\"page-title\"],",
+      ".notion-ws-pane[data-rme-tps=\"1\"] > h1,",
+      ".notion-ws-pane[data-rme-tps=\"1\"] > .ws-pane-body > h1,",
+      ".notion-ws-pane[data-rme-tps=\"1\"] h1:first-of-type{",
+      "font-size:2.7rem !important;font-weight:800 !important;",
+      "letter-spacing:-.035em !important;line-height:1.05 !important;",
+      "background:linear-gradient(135deg,#3b82f6 0%,#8b5cf6 45%,#ec4899 100%);",
+      "-webkit-background-clip:text;background-clip:text;",
+      "-webkit-text-fill-color:transparent;color:transparent !important;",
+      "filter:drop-shadow(0 6px 18px color-mix(in srgb,#8b5cf6 35%,transparent));",
+      "margin-bottom:.4rem !important;}",
+      // Hero card.
+      ".rme-tps-hero{position:relative;margin:1rem 0 1.4rem;",
+      "padding:1.5rem 1.6rem;border-radius:22px;overflow:hidden;",
+      "background:linear-gradient(135deg,",
+      "color-mix(in srgb,#3b82f6 18%,var(--surface,#fff)) 0%,",
+      "color-mix(in srgb,#8b5cf6 16%,var(--surface,#fff)) 50%,",
+      "color-mix(in srgb,#ec4899 14%,var(--surface,#fff)) 100%);",
+      "border:1px solid color-mix(in srgb,#8b5cf6 30%,transparent);",
+      "box-shadow:0 1px 2px rgba(0,0,0,.04),",
+      "0 20px 56px -18px color-mix(in srgb,#6366f1 65%,transparent),",
+      "inset 0 1px 0 color-mix(in srgb,#fff 30%,transparent);}",
+      ".rme-tps-hero::before{content:\"\";position:absolute;inset:-40%;",
+      "pointer-events:none;",
+      "background:radial-gradient(60% 60% at 18% 25%,",
+      "color-mix(in srgb,#22d3ee 50%,transparent) 0%,transparent 60%),",
+      "radial-gradient(50% 50% at 82% 75%,",
+      "color-mix(in srgb,#f472b6 50%,transparent) 0%,transparent 60%);",
+      "filter:blur(48px);opacity:.6;",
+      "animation:rmeTpsHeroGlow 10s ease-in-out infinite alternate;}",
+      "@keyframes rmeTpsHeroGlow{",
+      "0%{transform:translate3d(0,0,0) scale(1);opacity:.55;}",
+      "100%{transform:translate3d(2%,-3%,0) scale(1.1);opacity:.8;}}",
+      ".rme-tps-hero > *{position:relative;}",
+      ".rme-tps-hero-row{display:flex;align-items:center;gap:1rem;flex-wrap:wrap;}",
+      ".rme-tps-hero-icon{width:3.2rem;height:3.2rem;border-radius:16px;",
+      "flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;",
+      "font-size:1.7rem;color:#fff;",
+      "background:linear-gradient(135deg,#3b82f6,#8b5cf6 50%,#ec4899);",
+      "box-shadow:0 8px 24px -6px color-mix(in srgb,#8b5cf6 70%,transparent),",
+      "inset 0 1px 0 rgba(255,255,255,.4);",
+      "animation:rmeTpsIconPulse 3.6s ease-in-out infinite;}",
+      "@keyframes rmeTpsIconPulse{",
+      "0%,100%{transform:scale(1);}",
+      "50%{transform:scale(1.06) rotate(-3deg);}}",
+      ".rme-tps-hero-titles{flex:1;min-width:0;}",
+      ".rme-tps-hero-eyebrow{font-size:.7rem;font-weight:700;",
+      "text-transform:uppercase;letter-spacing:.08em;",
+      "color:color-mix(in srgb,#8b5cf6 80%,var(--text));margin:0 0 .15rem;}",
+      ".rme-tps-hero-title{margin:0;font-size:1.35rem;font-weight:700;",
+      "color:var(--text);letter-spacing:-.015em;}",
+      ".rme-tps-hero-sub{margin:.25rem 0 0;font-size:.85rem;",
+      "color:var(--text-muted,#6b7280);}",
+      // Stats row.
+      ".rme-tps-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));",
+      "gap:.7rem;margin-top:1.2rem;}",
+      "@media (max-width:680px){.rme-tps-stats{grid-template-columns:1fr;}}",
+      ".rme-tps-stat{position:relative;padding:.85rem 1rem;border-radius:14px;",
+      "background:color-mix(in srgb,var(--surface,#fff) 75%,transparent);",
+      "-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);",
+      "border:1px solid color-mix(in srgb,#fff 25%,transparent);",
+      "box-shadow:0 4px 16px -8px rgba(0,0,0,.15);}",
+      ".rme-tps-stat-label{font-size:.68rem;font-weight:700;",
+      "color:var(--text-muted,#6b7280);text-transform:uppercase;",
+      "letter-spacing:.06em;margin:0 0 .25rem;}",
+      ".rme-tps-stat-value{font-size:1.5rem;font-weight:800;color:var(--text);",
+      "line-height:1;letter-spacing:-.025em;",
+      "font-variant-numeric:tabular-nums;",
+      "background:linear-gradient(135deg,var(--rme-tps-stat-color,#3b82f6),",
+      "color-mix(in srgb,var(--rme-tps-stat-color,#3b82f6) 60%,#ec4899));",
+      "-webkit-background-clip:text;background-clip:text;",
+      "-webkit-text-fill-color:transparent;color:transparent;}",
+      ".rme-tps-stat:nth-child(1){--rme-tps-stat-color:#3b82f6;}",
+      ".rme-tps-stat:nth-child(2){--rme-tps-stat-color:#8b5cf6;}",
+      ".rme-tps-stat:nth-child(3){--rme-tps-stat-color:#ec4899;}",
+      // Teacher chips section.
+      ".rme-tps-teachers{margin-top:1.4rem;}",
+      ".rme-tps-teachers-head{display:flex;align-items:baseline;",
+      "justify-content:space-between;gap:1rem;margin:0 0 .65rem;}",
+      ".rme-tps-teachers-title{margin:0;font-size:.82rem;font-weight:700;",
+      "color:var(--text);letter-spacing:-.005em;}",
+      ".rme-tps-teachers-count{font-size:.74rem;font-weight:600;",
+      "color:var(--text-muted,#6b7280);}",
+      ".rme-tps-chips{display:flex;align-items:center;gap:.55rem;",
+      "padding-bottom:.2rem;overflow-x:auto;scrollbar-width:thin;}",
+      ".rme-tps-chips::-webkit-scrollbar{height:6px;}",
+      ".rme-tps-chips::-webkit-scrollbar-thumb{",
+      "background:color-mix(in srgb,var(--text) 18%,transparent);",
+      "border-radius:3px;}",
+      ".rme-tps-chip{position:relative;display:inline-flex;align-items:center;",
+      "gap:.5rem;padding:.4rem .85rem .4rem .4rem;border-radius:999px;",
+      "flex-shrink:0;",
+      "background:color-mix(in srgb,var(--surface,#fff) 80%,transparent);",
+      "-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);",
+      "border:1px solid color-mix(in srgb,var(--rme-chip,#8b5cf6) 35%,transparent);",
+      "box-shadow:0 4px 14px -6px color-mix(in srgb,var(--rme-chip,#8b5cf6) 55%,transparent);",
+      "font-size:.82rem;font-weight:600;color:var(--text);cursor:default;",
+      "transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease;}",
+      ".rme-tps-chip:hover{transform:translateY(-2px);",
+      "box-shadow:0 8px 22px -6px color-mix(in srgb,var(--rme-chip,#8b5cf6) 75%,transparent);",
+      "border-color:color-mix(in srgb,var(--rme-chip,#8b5cf6) 60%,transparent);}",
+      ".rme-tps-chip-av{width:1.7rem;height:1.7rem;border-radius:999px;",
+      "display:inline-flex;align-items:center;justify-content:center;",
+      "background:linear-gradient(135deg,var(--rme-chip,#8b5cf6),",
+      "color-mix(in srgb,var(--rme-chip,#8b5cf6) 60%,#fff));",
+      "color:#fff;font-size:.72rem;font-weight:700;letter-spacing:.02em;",
+      "box-shadow:inset 0 1px 0 rgba(255,255,255,.35);}",
+      ".rme-tps-chip-name{white-space:nowrap;max-width:9rem;",
+      "overflow:hidden;text-overflow:ellipsis;}",
+      ".rme-tps-chip-empty{background:color-mix(in srgb,var(--text) 6%,transparent);",
+      "color:var(--text-muted,#6b7280);",
+      "border:1px dashed color-mix(in srgb,var(--text) 25%,transparent);",
+      "padding:.4rem .85rem;box-shadow:none;}",
+      ".rme-tps-chip-empty:hover{transform:none;box-shadow:none;}",
+    ].join("");
+    document.head.appendChild(styleEl);
+  }
+
+  function renderHero(pane) {
+    let hero = pane.querySelector(":scope > .rme-tps-hero");
+    if (!(hero instanceof HTMLElement)) {
+      hero = document.createElement("section");
+      hero.className = "rme-tps-hero";
+      hero.setAttribute("aria-label", "Teacher pay slips overview");
+      hero.innerHTML = [
+        '<div class="rme-tps-hero-row">',
+        '<span class="rme-tps-hero-icon" aria-hidden="true">\uD83D\uDCB8</span>',
+        '<div class="rme-tps-hero-titles">',
+        '<p class="rme-tps-hero-eyebrow">Payroll · Recruit My English</p>',
+        '<h2 class="rme-tps-hero-title">Where every teacher pay slip lives</h2>',
+        '<p class="rme-tps-hero-sub" id="rmeTpsHeroSub">Live snapshot from the Notion pay-slip database. Auto-refreshes.</p>',
+        '</div>',
+        '</div>',
+        '<div class="rme-tps-stats">',
+        '<div class="rme-tps-stat">',
+        '<p class="rme-tps-stat-label">Slips on file</p>',
+        '<p class="rme-tps-stat-value" id="rmeTpsStatTotal">—</p>',
+        '</div>',
+        '<div class="rme-tps-stat">',
+        '<p class="rme-tps-stat-label">This month</p>',
+        '<p class="rme-tps-stat-value" id="rmeTpsStatMonth">—</p>',
+        '</div>',
+        '<div class="rme-tps-stat">',
+        '<p class="rme-tps-stat-label">Teachers</p>',
+        '<p class="rme-tps-stat-value" id="rmeTpsStatTeachers">—</p>',
+        '</div>',
+        '</div>',
+        '<div class="rme-tps-teachers">',
+        '<div class="rme-tps-teachers-head">',
+        '<h3 class="rme-tps-teachers-title">Teachers on the pay-slip ledger</h3>',
+        '<span class="rme-tps-teachers-count" id="rmeTpsTeachersCount"></span>',
+        '</div>',
+        '<div class="rme-tps-chips" id="rmeTpsChips" role="list"></div>',
+        '</div>',
+      ].join("");
+      // Insert at the very top of the pane.
+      pane.insertBefore(hero, pane.firstChild);
+    }
+
+    let total = 0;
+    try {
+      const rt = (typeof rawTable !== "undefined") ? rawTable : null;
+      total = rt && Array.isArray(rt.rows) ? rt.rows.length : 0;
+    } catch (_e) { /* ignore */ }
+    const month = payslipsThisMonth();
+    const names = uniqueTeacherNames();
+
+    const setTxt = (id, v) => {
+      const el = pane.querySelector("#" + id);
+      if (el instanceof HTMLElement) el.textContent = v;
+    };
+    setTxt("rmeTpsStatTotal", total > 0 ? String(total) : "—");
+    setTxt("rmeTpsStatMonth", month > 0 ? String(month) : "0");
+    setTxt("rmeTpsStatTeachers", names.length > 0 ? String(names.length) : "—");
+    setTxt("rmeTpsTeachersCount",
+      names.length === 0 ? "" :
+      names.length === 1 ? "1 person" : names.length + " people");
+    const subEl = pane.querySelector("#rmeTpsHeroSub");
+    if (subEl instanceof HTMLElement) {
+      subEl.textContent = total === 0
+        ? "Loading from the Notion pay-slip database…"
+        : "Live snapshot from the Notion pay-slip database · auto-refreshes";
+    }
+
+    const chips = pane.querySelector("#rmeTpsChips");
+    if (chips instanceof HTMLElement) {
+      chips.replaceChildren();
+      if (names.length === 0) {
+        const empty = document.createElement("span");
+        empty.className = "rme-tps-chip rme-tps-chip-empty";
+        empty.textContent = "Teachers will appear here as pay slips land ✨";
+        chips.appendChild(empty);
+      } else {
+        const visible = names.slice(0, 16);
+        visible.forEach((name, i) => {
+          const chip = document.createElement("div");
+          chip.className = "rme-tps-chip";
+          chip.setAttribute("role", "listitem");
+          chip.style.setProperty("--rme-chip", colorForIndex(i));
+          chip.title = name;
+          const av = document.createElement("span");
+          av.className = "rme-tps-chip-av";
+          av.textContent = initialsFor(name);
+          av.setAttribute("aria-hidden", "true");
+          const nm = document.createElement("span");
+          nm.className = "rme-tps-chip-name";
+          nm.textContent = name;
+          chip.appendChild(av);
+          chip.appendChild(nm);
+          chips.appendChild(chip);
+        });
+        if (names.length > visible.length) {
+          const more = document.createElement("span");
+          more.className = "rme-tps-chip rme-tps-chip-empty";
+          more.textContent = "+" + (names.length - visible.length) + " more";
+          chips.appendChild(more);
+        }
+      }
+    }
+  }
+
+  function sync() {
+    const pane = findPane();
+    if (!(pane instanceof HTMLElement)) return;
+    ensureStyles();
+    pane.dataset.rmeTps = "1";
+    renderHero(pane);
+  }
+
+  function init() {
+    sync();
+    window.rmeIdlePower?.runOnAdaptiveInterval?.(sync, {
+      activeMs: 6000,
+      idleMs: 30000,
+      hiddenMs: 120000,
+      shouldRun: () => Boolean(findPane()),
+    }) ?? window.setInterval(sync, 1500);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init, { once: true });
+  } else {
+    window.setTimeout(init, 180);
+  }
+})();
+
+// === RME: title-in-card + quick notes + mirror to Notion Row IDs pane =====
+// User wants the page heading to live INSIDE the hero card (not above it),
+// the thin divider line between the title and card gone, a quick-notes
+// textarea at the bottom of the card (auto-saves to localStorage), and the
+// same card styling applied to the "Notion Row IDs" sidebar page.
+(function rmeEnhanceTpsAndRowIdsPanes() {
+  const TPS_TITLES = ["teacher pay slips","teacher payslips",
+    "teachers pay slips","teachers payslips"];
+  const RIDS_TITLES = ["notion row ids","row ids","names and notion row ids",
+    "names & notion row ids","names and row ids","teacher row ids"];
+
+  function findPageId(matchTitles) {
+    try {
+      if (!Array.isArray(notionWorkspacePagesState)) return null;
+      for (const p of notionWorkspacePagesState) {
+        const t = String(p && p.title ? p.title : "").trim().toLowerCase();
+        if (!t) continue;
+        if (matchTitles.includes(t)) return p.id;
+      }
+      for (const p of notionWorkspacePagesState) {
+        const t = String(p && p.title ? p.title : "").trim().toLowerCase();
+        if (!t) continue;
+        for (const m of matchTitles) {
+          if (t.indexOf(m) >= 0) return p.id;
+        }
+      }
+    } catch (_e) { /* ignore */ }
+    return null;
+  }
+  function getPageTitle(matchTitles, fallback) {
+    try {
+      const id = findPageId(matchTitles);
+      if (id && Array.isArray(notionWorkspacePagesState)) {
+        const p = notionWorkspacePagesState.find((x) => x && x.id === id);
+        if (p && p.title) return String(p.title);
+      }
+    } catch (_e) { /* ignore */ }
+    return fallback;
+  }
+  function findTpsPane() {
+    const id = findPageId(TPS_TITLES);
+    if (!id) return null;
+    const sel = '.notion-ws-pane[data-workspace-id="' + id + '"]';
+    const el = document.querySelector(sel);
+    return el instanceof HTMLElement ? el : null;
+  }
+  function findRowIdsPane() {
+    try {
+      if (typeof notionWsPaneVaultNotionLinksEl !== "undefined" &&
+          notionWsPaneVaultNotionLinksEl instanceof HTMLElement) {
+        return notionWsPaneVaultNotionLinksEl;
+      }
+    } catch (_e) { /* ignore */ }
+    const id = findPageId(RIDS_TITLES);
+    if (!id) return null;
+    const sel = '.notion-ws-pane[data-workspace-id="' + id + '"]';
+    const el = document.querySelector(sel);
+    return el instanceof HTMLElement ? el : null;
+  }
+
+  function ensureExtraStyles() {
+    if (document.getElementById("rmeTpsExtraStyles")) return;
+    const s = document.createElement("style");
+    s.id = "rmeTpsExtraStyles";
+    s.textContent = [
+      // Hide the page's native title -- the heading lives inside the card now.
+      '.notion-ws-pane[data-rme-tps="1"] > .ws-pane-title,',
+      '.notion-ws-pane[data-rme-tps="1"] > h1,',
+      '.notion-ws-pane[data-rme-tps="1"] > .notion-page-title,',
+      '.notion-ws-pane[data-rme-tps="1"] > [class*="page-title"],',
+      '.notion-ws-pane[data-rme-tps="1"] .ws-pane-body > .ws-pane-title,',
+      '.notion-ws-pane[data-rme-tps="1"] .ws-pane-body > h1:first-of-type,',
+      '.notion-ws-pane[data-rme-rids="1"] > .ws-pane-title,',
+      '.notion-ws-pane[data-rme-rids="1"] > h1,',
+      '.notion-ws-pane[data-rme-rids="1"] > .notion-page-title,',
+      '.notion-ws-pane[data-rme-rids="1"] > [class*="page-title"],',
+      '.notion-ws-pane[data-rme-rids="1"] .ws-pane-body > .ws-pane-title,',
+      '.notion-ws-pane[data-rme-rids="1"] .ws-pane-body > h1:first-of-type{',
+      'display:none !important;height:0 !important;margin:0 !important;',
+      'padding:0 !important;}',
+      // Kill the divider line that sits between the title and the body.
+      '.notion-ws-pane[data-rme-tps="1"] > hr,',
+      '.notion-ws-pane[data-rme-tps="1"] hr,',
+      '.notion-ws-pane[data-rme-tps="1"] [class*="divider"],',
+      '.notion-ws-pane[data-rme-tps="1"] [class*="separator"],',
+      '.notion-ws-pane[data-rme-rids="1"] > hr,',
+      '.notion-ws-pane[data-rme-rids="1"] hr,',
+      '.notion-ws-pane[data-rme-rids="1"] [class*="divider"],',
+      '.notion-ws-pane[data-rme-rids="1"] [class*="separator"]{',
+      'display:none !important;border:0 !important;height:0 !important;',
+      'margin:0 !important;}',
+      // Bring the hero card up so it sits right under the burger icon.
+      '.notion-ws-pane[data-rme-tps="1"] > .rme-tps-hero,',
+      '.notion-ws-pane[data-rme-rids="1"] > .rme-tps-hero{',
+      'margin-top:.25rem !important;}',
+      // Big card title -- the page heading, in gradient, inside the card.
+      '.rme-tps-hero-maintitle{margin:0 0 .25rem;',
+      'font-size:2.4rem;font-weight:800;letter-spacing:-.035em;',
+      'line-height:1.05;',
+      'background:linear-gradient(135deg,#3b82f6 0%,#8b5cf6 45%,#ec4899 100%);',
+      '-webkit-background-clip:text;background-clip:text;',
+      '-webkit-text-fill-color:transparent;color:transparent;',
+      'filter:drop-shadow(0 6px 18px color-mix(in srgb,#8b5cf6 35%,transparent));}',
+      // Row IDs pane: centered page title, white, slightly smaller than TPS hero.
+      '.notion-ws-pane[data-rme-rids="1"] > .rme-tps-hero .rme-tps-hero-row{',
+      'flex-direction:column;align-items:center;text-align:center;',
+      'gap:.35rem;width:100%;}',
+      '.notion-ws-pane[data-rme-rids="1"] > .rme-tps-hero .rme-tps-hero-titles{',
+      'flex:none;width:100%;text-align:center;}',
+      '.notion-ws-pane[data-rme-rids="1"] > .rme-tps-hero .rme-tps-hero-icon{',
+      'display:none!important;}',
+      '#notionWsPaneVaultNotionLinks > .rme-tps-hero{',
+      'margin:0!important;padding:.2rem 1rem .45rem!important;',
+      '}',
+      '#notionWsPaneVaultNotionLinks > .rme-tps-hero .rme-tps-notes{',
+      'margin-top:.2rem!important;padding-top:.28rem!important;',
+      'border-top-width:0!important;}',
+      '.notion-ws-pane[data-rme-rids="1"] > .rme-tps-hero .rme-tps-hero-maintitle{',
+      'font-size:1.62rem!important;font-weight:750!important;',
+      'letter-spacing:-.02em!important;line-height:1.15!important;',
+      'text-align:center;width:100%;',
+      'background:none!important;',
+      '-webkit-background-clip:border-box!important;background-clip:border-box!important;',
+      '-webkit-text-fill-color:#fff!important;color:#fff!important;',
+      'filter:drop-shadow(0 2px 14px rgba(0,0,0,.42));}',
+      // Notes section (the "brilliant" writing area at the card's bottom).
+      '.rme-tps-notes{margin-top:1.5rem;padding-top:1.2rem;',
+      'border-top:1px dashed color-mix(in srgb,var(--text) 14%,transparent);}',
+      '.rme-tps-notes-head{display:flex;align-items:baseline;',
+      'justify-content:space-between;gap:1rem;margin:0 0 .55rem;flex-wrap:wrap;}',
+      '.rme-tps-notes-label{font-size:.82rem;font-weight:700;',
+      'color:var(--text);letter-spacing:-.005em;',
+      'display:inline-flex;align-items:center;gap:.4rem;}',
+      '.rme-tps-notes-status{font-size:.7rem;color:var(--text-muted,#6b7280);',
+      'font-weight:500;display:inline-flex;align-items:center;gap:.3rem;}',
+      '.rme-tps-notes-status::before{content:"";width:.45rem;height:.45rem;',
+      'border-radius:999px;background:#10b981;',
+      'box-shadow:0 0 8px color-mix(in srgb,#10b981 75%,transparent);}',
+      '.rme-tps-notes-input{display:block;width:100%;box-sizing:border-box;',
+      'min-height:6rem;padding:.9rem 1rem;border-radius:14px;resize:vertical;',
+      'background:color-mix(in srgb,var(--surface,#fff) 70%,transparent);',
+      '-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);',
+      'border:1px solid color-mix(in srgb,#8b5cf6 28%,transparent);',
+      'box-shadow:0 4px 14px -8px rgba(0,0,0,.18),',
+      'inset 0 1px 0 color-mix(in srgb,#fff 25%,transparent);',
+      'color:var(--text);font:inherit;font-size:.92rem;line-height:1.55;',
+      'outline:none;',
+      'transition:border-color .2s ease,box-shadow .2s ease;}',
+      '.rme-tps-notes-input::placeholder{',
+      'color:color-mix(in srgb,var(--text) 45%,transparent);}',
+      '.rme-tps-notes-input:focus{',
+      'border-color:color-mix(in srgb,#8b5cf6 60%,transparent);',
+      'box-shadow:0 0 0 4px color-mix(in srgb,#8b5cf6 18%,transparent),',
+      '0 10px 24px -8px color-mix(in srgb,#8b5cf6 55%,transparent);}',
+      '.rme-tps-notes-meta{margin:.5rem 0 0;font-size:.7rem;',
+      'color:var(--text-muted,#6b7280);font-style:italic;}',
+    ].join("");
+    document.head.appendChild(s);
+  }
+
+  function attachNotes(hero, opts) {
+    if (hero.querySelector(":scope > .rme-tps-notes")) return;
+    const notes = document.createElement("div");
+    notes.className = "rme-tps-notes";
+    const parts = [
+      '<div class="rme-tps-notes-head">',
+      '<label class="rme-tps-notes-label" for="' + opts.notesId + '">',
+      "\uD83D\uDCDD " + opts.notesHeading,
+      "</label>",
+      '<span class="rme-tps-notes-status" id="' + opts.notesId + 'Status">',
+      "Saved locally",
+      "</span>",
+      "</div>",
+      '<textarea class="rme-tps-notes-input" id="' + opts.notesId + '" ',
+      'placeholder="' + opts.notesPlaceholder + '" rows="4" ',
+      'spellcheck="true"></textarea>',
+    ];
+    if (opts.omitMeta !== true) {
+      parts.push(
+        '<p class="rme-tps-notes-meta">Auto-saves to this device. Nothing leaves the laptop.</p>',
+      );
+    }
+    notes.innerHTML = parts.join("");
+    hero.appendChild(notes);
+    const ta = notes.querySelector("textarea");
+    const status = notes.querySelector("#" + opts.notesId + "Status");
+    try {
+      const saved = window.localStorage.getItem(opts.notesKey);
+      if (saved && ta instanceof HTMLTextAreaElement) ta.value = saved;
+    } catch (_e) { /* ignore */ }
+    if (ta instanceof HTMLTextAreaElement) {
+      let t;
+      ta.addEventListener("input", () => {
+        if (status instanceof HTMLElement) status.textContent = "Saving…";
+        window.clearTimeout(t);
+        t = window.setTimeout(() => {
+          try {
+            window.localStorage.setItem(opts.notesKey, ta.value);
+          } catch (_e) { /* ignore quota */ }
+          if (status instanceof HTMLElement) status.textContent = "Saved locally";
+        }, 250);
+      });
+    }
+  }
+
+  function attachMainTitle(hero, title) {
+    const titlesBox = hero.querySelector(".rme-tps-hero-titles");
+    if (!(titlesBox instanceof HTMLElement)) return;
+    // Hide the existing eyebrow + h2 (the title now sits at the top).
+    const eyebrow = titlesBox.querySelector(".rme-tps-hero-eyebrow");
+    if (eyebrow instanceof HTMLElement) eyebrow.style.display = "none";
+    const h2 = titlesBox.querySelector(".rme-tps-hero-title");
+    if (h2 instanceof HTMLElement) h2.style.display = "none";
+    let mainEl = titlesBox.querySelector(".rme-tps-hero-maintitle");
+    if (!(mainEl instanceof HTMLElement)) {
+      mainEl = document.createElement("h1");
+      mainEl.className = "rme-tps-hero-maintitle";
+      mainEl.textContent = title;
+      titlesBox.insertBefore(mainEl, titlesBox.firstChild);
+    } else if (mainEl.textContent !== title) {
+      mainEl.textContent = title;
+    }
+  }
+
+  function ensureRowIdsHero(pane, title) {
+    // The TPS pane gets its hero from the earlier IIFE; the Row IDs pane
+    // doesn't have one yet, so create the same shell here.
+    if (pane.querySelector(":scope > .rme-tps-hero")) return;
+    const hero = document.createElement("section");
+    hero.className = "rme-tps-hero";
+    hero.setAttribute("aria-label", title + " overview");
+    hero.innerHTML = [
+      '<div class="rme-tps-hero-row rme-tps-hero-row--rids">',
+      '<div class="rme-tps-hero-titles">',
+      "</div>",
+      "</div>",
+    ].join("");
+    pane.insertBefore(hero, pane.firstChild);
+  }
+
+  function sync() {
+    ensureExtraStyles();
+    const tps = findTpsPane();
+    if (tps instanceof HTMLElement) {
+      tps.dataset.rmeTps = "1";
+      const hero = tps.querySelector(":scope > .rme-tps-hero");
+      if (hero instanceof HTMLElement) {
+        attachMainTitle(hero, getPageTitle(TPS_TITLES, "Teacher Pay Slips"));
+        attachNotes(hero, {
+          notesId: "rmeTpsNotes",
+          notesKey: "rme.tps.notes.v1",
+          notesHeading: "Quick notes",
+          notesPlaceholder: "Jot something brilliant — payroll runs, blockers, follow-ups…",
+        });
+      }
+    }
+    const rids = findRowIdsPane();
+    if (rids instanceof HTMLElement) {
+      rids.dataset.rmeRids = "1";
+      const ridsTitle = getPageTitle(RIDS_TITLES, "Notion row IDs");
+      ensureRowIdsHero(rids, ridsTitle);
+      const hero = rids.querySelector(":scope > .rme-tps-hero");
+      if (hero instanceof HTMLElement) {
+        const straySub = hero.querySelector(".rme-tps-hero-sub");
+        if (straySub?.parentNode) {
+          straySub.parentNode.removeChild(straySub);
+        }
+        const strayIcon = hero.querySelector(".rme-tps-hero-icon");
+        if (strayIcon?.parentNode) {
+          strayIcon.parentNode.removeChild(strayIcon);
+        }
+        const strayMeta = hero.querySelector(
+          ":scope .rme-tps-notes .rme-tps-notes-meta",
+        );
+        if (strayMeta?.parentNode) {
+          strayMeta.parentNode.removeChild(strayMeta);
+        }
+        attachMainTitle(hero, ridsTitle);
+        attachNotes(hero, {
+          notesId: "rmeRidsNotes",
+          notesKey: "rme.rids.notes.v1",
+          notesHeading: "Quick notes",
+          notesPlaceholder: "Track mismatches, missing IDs, teachers to add…",
+          omitMeta: true,
+        });
+      }
+    }
+  }
+
+  function init() {
+    sync();
+    window.rmeIdlePower?.runOnAdaptiveInterval?.(sync, {
+      activeMs: 6000,
+      idleMs: 30000,
+      hiddenMs: 120000,
+      shouldRun: () =>
+        Boolean(findPageId(TPS_TITLES)) || Boolean(findPageId(RIDS_TITLES)),
+    }) ?? window.setInterval(sync, 1500);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init, { once: true });
+  } else {
+    window.setTimeout(init, 220);
+  }
+})();
+
+// === RME: row numbering + bottom-of-TPS cleanups =========================
+// - Names & Notion Row IDs pane: number every data row from 1 in a left-most
+//   "#" column. Header row gets a "#" header cell.
+// - Teacher Pay Slips pane: nuke the stray "Teacher Pay Slips" text and any
+//   divider sitting under the card. The only heading we keep is the gradient
+//   one inside the hero card.
+(function rmeRowNumberingAndTpsCleanups() {
+  function ensureCleanupStyles() {
+    if (document.getElementById("rmeRowsAndCleanupStyles")) return;
+    const s = document.createElement("style");
+    s.id = "rmeRowsAndCleanupStyles";
+    s.textContent = [
+      // Drop the dashed divider above the notes section -- the card now
+      // flows straight into the notes area with just breathing room.
+      ".rme-tps-notes{border-top:0 !important;padding-top:.35rem !important;",
+      "margin-top:1rem !important;}",
+      // Belt-and-braces: hide ANY native page title / divider that lingers
+      // below the hero card on the TPS pane.
+      '.notion-ws-pane[data-rme-tps="1"] > .rme-tps-hero ~ .ws-pane-title,',
+      '.notion-ws-pane[data-rme-tps="1"] > .rme-tps-hero ~ h1,',
+      '.notion-ws-pane[data-rme-tps="1"] > .rme-tps-hero ~ .notion-page-title,',
+      '.notion-ws-pane[data-rme-tps="1"] > .rme-tps-hero ~ [class*="page-title"],',
+      '.notion-ws-pane[data-rme-tps="1"] > .rme-tps-hero ~ hr,',
+      '.notion-ws-pane[data-rme-tps="1"] > .rme-tps-hero ~ [class*="divider"],',
+      '.notion-ws-pane[data-rme-tps="1"] > .rme-tps-hero ~ [class*="separator"]{',
+      "display:none !important;height:0 !important;border:0 !important;",
+      "margin:0 !important;padding:0 !important;}",
+      // Row number cell styling (works for <td> and div role=cell).
+      ".rme-rids-num{padding:.55rem .85rem;text-align:right;",
+      "font-variant-numeric:tabular-nums;font-weight:700;",
+      "font-size:.82rem;color:var(--text-muted,#6b7280);",
+      "background:color-mix(in srgb,#8b5cf6 8%,transparent);",
+      "border-right:1px solid color-mix(in srgb,#8b5cf6 22%,transparent);",
+      "min-width:2.6rem;white-space:nowrap;",
+      "box-sizing:border-box;}",
+      ".rme-rids-num-head{font-weight:800;color:var(--text);",
+      "text-align:center;",
+      "background:color-mix(in srgb,#8b5cf6 14%,transparent);}",
+    ].join("");
+    document.head.appendChild(s);
+  }
+
+  function hideStrayPageTitlesTps() {
+    const tps = document.querySelector('.notion-ws-pane[data-rme-tps="1"]');
+    if (!(tps instanceof HTMLElement)) return;
+    // Hide any leaf element below/outside the hero card whose text reads
+    // "Teacher Pay Slips" / "Teacher Payslips".
+    const all = tps.querySelectorAll(":scope *");
+    all.forEach((el) => {
+      if (!(el instanceof HTMLElement)) return;
+      if (el.closest(".rme-tps-hero")) return; // keep hero contents
+      if (el.children.length > 0) return; // leaves only
+      const txt = String(el.textContent || "").trim().toLowerCase();
+      if (txt === "teacher pay slips" || txt === "teacher payslips" ||
+          txt === "teachers pay slips" || txt === "teachers payslips") {
+        el.style.display = "none";
+      }
+    });
+  }
+
+  function numberRowIdsTable() {
+    const rids = document.querySelector('.notion-ws-pane[data-rme-rids="1"]');
+    if (!(rids instanceof HTMLElement)) return;
+
+    // Strategy A: real <table> with thead/tbody.
+    const headerRows = rids.querySelectorAll("table thead tr");
+    headerRows.forEach((tr) => {
+      if (tr instanceof HTMLElement && tr.dataset.rmeNum !== "1") {
+        tr.dataset.rmeNum = "1";
+        const th = document.createElement("th");
+        th.className = "rme-rids-num rme-rids-num-head";
+        th.textContent = "#";
+        th.scope = "col";
+        tr.insertBefore(th, tr.firstChild);
+      }
+    });
+    const bodyRows = rids.querySelectorAll("table tbody tr");
+    let i = 0;
+    bodyRows.forEach((tr) => {
+      if (!(tr instanceof HTMLElement)) return;
+      i += 1;
+      const existing = tr.querySelector(":scope > .rme-rids-num");
+      if (tr.dataset.rmeNum === "1" && existing instanceof HTMLElement) {
+        existing.textContent = String(i);
+        return;
+      }
+      tr.dataset.rmeNum = "1";
+      const td = document.createElement("td");
+      td.className = "rme-rids-num";
+      td.textContent = String(i);
+      tr.insertBefore(td, tr.firstChild);
+    });
+    if (i > 0) return;
+
+    // Strategy B: role="row" divs. First row treated as header.
+    const allRows = rids.querySelectorAll('[role="row"]');
+    if (allRows.length === 0) return;
+    let j = 0;
+    let isFirst = true;
+    allRows.forEach((row) => {
+      if (!(row instanceof HTMLElement)) return;
+      if (isFirst) {
+        isFirst = false;
+        if (row.dataset.rmeNum !== "1") {
+          row.dataset.rmeNum = "1";
+          const d = document.createElement("div");
+          d.className = "rme-rids-num rme-rids-num-head";
+          d.setAttribute("role", "columnheader");
+          d.textContent = "#";
+          row.insertBefore(d, row.firstChild);
+        }
+        return;
+      }
+      j += 1;
+      const existing = row.querySelector(":scope > .rme-rids-num");
+      if (row.dataset.rmeNum === "1" && existing instanceof HTMLElement) {
+        existing.textContent = String(j);
+        return;
+      }
+      row.dataset.rmeNum = "1";
+      const d = document.createElement("div");
+      d.className = "rme-rids-num";
+      d.setAttribute("role", "cell");
+      d.textContent = String(j);
+      row.insertBefore(d, row.firstChild);
+    });
+  }
+
+  function sync() {
+    ensureCleanupStyles();
+    hideStrayPageTitlesTps();
+    numberRowIdsTable();
+  }
+
+  function init() {
+    sync();
+    window.rmeIdlePower?.runOnAdaptiveInterval?.(sync, {
+      activeMs: 6000,
+      idleMs: 30000,
+      hiddenMs: 120000,
+      shouldRun: () => window.rmeIdlePower?.isDomPageVisible?.("pageHome"),
+    }) ?? window.setInterval(sync, 1500);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init, { once: true });
+  } else {
+    window.setTimeout(init, 260);
+  }
+})();
+
+// === RME: wire Teacher Pay Slips card to in-app Vault > Teachers pages ====
+// The data source for the hero card chips + counts is the Teachers Portal
+// app's own sidebar tree, NOT the Notion pay-slip ledger DB.
+//
+// Source of truth:
+//   notionWorkspacePagesState (module-scoped). Every sub-page (kind:"blank")
+//   whose parentId === the "Teachers" page id inside Vault counts as one
+//   teacher = one pay slip page.
+//
+// Looks for a blank workspace page parented by __vault whose title matches
+// "Teachers" / "Teacher Pay Slips" / "Teachers Pay Slips" (case-insensitive).
+// Falls back to any blank page with that title if needed.
+//
+// Chips become real buttons -- click opens that teacher's page via
+// activateNotionWorkspacePage(id). MutationObserver + 1s interval keep this
+// card in sync even if the existing turn-27 IIFE tries to repopulate it from
+// rawTable in between -- my data always wins.
+(function rmeWireTpsToInAppTeachersPage() {
+  // Disabled: this old bridge could pull old ledger/table content into the
+  // Teacher Pay Slips page. The clean rebuilt page reads only the Vault
+  // sidebar child pages.
+  return;
+  const PALETTE = ["#3b82f6", "#8b5cf6", "#ec4899", "#f59e0b", "#10b981",
+                   "#22d3ee", "#f97316", "#a78bfa", "#ef4444", "#14b8a6"];
+  const MAX_CHIPS = 30;
+
+  function colorForIndex(i) { return PALETTE[i % PALETTE.length]; }
+  function norm(t) { return String(t || "").trim().toLowerCase(); }
+  function initials(name) {
+    const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) return "?";
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }
+
+  function workspacePages() {
+    try {
+      if (Array.isArray(notionWorkspacePagesState)) {
+        return notionWorkspacePagesState;
+      }
+    } catch (_e) { /* not yet defined at module-init time */ }
+    return [];
+  }
+
+  function findTeachersPage() {
+    const pages = workspacePages();
+    if (pages.length === 0) return null;
+    const titles = ["teachers", "teacher pay slips", "teacher payslips",
+                    "teachers pay slips", "teachers payslips"];
+    // Prefer: blank page directly under Vault with one of the known titles.
+    for (const p of pages) {
+      if (!p || p.kind !== "blank") continue;
+      if (p.parentId !== "__vault") continue;
+      if (titles.includes(norm(p.title))) return p;
+    }
+    // Fallback: any blank page whose title matches.
+    for (const p of pages) {
+      if (!p || p.kind !== "blank") continue;
+      if (titles.includes(norm(p.title))) return p;
+    }
+    return null;
+  }
+
+  function childPagesOf(parentId) {
+    return workspacePages().filter(
+      (p) => p && p.kind === "blank" && p.parentId === parentId,
+    );
+  }
+
+  function navToPage(id) {
+    try {
+      if (typeof activateNotionWorkspacePage === "function") {
+        activateNotionWorkspacePage(id);
+      }
+    } catch (e) { console.warn("rme TPS chip nav:", e); }
+  }
+
+  function ensureStyles() {
+    if (document.getElementById("rmeTpsAppDataStyles")) return;
+    const s = document.createElement("style");
+    s.id = "rmeTpsAppDataStyles";
+    s.textContent = [
+      ".rme-tps-chip--btn{background:none;border:0;font:inherit;cursor:pointer;",
+      "padding:.32rem .8rem .32rem .35rem;text-align:left;}",
+      ".rme-tps-chip--btn:hover{transform:translateY(-1px);}",
+      ".rme-tps-chip--btn:focus-visible{outline:2px solid #8b5cf6;",
+      "outline-offset:2px;}",
+      ".rme-tps-empty-app{padding:.85rem 1rem;border-radius:12px;",
+      "border:1px dashed color-mix(in srgb,var(--text) 18%,transparent);",
+      "color:var(--text-muted,#6b7280);font-size:.85rem;line-height:1.45;",
+      "background:color-mix(in srgb,#8b5cf6 4%,transparent);}",
+    ].join("");
+    document.head.appendChild(s);
+  }
+
+  let suppressObserver = false;
+
+  function rebuild() {
+    const chipsEl = document.getElementById("rmeTpsChips");
+    if (!(chipsEl instanceof HTMLElement)) return;
+    ensureStyles();
+
+    const parent = findTeachersPage();
+    const subEl = document.getElementById("rmeTpsHeroSub");
+    const totEl = document.getElementById("rmeTpsStatTotal");
+    const monEl = document.getElementById("rmeTpsStatMonth");
+    const tchEl = document.getElementById("rmeTpsStatTeachers");
+    const cntEl = document.getElementById("rmeTpsTeachersCount");
+
+    if (!parent) {
+      const sig = "no-parent";
+      const empties = chipsEl.querySelectorAll(".rme-tps-empty-app").length;
+      if (chipsEl.dataset.rmeAppSig === sig && empties === 1) {
+        if (totEl) totEl.textContent = "0";
+        if (monEl) monEl.textContent = "0";
+        if (tchEl) tchEl.textContent = "0";
+        if (cntEl) cntEl.textContent = "0 teachers";
+        return;
+      }
+      suppressObserver = true;
+      chipsEl.replaceChildren();
+      const empty = document.createElement("div");
+      empty.className = "rme-tps-empty-app";
+      empty.textContent = "Add a “Teachers” sub-page inside Vault. "
+        + "Each sub-page under it counts as one teacher and one pay slip page.";
+      chipsEl.appendChild(empty);
+      chipsEl.dataset.rmeAppSig = sig;
+      if (totEl) totEl.textContent = "0";
+      if (monEl) monEl.textContent = "0";
+      if (tchEl) tchEl.textContent = "0";
+      if (cntEl) cntEl.textContent = "0 teachers";
+      if (subEl) {
+        subEl.textContent = "Set up your Vault › Teachers page to start "
+          + "linking pay slips.";
+      }
+      queueMicrotask(() => { suppressObserver = false; });
+      return;
+    }
+
+    const children = childPagesOf(parent.id);
+    const count = children.length;
+    const titleSafe = String(parent.title || "Teachers").trim() || "Teachers";
+
+    if (totEl) totEl.textContent = String(count);
+    if (monEl) monEl.textContent = String(count);
+    if (tchEl) tchEl.textContent = String(count);
+    if (cntEl) cntEl.textContent = count + (count === 1 ? " teacher" : " teachers");
+    if (subEl) {
+      subEl.textContent = count === 0
+        ? "No teacher sub-pages yet under “" + titleSafe
+          + "” in Vault."
+        : "Linked to “" + titleSafe + "” inside Vault — each "
+          + "sub-page is one teacher.";
+    }
+
+    const sig = "p:" + parent.id + "|"
+      + children.map((c) => c.id + ":" + (c.title || "")).join("|");
+    const expected = Math.min(count, MAX_CHIPS);
+    const actualBtns = chipsEl.querySelectorAll(
+      ".rme-tps-chip--btn[data-rme-page-id]",
+    ).length;
+    if (chipsEl.dataset.rmeAppSig === sig && actualBtns === expected) return;
+
+    suppressObserver = true;
+    chipsEl.replaceChildren();
+    chipsEl.dataset.rmeAppSig = sig;
+
+    if (count === 0) {
+      const empty = document.createElement("div");
+      empty.className = "rme-tps-empty-app";
+      empty.textContent = "No teachers yet — add a sub-page under “"
+        + titleSafe + "” for each teacher.";
+      chipsEl.appendChild(empty);
+      queueMicrotask(() => { suppressObserver = false; });
+      return;
+    }
+
+    const slice = children.slice(0, MAX_CHIPS);
+    slice.forEach((child, i) => {
+      const name = String(child.title || "Untitled").trim() || "Untitled";
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "rme-tps-chip rme-tps-chip--btn";
+      chip.dataset.rmePageId = child.id;
+      const ava = document.createElement("span");
+      ava.className = "rme-tps-avatar";
+      const col = colorForIndex(i);
+      ava.style.background = "linear-gradient(135deg," + col
+        + " 0%, color-mix(in srgb," + col + " 65%, #1f2937) 100%)";
+      ava.textContent = initials(name);
+      const lbl = document.createElement("span");
+      lbl.className = "rme-tps-chip-label";
+      lbl.textContent = name;
+      chip.appendChild(ava);
+      chip.appendChild(lbl);
+      chip.title = "Open " + name + "’s pay slip page";
+      chip.addEventListener("click", () => navToPage(child.id));
+      chipsEl.appendChild(chip);
+    });
+    if (count > MAX_CHIPS) {
+      const more = document.createElement("div");
+      more.className = "rme-tps-chip rme-tps-chip--more";
+      more.textContent = "+" + (count - MAX_CHIPS) + " more";
+      chipsEl.appendChild(more);
+    }
+    queueMicrotask(() => { suppressObserver = false; });
+  }
+
+  function attachHeroObserver() {
+    const hero = document.querySelector(".rme-tps-hero");
+    if (!(hero instanceof HTMLElement)) return false;
+    if (hero.dataset.rmeAppObs === "1") return true;
+    hero.dataset.rmeAppObs = "1";
+    let pending = false;
+    const mo = new MutationObserver(() => {
+      if (suppressObserver) return;
+      if (pending) return;
+      pending = true;
+      queueMicrotask(() => { pending = false; rebuild(); });
+    });
+    mo.observe(hero, { childList: true, subtree: true, characterData: true });
+    return true;
+  }
+
+  function tick() {
+    rebuild();
+    attachHeroObserver();
+  }
+
+  function init() {
+    tick();
+    // Catches workspace state changes (page rename, add/remove sub-page).
+    window.setInterval(tick, 1000);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init, { once: true });
+  } else {
+    window.setTimeout(init, 340);
+  }
+})();
+
+// === RME: TPS final polish ================================================
+// Three jobs:
+//  1. Kill the stray "Teacher Pay Slips" title + divider + "Write something
+//     brilliant" placeholder showing above/below the hero card. The hero
+//     card is the only heading we want on this page.
+//  2. Stop the stat-tile flicker (e.g. "33" ↔ "6 from Skippers"). The old
+//     turn-27 hero re-renders from rawTable every ~1.5s and the turn-29
+//     IIFE rebuilds chip buttons every 1s; MutationObservers pin OUR values
+//     back instantly whenever any other code stomps them.
+//  3. Replace the chip strip with a proper sorted grid of teacher cards --
+//     spacious, stylish, alphabetised, clickable. Each card opens that
+//     teacher's sub-page via activateNotionWorkspacePage.
+(function rmeTpsFinalPolish() {
+  // Disabled: the Teacher Pay Slips page is now rebuilt by
+  // rmeRecreateTeacherPaySlipsPageCleanly. Keeping this old cleanup active
+  // caused duplicate headings, stale "ledger" wording, and flicker.
+  return;
+  const SYNC_MS = 220;
+  const PALETTE = ["#3b82f6", "#8b5cf6", "#ec4899", "#f59e0b", "#10b981",
+                   "#22d3ee", "#f97316", "#a78bfa", "#ef4444", "#14b8a6"];
+  const TEACHERS_TITLES = new Set([
+    "teachers", "teacher pay slips", "teacher payslips",
+    "teachers pay slips", "teachers payslips",
+  ]);
+  const STRAY_TEXTS = [
+    "write something brilliant. press '/' when shortcuts are wired.",
+    "write something brilliant.",
+    "press '/' when shortcuts are wired.",
+    "teacher pay slips",
+    "teacher payslips",
+    "teachers pay slips",
+    "teachers payslips",
+  ];
+
+  function colorForIndex(i) { return PALETTE[i % PALETTE.length]; }
+  function norm(t) { return String(t || "").trim().toLowerCase(); }
+  function initials(name) {
+    const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) return "?";
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }
+
+  function workspacePages() {
+    try {
+      if (Array.isArray(notionWorkspacePagesState)) {
+        return notionWorkspacePagesState;
+      }
+    } catch (_e) { /* not yet defined */ }
+    return [];
+  }
+
+  function findTeachersPage() {
+    const pages = workspacePages();
+    if (pages.length === 0) return null;
+    for (const p of pages) {
+      if (!p || p.kind !== "blank" || p.parentId !== "__vault") continue;
+      if (TEACHERS_TITLES.has(norm(p.title))) return p;
+    }
+    for (const p of pages) {
+      if (!p || p.kind !== "blank") continue;
+      if (TEACHERS_TITLES.has(norm(p.title))) return p;
+    }
+    return null;
+  }
+
+  function childPagesOf(parentId) {
+    return workspacePages()
+      .filter((p) => p && p.kind === "blank" && p.parentId === parentId)
+      .sort((a, b) => String(a.title || "").toLocaleLowerCase()
+        .localeCompare(String(b.title || "").toLocaleLowerCase()));
+  }
+
+  function navToPage(id) {
+    try {
+      if (typeof activateNotionWorkspacePage === "function") {
+        activateNotionWorkspacePage(id);
+      }
+    } catch (e) { console.warn("rme TPS card nav:", e); }
+  }
+
+  function ensureStyles() {
+    if (document.getElementById("rmeTpsFinalStyles")) return;
+    const s = document.createElement("style");
+    s.id = "rmeTpsFinalStyles";
+    s.textContent = [
+      // Strip everything above the hero card on the TPS pane: native title,
+      // any <hr> / divider class, and CSS-based placeholders.
+      '.notion-ws-pane[data-rme-tps="1"] > h1,',
+      '.notion-ws-pane[data-rme-tps="1"] > h2,',
+      '.notion-ws-pane[data-rme-tps="1"] > .ws-pane-title,',
+      '.notion-ws-pane[data-rme-tps="1"] > .notion-page-title,',
+      '.notion-ws-pane[data-rme-tps="1"] > [class*="page-title"],',
+      '.notion-ws-pane[data-rme-tps="1"] > hr,',
+      '.notion-ws-pane[data-rme-tps="1"] hr:not(.rme-tps-hero *),',
+      '.notion-ws-pane[data-rme-tps="1"] [class*="divider"]:not(.rme-tps-hero *),',
+      '.notion-ws-pane[data-rme-tps="1"] [class*="separator"]:not(.rme-tps-hero *)',
+      "{display:none !important;border:0 !important;height:0 !important;",
+      "margin:0 !important;padding:0 !important;}",
+      // Hide CSS-rendered editor placeholder text.
+      '.notion-ws-pane[data-rme-tps="1"] [contenteditable]:empty::before,',
+      '.notion-ws-pane[data-rme-tps="1"] [data-placeholder]:empty::before,',
+      '.notion-ws-pane[data-rme-tps="1"] .ws-pane-body:empty::before',
+      "{content:\"\" !important;display:none !important;}",
+      // Shrink any empty editable body so it doesn't leave a tall blank zone.
+      '.notion-ws-pane[data-rme-tps="1"] .ws-pane-body{min-height:0 !important;}',
+      // Teacher cards grid -- overrides the existing chip strip layout.
+      ".rme-tps-chips.rme-tps-grid{display:grid !important;",
+      "grid-template-columns:repeat(auto-fill,minmax(190px,1fr)) !important;",
+      "gap:.7rem !important;overflow:visible !important;padding:.25rem 0 !important;",
+      "margin:0 !important;align-items:stretch !important;}",
+      ".rme-tps-teachers{overflow:visible !important;}",
+      ".rme-tps-card{position:relative;display:flex;align-items:center;",
+      "gap:.7rem;padding:.75rem .9rem;border-radius:14px;text-align:left;",
+      "background:color-mix(in srgb,var(--surface,#fff) 60%,transparent);",
+      "border:1px solid color-mix(in srgb,var(--text) 8%,transparent);",
+      "font:inherit;cursor:pointer;color:var(--text);overflow:hidden;",
+      "transition:transform .18s ease,box-shadow .18s ease,",
+      "border-color .18s ease,background .18s ease;}",
+      ".rme-tps-card::before{content:\"\";position:absolute;inset:0;",
+      "border-radius:inherit;pointer-events:none;opacity:0;",
+      "background:radial-gradient(120% 80% at 0% 0%,",
+      "color-mix(in srgb,var(--rme-card-accent,#8b5cf6) 22%,transparent) 0%,",
+      "transparent 60%);transition:opacity .18s ease;}",
+      ".rme-tps-card:hover{transform:translateY(-2px);",
+      "border-color:color-mix(in srgb,var(--rme-card-accent,#8b5cf6) 45%,transparent);",
+      "box-shadow:0 10px 28px -14px color-mix(in srgb,",
+      "var(--rme-card-accent,#8b5cf6) 40%,transparent),",
+      "0 1px 2px rgba(0,0,0,.05);}",
+      ".rme-tps-card:hover::before{opacity:1;}",
+      ".rme-tps-card:focus-visible{",
+      "outline:2px solid var(--rme-card-accent,#8b5cf6);outline-offset:2px;}",
+      ".rme-tps-card-avatar{position:relative;flex-shrink:0;width:2.25rem;",
+      "height:2.25rem;border-radius:999px;color:#fff;font-size:.78rem;",
+      "font-weight:700;letter-spacing:.01em;display:inline-flex;",
+      "align-items:center;justify-content:center;",
+      "box-shadow:0 4px 10px -4px color-mix(in srgb,",
+      "var(--rme-card-accent,#8b5cf6) 55%,transparent);}",
+      ".rme-tps-card-body{position:relative;flex:1;min-width:0;",
+      "display:flex;flex-direction:column;gap:.05rem;}",
+      ".rme-tps-card-name{font-size:.88rem;font-weight:600;",
+      "letter-spacing:-.005em;color:var(--text);overflow:hidden;",
+      "text-overflow:ellipsis;white-space:nowrap;}",
+      ".rme-tps-card-sub{font-size:.7rem;color:var(--text-muted,#6b7280);",
+      "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
+      ".rme-tps-card-arrow{position:relative;color:var(--text-muted,#6b7280);",
+      "font-size:1.1rem;line-height:1;opacity:.55;flex-shrink:0;",
+      "transition:transform .18s ease,opacity .18s ease,color .18s ease;}",
+      ".rme-tps-card:hover .rme-tps-card-arrow{opacity:1;",
+      "transform:translateX(3px);color:var(--rme-card-accent,#8b5cf6);}",
+      ".rme-tps-empty-grid{grid-column:1/-1;padding:1rem 1.1rem;",
+      "border-radius:14px;",
+      "border:1px dashed color-mix(in srgb,var(--text) 18%,transparent);",
+      "background:color-mix(in srgb,#8b5cf6 4%,transparent);",
+      "color:var(--text-muted,#6b7280);font-size:.85rem;line-height:1.5;}",
+    ].join("");
+    document.head.appendChild(s);
+  }
+
+  let suppressObserver = false;
+  function withSuppressedObserver(fn) {
+    suppressObserver = true;
+    try { fn(); } finally {
+      queueMicrotask(() => { suppressObserver = false; });
+    }
+  }
+
+  function findTpsPane() {
+    return document.querySelector('.notion-ws-pane[data-rme-tps="1"]');
+  }
+
+  // === Stray title / divider / placeholder removal =======================
+  function hideStrayInPane(pane) {
+    if (!(pane instanceof HTMLElement)) return;
+    pane.querySelectorAll(":scope *").forEach((el) => {
+      if (!(el instanceof HTMLElement)) return;
+      if (el.closest(".rme-tps-hero")) return;
+      if (el.dataset.rmeStrayHidden === "1") return;
+      // Leaf text matches?
+      if (el.children.length === 0) {
+        const t = String(el.textContent || "").trim().toLowerCase();
+        if (t) {
+          for (const w of STRAY_TEXTS) {
+            if (t === w || t.startsWith(w)) {
+              el.style.display = "none";
+              el.dataset.rmeStrayHidden = "1";
+              return;
+            }
+          }
+        }
+      }
+      // hr / divider element?
+      const tag = el.tagName;
+      const cls = String(el.className || "").toLowerCase();
+      if (tag === "HR" || cls.includes("divider") || cls.includes("separator")) {
+        el.style.display = "none";
+        el.dataset.rmeStrayHidden = "1";
+      }
+    });
+  }
+
+  // === Stat-tile + sub-text pinning ======================================
+  /** @type {Map<HTMLElement, { last: string }>} */
+  const lockedEls = new Map();
+  function lockTextContent(el, getValue) {
+    if (!(el instanceof HTMLElement)) return;
+    if (lockedEls.has(el)) {
+      lockedEls.get(el).last = String(getValue());
+      const want = String(getValue());
+      if (el.textContent !== want) {
+        withSuppressedObserver(() => { el.textContent = want; });
+      }
+      return;
+    }
+    lockedEls.set(el, { last: String(getValue()) });
+    const mo = new MutationObserver(() => {
+      if (suppressObserver) return;
+      const want = String(getValue());
+      if (el.textContent !== want) {
+        withSuppressedObserver(() => { el.textContent = want; });
+      }
+    });
+    mo.observe(el, { childList: true, characterData: true, subtree: true });
+    withSuppressedObserver(() => { el.textContent = String(getValue()); });
+  }
+
+  // === Teacher card grid ================================================
+  function attachChipsObserver(chipsEl) {
+    if (chipsEl.dataset.rmeFinalObs === "1") return;
+    chipsEl.dataset.rmeFinalObs = "1";
+    let pending = false;
+    const mo = new MutationObserver(() => {
+      if (suppressObserver) return;
+      if (pending) return;
+      pending = true;
+      queueMicrotask(() => { pending = false; renderTeacherGrid(); });
+    });
+    mo.observe(chipsEl, { childList: true });
+  }
+
+  function renderTeacherGrid() {
+    const chipsEl = document.getElementById("rmeTpsChips");
+    if (!(chipsEl instanceof HTMLElement)) return;
+    chipsEl.classList.add("rme-tps-grid");
+    const parent = findTeachersPage();
+    if (!parent) {
+      const sig = "no-parent";
+      const emptyCount = chipsEl.querySelectorAll(".rme-tps-empty-grid").length;
+      if (chipsEl.dataset.rmeFinalSig === sig && emptyCount === 1) return;
+      withSuppressedObserver(() => {
+        chipsEl.dataset.rmeFinalSig = sig;
+        chipsEl.replaceChildren();
+        const empty = document.createElement("div");
+        empty.className = "rme-tps-empty-grid";
+        empty.textContent = "Add a “Teachers” sub-page inside Vault. "
+          + "Each sub-page under it is one teacher and one pay slip page.";
+        chipsEl.appendChild(empty);
+      });
+      return;
+    }
+    const children = childPagesOf(parent.id);
+    const count = children.length;
+    const titleSafe = String(parent.title || "Teachers").trim() || "Teachers";
+    const sig = "p:" + parent.id + "|"
+      + children.map((c) => c.id + ":" + (c.title || "")).join("|");
+    const expected = count;
+    const actualCards = chipsEl.querySelectorAll(
+      ".rme-tps-card[data-rme-page-id]",
+    ).length;
+    if (chipsEl.dataset.rmeFinalSig === sig && actualCards === expected) return;
+
+    withSuppressedObserver(() => {
+      chipsEl.dataset.rmeFinalSig = sig;
+      chipsEl.replaceChildren();
+      if (count === 0) {
+        const empty = document.createElement("div");
+        empty.className = "rme-tps-empty-grid";
+        empty.textContent = "No teachers yet — add a sub-page under "
+          + "“" + titleSafe + "” for each teacher.";
+        chipsEl.appendChild(empty);
+        return;
+      }
+      children.forEach((child, i) => {
+        const name = String(child.title || "Untitled").trim() || "Untitled";
+        const col = colorForIndex(i);
+        const card = document.createElement("button");
+        card.type = "button";
+        card.className = "rme-tps-card";
+        card.dataset.rmePageId = child.id;
+        card.style.setProperty("--rme-card-accent", col);
+        const ava = document.createElement("span");
+        ava.className = "rme-tps-card-avatar";
+        ava.style.background = "linear-gradient(135deg," + col
+          + " 0%, color-mix(in srgb," + col + " 65%, #1f2937) 100%)";
+        ava.textContent = initials(name);
+        const body = document.createElement("span");
+        body.className = "rme-tps-card-body";
+        const nm = document.createElement("span");
+        nm.className = "rme-tps-card-name";
+        nm.textContent = name;
+        const sub = document.createElement("span");
+        sub.className = "rme-tps-card-sub";
+        sub.textContent = "Open pay slip page";
+        body.appendChild(nm);
+        body.appendChild(sub);
+        const arr = document.createElement("span");
+        arr.className = "rme-tps-card-arrow";
+        arr.textContent = "›";
+        arr.setAttribute("aria-hidden", "true");
+        card.appendChild(ava);
+        card.appendChild(body);
+        card.appendChild(arr);
+        card.title = "Open " + name + "’s pay slip page";
+        card.addEventListener("click", () => navToPage(child.id));
+        chipsEl.appendChild(card);
+      });
+    });
+  }
+
+  function pinStatsAndSubText() {
+    const totEl = document.getElementById("rmeTpsStatTotal");
+    const monEl = document.getElementById("rmeTpsStatMonth");
+    const tchEl = document.getElementById("rmeTpsStatTeachers");
+    const cntEl = document.getElementById("rmeTpsTeachersCount");
+    const subEl = document.getElementById("rmeTpsHeroSub");
+    function currentCount() {
+      const parent = findTeachersPage();
+      if (!parent) return 0;
+      return childPagesOf(parent.id).length;
+    }
+    function currentSub() {
+      const parent = findTeachersPage();
+      if (!parent) {
+        return "Set up your Vault › Teachers page to start linking pay slips.";
+      }
+      const count = childPagesOf(parent.id).length;
+      const titleSafe = String(parent.title || "Teachers").trim() || "Teachers";
+      return count === 0
+        ? "No teacher sub-pages yet under “" + titleSafe + "” in Vault."
+        : "Linked to “" + titleSafe + "” inside Vault — each "
+          + "sub-page is one teacher.";
+    }
+    function currentCntText() {
+      const c = currentCount();
+      return c + (c === 1 ? " teacher" : " teachers");
+    }
+    if (totEl) lockTextContent(totEl, () => String(currentCount()));
+    if (monEl) lockTextContent(monEl, () => String(currentCount()));
+    if (tchEl) lockTextContent(tchEl, () => String(currentCount()));
+    if (cntEl) lockTextContent(cntEl, currentCntText);
+    if (subEl) lockTextContent(subEl, currentSub);
+  }
+
+  function sync() {
+    ensureStyles();
+    const tps = findTpsPane();
+    if (tps instanceof HTMLElement) hideStrayInPane(tps);
+    pinStatsAndSubText();
+    const chipsEl = document.getElementById("rmeTpsChips");
+    if (chipsEl instanceof HTMLElement) attachChipsObserver(chipsEl);
+    renderTeacherGrid();
+  }
+
+  function init() {
+    sync();
+    window.setInterval(sync, SYNC_MS);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init, { once: true });
+  } else {
+    window.setTimeout(init, 400);
+  }
+})();
+
+// === RME: TPS anti-flicker + bottom cleanup v2 ===========================
+// Two jobs the v1 polish IIFE missed:
+//
+//  1. FLICKER. v1 pinned stat values via MutationObservers attached to
+//     individual stat elements (#rmeTpsStatTotal etc.). But the turn-27
+//     IIFE doesn't mutate those elements -- it REPLACES the whole
+//     .rme-tps-hero block, so the new DOM nodes inherit the same IDs
+//     while the OLD observer is orphaned to dead nodes. Result: "33" still
+//     blinked to "6" every ~1.5s. The bulletproof fix is a per-frame
+//     requestAnimationFrame loop: on every paint, if our IDs don't show
+//     OUR truth, overwrite. Any stomp is corrected inside one frame and
+//     never reaches the screen.
+//
+//  2. STRAY "Teacher Payslip" + divider at the bottom of the page.
+//     The earlier sweeps only matched LEAF elements with the exact text,
+//     so a heading wrapped in any container (e.g. <div><span>Teacher
+//     Pay Slips</span></div>) slipped through, as did dividers nested
+//     past the .rme-tps-hero direct-sibling selector. This sweep also
+//     catches heading-like elements (h1-h6, [class*="title"|heading"])
+//     by their textContent, and nukes every HR / divider / separator
+//     class anywhere in the TPS pane outside the hero, chips, and notes.
+(function rmeTpsAntiFlickerV2() {
+  // Disabled: this anti-flicker layer became part of the flicker because it
+  // kept fighting the page DOM. The clean rebuilt page owns the UI now.
+  return;
+  const TEACHERS_TITLES = new Set([
+    "teachers", "teacher pay slips", "teacher payslips",
+    "teachers pay slips", "teachers payslips",
+  ]);
+  const STRAY_TEXTS = [
+    "write something brilliant. press '/' when shortcuts are wired.",
+    "write something brilliant.",
+    "press '/' when shortcuts are wired.",
+    "teacher pay slips",
+    "teacher payslips",
+    "teachers pay slips",
+    "teachers payslips",
+  ];
+
+  function norm(t) { return String(t || "").trim().toLowerCase(); }
+  function workspacePages() {
+    try {
+      if (Array.isArray(notionWorkspacePagesState)) {
+        return notionWorkspacePagesState;
+      }
+    } catch (_e) { /* not yet defined */ }
+    return [];
+  }
+  function findTeachersPage() {
+    const pages = workspacePages();
+    for (const p of pages) {
+      if (p && p.kind === "blank" && p.parentId === "__vault"
+        && TEACHERS_TITLES.has(norm(p.title))) return p;
+    }
+    for (const p of pages) {
+      if (p && p.kind === "blank" && TEACHERS_TITLES.has(norm(p.title))) {
+        return p;
+      }
+    }
+    return null;
+  }
+  function childCount() {
+    const p = findTeachersPage();
+    if (!p) return 0;
+    return workspacePages().filter((c) =>
+      c && c.kind === "blank" && c.parentId === p.id,
+    ).length;
+  }
+  function currentSub() {
+    const p = findTeachersPage();
+    if (!p) {
+      return "Set up your Vault › Teachers page to start linking pay slips.";
+    }
+    const c = childCount();
+    const t = String(p.title || "Teachers").trim() || "Teachers";
+    return c === 0
+      ? "No teacher sub-pages yet under “" + t + "” in Vault."
+      : "Linked to “" + t + "” inside Vault — each "
+        + "sub-page is one teacher.";
+  }
+
+  // Per-frame stats pinning. Cost is trivial (5 textContent reads + 0-5
+  // writes per frame), and guarantees any external code that overwrites
+  // our values gets corrected before the user sees it.
+  function pinStats() {
+    const n = childCount();
+    const ns = String(n);
+    const cntText = n + (n === 1 ? " teacher" : " teachers");
+    const sub = currentSub();
+    const totEl = document.getElementById("rmeTpsStatTotal");
+    const monEl = document.getElementById("rmeTpsStatMonth");
+    const tchEl = document.getElementById("rmeTpsStatTeachers");
+    const cntEl = document.getElementById("rmeTpsTeachersCount");
+    const subEl = document.getElementById("rmeTpsHeroSub");
+    if (totEl && totEl.textContent !== ns) totEl.textContent = ns;
+    if (monEl && monEl.textContent !== ns) monEl.textContent = ns;
+    if (tchEl && tchEl.textContent !== ns) tchEl.textContent = ns;
+    if (cntEl && cntEl.textContent !== cntText) cntEl.textContent = cntText;
+    if (subEl && subEl.textContent !== sub) subEl.textContent = sub;
+  }
+
+  let rafActive = false;
+  function rafLoop() {
+    try { pinStats(); } catch (_e) { /* swallow per-frame errors */ }
+    if (rafActive) requestAnimationFrame(rafLoop);
+  }
+
+  function findTpsPane() {
+    return document.querySelector('.notion-ws-pane[data-rme-tps="1"]');
+  }
+
+  // Sweep stray titles / dividers anywhere in the TPS pane subtree, except
+  // inside the hero card, the teacher cards grid, and the notes area --
+  // those are ours and must stay visible.
+  function sweepStrayInPane(pane) {
+    if (!(pane instanceof HTMLElement)) return;
+    pane.querySelectorAll(":scope *").forEach((el) => {
+      if (!(el instanceof HTMLElement)) return;
+      if (el.closest(".rme-tps-hero")) return;
+      if (el.closest(".rme-tps-chips")) return;
+      if (el.closest(".rme-tps-notes")) return;
+      if (el.dataset.rmeStrayHiddenV2 === "1") return;
+      const tag = el.tagName;
+      const cls = String(el.className || "").toLowerCase();
+      // Dividers / HRs anywhere -- hide outright.
+      if (
+        tag === "HR"
+        || cls.includes("divider")
+        || cls.includes("separator")
+      ) {
+        el.style.display = "none";
+        el.dataset.rmeStrayHiddenV2 = "1";
+        return;
+      }
+      // Heading-like elements: check textContent (which collapses nested
+      // inline children, so wrapped headings get caught too).
+      const isHeadingLike = /^H[1-6]$/.test(tag)
+        || cls.includes("title")
+        || cls.includes("page-title")
+        || cls.includes("heading");
+      const isLeaf = el.children.length === 0;
+      if (!isHeadingLike && !isLeaf) return;
+      const t = norm(el.textContent || "");
+      if (!t) return;
+      for (const w of STRAY_TEXTS) {
+        if (t === w || (t.startsWith(w) && t.length < w.length + 60)) {
+          el.style.display = "none";
+          el.dataset.rmeStrayHiddenV2 = "1";
+          return;
+        }
+      }
+    });
+  }
+
+  function sweepTick() {
+    sweepStrayInPane(findTpsPane());
+  }
+
+  function init() {
+    rafActive = true;
+    requestAnimationFrame(rafLoop);
+    window.setInterval(sweepTick, 140);
+    const panesRoot = document.getElementById("notionWsPanes");
+    if (panesRoot instanceof HTMLElement) {
+      try {
+        new MutationObserver(() => sweepTick()).observe(panesRoot, {
+          childList: true,
+          subtree: true,
+          characterData: true,
+        });
+      } catch (_e) { /* ignore */ }
+    }
+    sweepTick();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init, { once: true });
+  } else {
+    window.setTimeout(init, 500);
+  }
+})();
+
+// === RME: Option A — keep admin signed in across Restart App ===============
+// Goal: when admin clicks "Restart App", they should drop straight back into the
+// app on relaunch — no email/password re-entry. We achieve this without storing
+// any password by ensuring Supabase persists the session to localStorage (which
+// survives app.relaunch) instead of sessionStorage (which doesn't).
+//
+// What we pin for admin only (matches ALLOWED_ADMIN_EMAIL in auth-store.js):
+//   1. "recruit-auth-remember-me" = "1"  → preload creates the Supabase client
+//      with localStorage as the auth storage backend.
+//   2. "recruit-auth-saved-email" = admin@email  → if for any reason the session
+//      did expire, the email auto-fills on the sign-in form (still no password).
+//   3. Forces the Remember me checkbox ON whenever the admin email is in the
+//      sign-in field so the very first admin sign-in seeds localStorage.
+// Triggers: page load, auth email typing, periodic session probe, Restart App click.
+(function rmeAdminRestartKeepSession() {
+  const ADMIN_EMAILS = ["inforecruitmyenglish@gmail.com"];
+  const REMEMBER_PREF_KEY = "recruit-auth-remember-me";
+  const SAVED_EMAIL_KEY = "recruit-auth-saved-email";
+
+  function isAdminEmail(em) {
+    const s = String(em || "").trim().toLowerCase();
+    return Boolean(s) && ADMIN_EMAILS.includes(s);
+  }
+
+  function pinPrefsForAdmin(email) {
+    try {
+      window.localStorage.setItem(REMEMBER_PREF_KEY, "1");
+      const em = String(email || "").trim().toLowerCase();
+      if (em) window.localStorage.setItem(SAVED_EMAIL_KEY, em);
+    } catch (_e) { /* ignore */ }
+    // Ask preload to recreate the supabase client with localStorage backing.
+    // No-op if pref was already "1". Never logs the user out.
+    try {
+      const ta = window.teacherAuth;
+      if (ta && typeof ta.setRememberMePreference === "function") {
+        ta.setRememberMePreference(true);
+      }
+    } catch (_e) { /* ignore */ }
+  }
+
+  function init() {
+    // 1) Force Remember me ON whenever the admin email is in the sign-in field.
+    //    Seeds the Supabase session into localStorage on the very first admin
+    //    sign-in, so future restarts find a live session there.
+    const emailEl = document.getElementById("authEmail");
+    const rememberEl = document.getElementById("authRememberMe");
+    if (emailEl instanceof HTMLInputElement) {
+      const onEmailChange = () => {
+        if (!isAdminEmail(emailEl.value)) return;
+        if (rememberEl instanceof HTMLInputElement) {
+          rememberEl.checked = true;
+        }
+        pinPrefsForAdmin(emailEl.value);
+      };
+      emailEl.addEventListener("input", onEmailChange);
+      emailEl.addEventListener("blur", onEmailChange);
+      onEmailChange();
+    }
+
+    // 2) Whenever the live Supabase session belongs to admin, pin prefs.
+    //    Catches the case where admin is already signed in when this loads,
+    //    or signs in via any path that bypasses the form change handlers.
+    let lastEmail = "";
+    async function checkSession() {
+      try {
+        const ta = window.teacherAuth;
+        if (!ta || typeof ta.getSessionUser !== "function") return;
+        const r = await ta.getSessionUser();
+        const em = String(r?.user?.email || "").trim().toLowerCase();
+        if (em && em !== lastEmail) {
+          lastEmail = em;
+          if (isAdminEmail(em)) pinPrefsForAdmin(em);
+        }
+      } catch (_e) { /* ignore */ }
+    }
+    void checkSession();
+    window.setInterval(checkSession, 4000);
+
+    // 3) On Restart App click, pin prefs one final time before main relaunches.
+    //    Capture phase so this runs before any existing click handler.
+    const restartBtn = document.getElementById("navRestartAppBtn");
+    if (restartBtn instanceof HTMLElement) {
+      restartBtn.addEventListener("click", () => {
+        if (isAdminEmail(lastEmail)) pinPrefsForAdmin(lastEmail);
+      }, true);
+    }
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init, { once: true });
+  } else {
+    // Defer one tick so module-scoped lets are initialised.
+    window.setTimeout(init, 0);
+  }
+})();
+
+// Turn 34 — Option A: keep admin's Supabase session in localStorage so Restart App doesn't sign Admin out.
+// No passwords stored. We just force Remember-me ON for the admin email so Supabase persists its session to localStorage.
+(function rmeAdminRestartKeepSession() {
+	const ADMIN_EMAILS = ["inforecruitmyenglish@gmail.com"];
+	const REMEMBER_PREF_KEY = "recruit-auth-remember-me";
+	const SAVED_EMAIL_KEY = "recruit-auth-saved-email";
+
+	function isAdminEmail(email) {
+		if (!email || typeof email !== "string") return false;
+		return ADMIN_EMAILS.indexOf(email.trim().toLowerCase()) !== -1;
+	}
+
+	function pinPrefsForAdmin(email) {
+		try {
+			localStorage.setItem(REMEMBER_PREF_KEY, "1");
+			localStorage.setItem(SAVED_EMAIL_KEY, String(email).trim().toLowerCase());
+			if (window.teacherAuth && typeof window.teacherAuth.setRememberMePreference === "function") {
+				try { window.teacherAuth.setRememberMePreference(true); } catch (_err) {}
+			}
+		} catch (err) {
+			console.warn("[rme] pinPrefsForAdmin failed", err);
+		}
+	}
+
+	let lastSeenAdminEmail = null;
+
+	function checkSessionForAdmin() {
+		try {
+			if (!window.teacherAuth || typeof window.teacherAuth.getSessionUser !== "function") return;
+			const maybePromise = window.teacherAuth.getSessionUser();
+			if (!maybePromise || typeof maybePromise.then !== "function") return;
+			maybePromise.then(function (user) {
+				const email = user && user.email ? String(user.email) : null;
+				if (email && isAdminEmail(email) && email !== lastSeenAdminEmail) {
+					lastSeenAdminEmail = email;
+					pinPrefsForAdmin(email);
+				}
+			}).catch(function () {});
+		} catch (_err) {}
+	}
+
+	function wireEmailInput() {
+		const emailInput = document.getElementById("authEmail");
+		if (!emailInput || emailInput.dataset.rmeAdminPinWired === "1") return;
+		emailInput.dataset.rmeAdminPinWired = "1";
+		const onChange = function () {
+			const v = emailInput.value || "";
+			if (isAdminEmail(v)) {
+				const rm = document.getElementById("authRememberMe");
+				if (rm && !rm.checked) {
+					rm.checked = true;
+					try { rm.dispatchEvent(new Event("change", { bubbles: true })); } catch (_err) {}
+				}
+				pinPrefsForAdmin(v);
+			}
+		};
+		emailInput.addEventListener("input", onChange);
+		emailInput.addEventListener("blur", onChange);
+	}
+
+	function wireRestartButton() {
+		const btn = document.getElementById("navRestartAppBtn");
+		if (!btn || btn.dataset.rmeAdminPinWired === "1") return;
+		btn.dataset.rmeAdminPinWired = "1";
+		btn.addEventListener("click", function () {
+			if (lastSeenAdminEmail && isAdminEmail(lastSeenAdminEmail)) {
+				pinPrefsForAdmin(lastSeenAdminEmail);
+				return;
+			}
+			const emailInput = document.getElementById("authEmail");
+			const v = emailInput && emailInput.value ? emailInput.value : "";
+			if (isAdminEmail(v)) pinPrefsForAdmin(v);
+		}, true);
+	}
+
+	function init() {
+		wireEmailInput();
+		wireRestartButton();
+		checkSessionForAdmin();
+		setInterval(function () {
+			wireEmailInput();
+			wireRestartButton();
+			checkSessionForAdmin();
+		}, 4000);
+	}
+
+	if (document.readyState === "loading") {
+		document.addEventListener("DOMContentLoaded", init);
+	} else {
+		setTimeout(init, 0);
+	}
+})();
+
+// Turn 35 — Admin-only password autofill across Restart App.
+// Owner override: store admin password in localStorage so Restart App is zero-typing.
+// Strictly scoped to ADMIN_EMAILS (admin email only). Cleared on explicit logout.
+// Upgrade path: move to Electron safeStorage (OS keychain) in main.js for encryption-at-rest.
+(function rmeAdminAutoSignIn() {
+	return; // Turn 36: superseded by rmeAdminAutoSignInV2 — old form auto-click raced with applyRememberedCredentialsToForm().
+	// eslint-disable-next-line no-unreachable
+	const ADMIN_EMAILS = ["inforecruitmyenglish@gmail.com"];
+	const ADMIN_PWD_KEY = "recruit-auth-admin-pwd";
+	const SAVED_EMAIL_KEY = "recruit-auth-saved-email";
+	const AUTOSUBMITTED_FLAG = "__rmeAdminAutoSubmittedOnce";
+
+	function isAdminEmail(email) {
+		if (!email || typeof email !== "string") return false;
+		return ADMIN_EMAILS.indexOf(email.trim().toLowerCase()) !== -1;
+	}
+
+	let pendingAdminPwd = null;
+	let lastSeenSessionEmail = null;
+
+	function saveAdminPassword(pwd) {
+		try { localStorage.setItem(ADMIN_PWD_KEY, String(pwd)); } catch (_err) {}
+	}
+	function loadAdminPassword() {
+		try { return localStorage.getItem(ADMIN_PWD_KEY); } catch (_err) { return null; }
+	}
+	function clearAdminPassword() {
+		try { localStorage.removeItem(ADMIN_PWD_KEY); } catch (_err) {}
+	}
+	function readSavedEmail() {
+		try { return localStorage.getItem(SAVED_EMAIL_KEY); } catch (_err) { return null; }
+	}
+
+	function wireFormCapture() {
+		const form = document.getElementById("authForm");
+		if (!form || form.dataset.rmeAdminPwdWired === "1") return;
+		form.dataset.rmeAdminPwdWired = "1";
+		form.addEventListener("submit", function () {
+			try {
+				const emailEl = document.getElementById("authEmail");
+				const pwdEl = document.getElementById("authPassword");
+				const email = emailEl ? String(emailEl.value || "").trim().toLowerCase() : "";
+				const pwd = pwdEl ? String(pwdEl.value || "") : "";
+				if (isAdminEmail(email) && pwd.length > 0) {
+					pendingAdminPwd = pwd;
+				}
+			} catch (_err) {}
+		}, true);
+	}
+
+	function wireLogout() {
+		const btn = document.getElementById("logoutBtn");
+		if (!btn || btn.dataset.rmeAdminPwdLogoutWired === "1") return;
+		btn.dataset.rmeAdminPwdLogoutWired = "1";
+		btn.addEventListener("click", function () {
+			// Explicit logout → drop saved admin password so we don't auto-fill on next launch.
+			clearAdminPassword();
+			lastSeenSessionEmail = null;
+			pendingAdminPwd = null;
+		}, true);
+	}
+
+	function autofillAndMaybeAutoSubmit() {
+		const emailEl = document.getElementById("authEmail");
+		const pwdEl = document.getElementById("authPassword");
+		if (!emailEl || !pwdEl) return; // auth gate not in DOM → user is signed in
+		if (emailEl.offsetParent === null) return; // auth gate hidden
+
+		const savedEmail = readSavedEmail();
+		if (!isAdminEmail(savedEmail)) return;
+
+		if (!emailEl.value) emailEl.value = savedEmail;
+
+		const savedPwd = loadAdminPassword();
+		if (savedPwd && !pwdEl.value) {
+			pwdEl.value = savedPwd;
+		}
+
+		// Auto-submit once per page load if we have both fields populated.
+		if (savedPwd && !window[AUTOSUBMITTED_FLAG]) {
+			window[AUTOSUBMITTED_FLAG] = true;
+			const submitBtn = document.getElementById("authSubmitBtn");
+			const form = document.getElementById("authForm");
+			setTimeout(function () {
+				try {
+					if (submitBtn && !submitBtn.disabled) {
+						submitBtn.click();
+					} else if (form && typeof form.requestSubmit === "function") {
+						form.requestSubmit();
+					}
+				} catch (_err) {}
+			}, 200);
+		}
+	}
+
+	function checkSessionAndSaveOnSuccess() {
+		try {
+			if (!window.teacherAuth || typeof window.teacherAuth.getSessionUser !== "function") return;
+			const maybe = window.teacherAuth.getSessionUser();
+			if (!maybe || typeof maybe.then !== "function") return;
+			maybe.then(function (user) {
+				const email = user && user.email ? String(user.email).trim().toLowerCase() : null;
+				if (email && email !== lastSeenSessionEmail) {
+					lastSeenSessionEmail = email;
+					if (isAdminEmail(email) && pendingAdminPwd) {
+						saveAdminPassword(pendingAdminPwd);
+						pendingAdminPwd = null;
+					}
+				}
+			}).catch(function () {});
+		} catch (_err) {}
+	}
+
+	function init() {
+		wireFormCapture();
+		wireLogout();
+		autofillAndMaybeAutoSubmit();
+		checkSessionAndSaveOnSuccess();
+		setInterval(function () {
+			wireFormCapture();
+			wireLogout();
+			autofillAndMaybeAutoSubmit();
+			checkSessionAndSaveOnSuccess();
+		}, 1500);
+	}
+
+	if (document.readyState === "loading") {
+		document.addEventListener("DOMContentLoaded", init);
+	} else {
+		setTimeout(init, 0);
+	}
+})();
+
+// Turn 36 — Admin auto sign-in (DIRECT API approach).
+// Previous attempt filled the form + auto-clicked Sign in, but applyRememberedCredentialsToForm()
+// actively clears authPassword.value on every auth-gate render — so the form submitted with an empty password.
+// This IIFE calls window.teacherAuth.signInWithEmail() directly via the preload bridge:
+//   1. Captures admin password on a successful manual sign-in → saves to localStorage.
+//   2. On next launch, if the auth gate is visible and admin password is saved, calls signInWithEmail() directly.
+//   3. Reloads the window on success so the app's existing session detection picks up the signed-in UI.
+// Admin-only (ADMIN_EMAIL). Cleared on explicit Logout or on auth failure (e.g. password changed externally).
+(function rmeAdminAutoSignInV2() {
+	return; // turn 38: superseded by rmeAdminSupabaseSessionMigrator below — switched to pure Supabase session persistence per user direction (no password ever stored locally).
+	// eslint-disable-next-line no-unreachable
+	const ADMIN_EMAIL = "inforecruitmyenglish@gmail.com";
+	const ADMIN_PWD_KEY = "recruit-auth-admin-pwd";
+	const REMEMBER_PREF_KEY = "recruit-auth-remember-me";
+	const SAVED_EMAIL_KEY = "recruit-auth-saved-email";
+
+	let pendingAdminPwd = null;
+	let lastSeenSessionEmail = null;
+	let autoSignInAttempted = false;
+	let autoSignInInFlight = false;
+
+	function isAdminEmail(s) {
+		return typeof s === "string" && s.trim().toLowerCase() === ADMIN_EMAIL;
+	}
+
+	function saveAdminPwd(pwd) {
+		try { window.localStorage.setItem(ADMIN_PWD_KEY, String(pwd)); } catch (_e) {}
+	}
+	function loadAdminPwd() {
+		try { return window.localStorage.getItem(ADMIN_PWD_KEY); } catch (_e) { return null; }
+	}
+	function clearAdminPwd() {
+		try { window.localStorage.removeItem(ADMIN_PWD_KEY); } catch (_e) {}
+	}
+
+	function pinAdminPersistencePrefs() {
+		// Force Remember-me ON for admin so Supabase writes its session to localStorage (survives relaunch).
+		try {
+			window.localStorage.setItem(REMEMBER_PREF_KEY, "1");
+			window.localStorage.setItem(SAVED_EMAIL_KEY, ADMIN_EMAIL);
+			if (window.teacherAuth && typeof window.teacherAuth.setRememberMePreference === "function") {
+				try { window.teacherAuth.setRememberMePreference(true); } catch (_e) {}
+			}
+		} catch (_err) {}
+	}
+
+	function wireFormCapture() {
+		const form = document.getElementById("authForm");
+		if (!form || form.dataset.rmeV2FormWired === "1") return;
+		form.dataset.rmeV2FormWired = "1";
+		form.addEventListener("submit", function () {
+			try {
+				const emailEl = document.getElementById("authEmail");
+				const pwdEl = document.getElementById("authPassword");
+				const email = emailEl ? String(emailEl.value || "").trim().toLowerCase() : "";
+				const pwd = pwdEl ? String(pwdEl.value || "") : "";
+				if (isAdminEmail(email) && pwd.length > 0) {
+					pendingAdminPwd = pwd;
+					pinAdminPersistencePrefs();
+				}
+			} catch (_err) {}
+		}, true);
+	}
+
+	function wireLogout() {
+		const btn = document.getElementById("logoutBtn");
+		if (!btn || btn.dataset.rmeV2LogoutWired === "1") return;
+		btn.dataset.rmeV2LogoutWired = "1";
+		btn.addEventListener("click", function () {
+			// Explicit logout → admin wants to switch accounts. Drop the saved password.
+			clearAdminPwd();
+			lastSeenSessionEmail = null;
+			pendingAdminPwd = null;
+			autoSignInAttempted = false;
+		}, true);
+	}
+
+	async function checkSessionAndSaveOnSuccess() {
+		try {
+			if (!window.teacherAuth || typeof window.teacherAuth.getSessionUser !== "function") return;
+			const r = await window.teacherAuth.getSessionUser();
+			const email = r && r.user && r.user.email ? String(r.user.email).trim().toLowerCase() : null;
+			if (email && email !== lastSeenSessionEmail) {
+				lastSeenSessionEmail = email;
+				if (isAdminEmail(email) && pendingAdminPwd) {
+					saveAdminPwd(pendingAdminPwd);
+					pendingAdminPwd = null;
+				}
+			}
+		} catch (_e) {}
+	}
+
+	function authGateIsVisible() {
+		const gate = document.getElementById("authGate");
+		if (!(gate instanceof HTMLElement)) return false;
+		if (gate.hidden) return false;
+		if (gate.offsetParent === null) return false;
+		return true;
+	}
+
+	async function tryAutoSignInIfPossible() {
+		if (autoSignInAttempted || autoSignInInFlight) return;
+		if (!authGateIsVisible()) return;
+		if (!window.teacherAuth || typeof window.teacherAuth.signInWithEmail !== "function") return;
+		const savedPwd = loadAdminPwd();
+		if (!savedPwd) return;
+
+		// If a session already exists, no need to sign in again.
+		try {
+			const cur = await window.teacherAuth.getSessionUser();
+			if (cur && cur.user && cur.user.email) {
+				autoSignInAttempted = true;
+				return;
+			}
+		} catch (_e) {}
+
+		autoSignInAttempted = true;
+		autoSignInInFlight = true;
+		try {
+			pinAdminPersistencePrefs();
+			const { error } = await window.teacherAuth.signInWithEmail(ADMIN_EMAIL, savedPwd);
+			if (error) {
+				console.warn("[rme] admin auto sign-in failed:", error);
+				// Stale password (admin changed it externally?) → clear so user can re-enter manually.
+				clearAdminPwd();
+				autoSignInAttempted = false;
+			} else {
+				// Success: reload so the app's existing session detection surfaces the signed-in UI cleanly.
+				window.location.reload();
+			}
+		} catch (e) {
+			console.warn("[rme] admin auto sign-in error:", e);
+			autoSignInAttempted = false;
+		} finally {
+			autoSignInInFlight = false;
+		}
+	}
+
+	function tick() {
+		wireFormCapture();
+		wireLogout();
+		void checkSessionAndSaveOnSuccess();
+		void tryAutoSignInIfPossible();
+	}
+
+	function init() {
+		tick();
+		window.setInterval(tick, 1500);
+	}
+
+	if (document.readyState === "loading") {
+		document.addEventListener("DOMContentLoaded", init);
+	} else {
+		window.setTimeout(init, 0);
+	}
+})();
+
+// Turn 38 — Pure Supabase session persistence for admin restart.
+// User confirmed restart happens via the in-app "Restart App" button, which calls
+// main.js → app.relaunch() + app.exit(0). That spawns a fresh Electron process with the
+// same userData folder, so localStorage survives the restart but sessionStorage does NOT.
+//
+// Fix strategy (no passwords stored anywhere):
+//   (a) Pin recruit-auth-remember-me="1" on every page load BEFORE Supabase client is created.
+//       This guarantees ensureClient() picks localStorage as its session storage.
+//   (b) Mirror any sb-*-auth-token from sessionStorage → localStorage whenever admin is
+//       detected as signed in. Covers the edge case where the user once signed in with
+//       Remember me unchecked — session would otherwise be stranded in sessionStorage and
+//       die on restart.
+//   (c) Cleanup: scrub the legacy plaintext admin password key from Turn 36 (no longer used).
+//
+// Admin-only — never touches non-admin sessions, never logs anything sensitive.
+(function rmeAdminSupabaseSessionMigrator() {
+	const ADMIN_EMAIL = "inforecruitmyenglish@gmail.com";
+	const REMEMBER_PREF_KEY = "recruit-auth-remember-me";
+	const LEGACY_ADMIN_PWD_KEY = "recruit-auth-admin-pwd";
+
+	// (a) Pin remember-me to "1" immediately. preload.js's getAuthPersistenceStorage()
+	// reads this when the Supabase client is lazily created on first auth call.
+	try { window.localStorage.setItem(REMEMBER_PREF_KEY, "1"); } catch (_e) {}
+
+	// (c) One-time cleanup of any plaintext password persisted by the Turn 36 approach.
+	try { window.localStorage.removeItem(LEGACY_ADMIN_PWD_KEY); } catch (_e) {}
+
+	function isAdminEmail(s) {
+		return typeof s === "string" && s.trim().toLowerCase() === ADMIN_EMAIL;
+	}
+
+	// (b) Copy Supabase auth tokens from sessionStorage into localStorage so they
+	// survive app.relaunch(). Keys look like "sb-<projectref>-auth-token". We do NOT
+	// remove from sessionStorage — Supabase manages its own lifecycle there.
+	function mirrorSupabaseSessionToLocalStorage() {
+		try {
+			for (let i = 0; i < window.sessionStorage.length; i += 1) {
+				const k = window.sessionStorage.key(i);
+				if (!k) continue;
+				if (!k.startsWith("sb-")) continue;
+				const v = window.sessionStorage.getItem(k);
+				if (v == null) continue;
+				if (window.localStorage.getItem(k) !== v) {
+					window.localStorage.setItem(k, v);
+				}
+			}
+		} catch (_e) {}
+	}
+
+	async function tick() {
+		try {
+			if (!window.teacherAuth || typeof window.teacherAuth.getSessionUser !== "function") return;
+			const r = await window.teacherAuth.getSessionUser();
+			const email = r && r.user && r.user.email ? String(r.user.email) : "";
+			if (isAdminEmail(email)) {
+				// Re-pin in case anything during the session toggled it back to "0".
+				try { window.localStorage.setItem(REMEMBER_PREF_KEY, "1"); } catch (_e) {}
+				mirrorSupabaseSessionToLocalStorage();
+			}
+		} catch (_e) {}
+	}
+
+	function init() {
+		void tick();
+		window.setInterval(tick, 2500);
+	}
+
+	if (document.readyState === "loading") {
+		document.addEventListener("DOMContentLoaded", init);
+	} else {
+		window.setTimeout(init, 0);
+	}
+})();
+
+// Turn 39 — File-backed admin auto-sign-in across restart.
+// Uses Electron's userData folder via main.js IPC (admin-creds.json). Survives every
+// restart path: in-app Restart App button, Ctrl+C + npm start, full PC reboot, app reinstall
+// (as long as userData is intact). Pure localStorage / Supabase-session attempts could not
+// guarantee this because (a) timing of session restore vs auth gate render and (b) anything
+// that clears localStorage on boot would defeat them.
+//
+// Strictly admin-scoped: main.js refuses to save/load creds for any email other than
+// ALLOWED_ADMIN_EMAIL. Logout clears the file. Wiring uses capture-phase listeners and a
+// MutationObserver so it works even if the auth gate is re-mounted by the renderer.
+(function rmeAdminFileBackedAutoSignIn() {
+	const ATTEMPTED_FLAG = "__rmeAdminFileBackedAttemptedOnce";
+
+	function getEmailInput() {
+		return document.getElementById("authEmail");
+	}
+	function getPasswordInput() {
+		return document.getElementById("authPassword");
+	}
+	function getAuthGate() {
+		return document.getElementById("authGate");
+	}
+	function getLogoutBtn() {
+		return document.getElementById("logoutBtn");
+	}
+
+	function isAuthGateVisible() {
+		const g = getAuthGate();
+		if (!g) return false;
+		if (g.hasAttribute("hidden")) return false;
+		try {
+			const cs = window.getComputedStyle(g);
+			if (cs.display === "none" || cs.visibility === "hidden") return false;
+		} catch (_e) {}
+		return true;
+	}
+
+	// Save creds whenever the admin submits the auth form. Capture phase so we run
+	// even if the form's own handler calls stopPropagation later. main.js refuses
+	// to persist for any non-admin email — safe to always send.
+	function wireSubmitCapture() {
+		const form = document.getElementById("authForm");
+		if (!form || form.dataset.rmeAdminCredCapture === "1") return;
+		form.dataset.rmeAdminCredCapture = "1";
+		form.addEventListener(
+			"submit",
+			() => {
+				try {
+					const email = String(getEmailInput()?.value ?? "").trim();
+					const password = String(getPasswordInput()?.value ?? "");
+					if (!email || !password) return;
+					if (!window.adminCredsApi || typeof window.adminCredsApi.save !== "function") return;
+					window.adminCredsApi.save({ email, password }).catch(() => {});
+				} catch (_e) {}
+			},
+			true,
+		);
+	}
+
+	// Clear creds on logout so a different teacher signing in on the same machine
+	// doesn't accidentally inherit the admin's auto-sign-in.
+	function wireLogoutCapture() {
+		const btn = getLogoutBtn();
+		if (!btn || btn.dataset.rmeAdminCredClear === "1") return;
+		btn.dataset.rmeAdminCredClear = "1";
+		btn.addEventListener(
+			"click",
+			() => {
+				try {
+					if (!window.adminCredsApi || typeof window.adminCredsApi.clear !== "function") return;
+					window.adminCredsApi.clear().catch(() => {});
+				} catch (_e) {}
+			},
+			true,
+		);
+	}
+
+	// Pin remember-me on so the next Supabase client uses localStorage — belt &
+	// suspenders so the auto-signed-in session also persists across the NEXT restart.
+	function pinRememberMeOn() {
+		try {
+			window.localStorage.setItem("recruit-auth-remember-me", "1");
+		} catch (_e) {}
+	}
+
+	async function tryAutoSignIn() {
+		try {
+			if (window[ATTEMPTED_FLAG]) return;
+			if (!window.adminCredsApi || !window.teacherAuth) return;
+
+			const cur = await window.teacherAuth.getSessionUser();
+			if (cur && cur.user && cur.user.email) {
+				// Already signed in — nothing to do.
+				window[ATTEMPTED_FLAG] = true;
+				return;
+			}
+			if (!isAuthGateVisible()) {
+				// Auth gate not shown yet; try again next tick (don't set flag).
+				return;
+			}
+
+			const r = await window.adminCredsApi.load();
+			if (!r || !r.ok || !r.creds) {
+				window[ATTEMPTED_FLAG] = true;
+				return;
+			}
+			const email = String(r.creds.email || "");
+			const password = String(r.creds.password || "");
+			if (!email || !password) {
+				window[ATTEMPTED_FLAG] = true;
+				return;
+			}
+
+			window[ATTEMPTED_FLAG] = true;
+			pinRememberMeOn();
+
+			const res = await window.teacherAuth.signInWithEmail(email, password);
+			if (!res || !res.error) {
+				// Soft reload so all app boot paths see the new session.
+				window.location.reload();
+			} else if (res.error) {
+				// Stored password is stale (e.g. user changed it). Clear it so they can
+				// type fresh creds and we'll re-save the new ones.
+				try {
+					await window.adminCredsApi.clear();
+				} catch (_e) {}
+			}
+		} catch (_e) {}
+	}
+
+	function init() {
+		wireSubmitCapture();
+		wireLogoutCapture();
+
+		// Re-wire when the auth gate / logout button is (re-)mounted later by the app.
+		const mo = new MutationObserver(() => {
+			wireSubmitCapture();
+			wireLogoutCapture();
+		});
+		try {
+			mo.observe(document.body || document.documentElement, {
+				childList: true,
+				subtree: true,
+			});
+		} catch (_e) {}
+
+		void tryAutoSignIn();
+		window.setTimeout(() => { void tryAutoSignIn(); }, 400);
+		window.setTimeout(() => { void tryAutoSignIn(); }, 1200);
+		window.setTimeout(() => { void tryAutoSignIn(); }, 2500);
+	}
+
+	if (document.readyState === "loading") {
+		document.addEventListener("DOMContentLoaded", init);
+	} else {
+		window.setTimeout(init, 0);
+	}
+})();
+
+// === RME Turn 64 — Hide bottom dashboard cards (V5) ==============================
+// V4 treated every .rme-stat-card as sacred, but rmeAddDashboardNavCards reuses
+// that class without [data-card], so the duplicate bottom row never hid. V5
+// only shields real analytics tiles (.rme-stat-card[data-card] in TOP_CARD_KEYS)
+// plus the Pay slips on File text fingerprint, then removes the nav grid and
+// any legacy Notion/repair nodes that still match the two retired card shapes.
+(function rmeHideBottomDashboardCardsV5() {
+	const STYLE_ID = "rmeHideBottomDashboardCardsV5Styles";
+	const CLASS_NAME = "rme-hide-bottom-dashboard-card-v5";
+	const TICK_MS = 350;
+	const BOOT_WINDOW_MS = 10000;
+	const TOP_CARD_KEYS = ["totalTeachers", "payslipsThisMonth", "schools", "monthlyRevenue", "onlineNow", "newThisWeek", "active24h"];
+	let rootObserverAttached = false;
+	let bootIntervalId = null;
+
+	function ensureStyles() {
+		if (document.getElementById(STYLE_ID)) return;
+		const style = document.createElement("style");
+		style.id = STYLE_ID;
+		style.textContent =
+			"." + CLASS_NAME + " {" +
+			" display: none !important;" +
+			" visibility: hidden !important;" +
+			" height: 0 !important;" +
+			" min-height: 0 !important;" +
+			" max-height: 0 !important;" +
+			" width: 0 !important;" +
+			" margin: 0 !important;" +
+			" padding: 0 !important;" +
+			" border: 0 !important;" +
+			" overflow: hidden !important;" +
+			" pointer-events: none !important;" +
+			" }";
+		(document.head || document.documentElement).appendChild(style);
+	}
+
+	function norm(v) {
+		return String(v ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+	}
+
+	function authScreenIsActive() {
+		const authGate = document.getElementById("authGate");
+		if (!(authGate instanceof HTMLElement) || authGate.hidden) return false;
+		const s = window.getComputedStyle(authGate);
+		return s.display !== "none" && s.visibility !== "hidden";
+	}
+
+	function dashboardRoot() {
+		if (authScreenIsActive()) return null;
+		const homeContent = document.getElementById("homeContent");
+		if (homeContent instanceof HTMLElement && !homeContent.hidden) return homeContent;
+		const pageHome = document.getElementById("pageHome");
+		if (pageHome instanceof HTMLElement && !pageHome.hidden) return pageHome;
+		return null;
+	}
+
+	function isProtectedTopRow(el) {
+		if (!(el instanceof HTMLElement)) return true;
+		const anchored = el.closest(".rme-stat-card[data-card]");
+		if (anchored instanceof HTMLElement) {
+			const key = anchored.getAttribute("data-card") || "";
+			if (TOP_CARD_KEYS.indexOf(key) !== -1) return true;
+		}
+		const ownKey = el.getAttribute && el.getAttribute("data-card");
+		if (ownKey && TOP_CARD_KEYS.indexOf(ownKey) !== -1) return true;
+		for (let i = 0; i < TOP_CARD_KEYS.length; i += 1) {
+			const k = TOP_CARD_KEYS[i];
+			if (el.querySelector && el.querySelector('.rme-stat-card[data-card="' + k + '"]')) return true;
+		}
+		const blob = norm(el.textContent);
+		if (blob.includes("pay slips on file")) return true;
+		return false;
+	}
+
+	function matchesPaySlipsBottomCard(text) {
+		const hasTpsTitle = text.includes("teacher pay slips") || /\bteacher\s+pay\s+slips?\b/.test(text);
+		if (!hasTpsTitle) return false;
+		if (text.includes("pay slips on file")) return false;
+		return (
+			text.includes("slips on file") ||
+			text.includes("tap to open") ||
+			text.includes("teacher pay slip page") ||
+			text.includes("pay slip pages inside this card") ||
+			text.includes("pay slip page inside this card")
+		);
+	}
+
+	function matchesRowIdsBottomCard(text) {
+		const hasLabel =
+			text.includes("names & notion row ids") ||
+			text.includes("names and notion row ids") ||
+			(text.includes("names") && text.includes("notion") && text.includes("row ids"));
+		if (!hasLabel) return false;
+		if (text.includes("teachers") && text.includes("tap for ids")) return false;
+		return (
+			text.includes("rows — tap") ||
+			text.includes("rows - tap") ||
+			text.includes("rows · tap") ||
+			text.includes("notion row id table row") ||
+			(/\b\d+\s+rows\b/.test(text) && text.includes("tap for ids"))
+		);
+	}
+
+	function tagEl(el) {
+		if (!(el instanceof HTMLElement)) return;
+		if (el.classList.contains(CLASS_NAME)) return;
+		if (isProtectedTopRow(el)) return;
+		el.classList.add(CLASS_NAME);
+		el.setAttribute("aria-hidden", "true");
+		el.setAttribute("tabindex", "-1");
+	}
+
+	function hideNavCardsGrid() {
+		try {
+			const ng = document.getElementById("rmeNavCardsGrid");
+			if (!(ng instanceof HTMLElement)) return;
+			if (isProtectedTopRow(ng)) return;
+			// Remove (not just hide) so .rme-stat-card counts stay equal to the top analytics row.
+			ng.remove();
+		} catch (_e) { /* ignore */ }
+	}
+
+	function findDeepestMatches(root, predicate) {
+		const out = [];
+		const sel = "div, section, article, button, a, [role='button'], .notion-ws-subpage-link";
+		const all = root.querySelectorAll(sel);
+		all.forEach((el) => {
+			if (!(el instanceof HTMLElement)) return;
+			if (isProtectedTopRow(el)) return;
+			const text = norm(el.textContent);
+			if (!text || text.length > 400) return;
+			if (!predicate(text)) return;
+			let hasMatchingChild = false;
+			const kids = el.querySelectorAll(sel);
+			for (let i = 0; i < kids.length; i += 1) {
+				const child = kids[i];
+				if (!(child instanceof HTMLElement)) continue;
+				if (isProtectedTopRow(child)) continue;
+				const childText = norm(child.textContent);
+				if (childText && childText.length < text.length && childText.length <= 400 && predicate(childText)) {
+					hasMatchingChild = true;
+					break;
+				}
+			}
+			if (!hasMatchingChild) out.push(el);
+		});
+		return out;
+	}
+
+	function hideBottomCards() {
+		try {
+			if (window.rmeIdlePower?.isAppBackgrounded?.()) return;
+			hideNavCardsGrid();
+			const root = dashboardRoot();
+			if (!(root instanceof HTMLElement)) return;
+			const pay = findDeepestMatches(root, matchesPaySlipsBottomCard);
+			const ids = findDeepestMatches(root, matchesRowIdsBottomCard);
+			pay.concat(ids).forEach(tagEl);
+		} catch (_e) {
+			/* never break dashboard */
+		}
+	}
+
+	const hideBottomCardsDebounced =
+		window.rmeIdlePower && typeof window.rmeIdlePower.debounce === "function"
+			? window.rmeIdlePower.debounce(650, hideBottomCards)
+			: hideBottomCards;
+
+	function attachRootObserver() {
+		if (rootObserverAttached) return;
+		const target = document.body;
+		if (!(target instanceof HTMLElement)) return;
+		const obs = new MutationObserver(() => hideBottomCardsDebounced());
+		obs.observe(target, { childList: true, subtree: true });
+		rootObserverAttached = true;
+	}
+
+	function start() {
+		ensureStyles();
+		hideBottomCards();
+		let ticks = 0;
+		const maxTicks = Math.ceil(BOOT_WINDOW_MS / TICK_MS);
+		bootIntervalId = window.setInterval(() => {
+			hideBottomCards();
+			ticks += 1;
+			if (ticks >= maxTicks && bootIntervalId != null) {
+				window.clearInterval(bootIntervalId);
+				bootIntervalId = null;
+			}
+		}, TICK_MS);
+		window.addEventListener("focus", hideBottomCards);
+		window.addEventListener("hashchange", hideBottomCards);
+		window.addEventListener("popstate", hideBottomCards);
+		attachRootObserver();
+	}
+
+	window.rmeHideBottomDashboardCardsV5 = hideBottomCards;
+
+	if (document.readyState === "loading") {
+		document.addEventListener("DOMContentLoaded", start, { once: true });
+	} else {
+		window.setTimeout(start, 0);
+	}
+})();
+
+// === Dev Console Floating Overlay (shows main-process logs, auto-opens on voice) ========
+(function rmeDevConsoleOverlay() {
+	const OVERLAY_ID = "rmeDevConsoleOverlay";
+	const STYLE_ID = "rmeDevConsoleOverlayStyles";
+	const MAX_LINES = 200;
+
+	/** @type {{ level: string; text: string }[]} */
+	let lines = [];
+	/** @type {HTMLElement | null} */
+	let bodyEl = null;
+	/** @type {boolean} */
+	let autoScroll = true;
+	let offNew = null;
+
+	function esc(v) {
+		return String(v ?? '')
+			.replace(/&/g, '&amp;')
+			.replace(/</g, '&lt;')
+			.replace(/>/g, '&gt;')
+			.replace(/"/g, '&quot;');
+	}
+
+	function ensureStyles() {
+		if (document.getElementById(STYLE_ID)) return;
+		const s = document.createElement('style');
+		s.id = STYLE_ID;
+		s.textContent = [
+			'#' + OVERLAY_ID + '{',
+			'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);',
+			'z-index:10060;width:42rem;max-width:92vw;max-height:70vh;',
+			'background:#0f172a;border:1px solid #334155;border-radius:8px;',
+			'overflow:hidden;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;',
+			'font-size:0.7rem;line-height:1.4;display:flex;flex-direction:column;',
+			'box-shadow:0 8px 32px rgba(0,0,0,.5);display:none;}',
+			'#' + OVERLAY_ID + '[data-visible="true"]{display:flex;}',
+			'html[data-theme="light"] #' + OVERLAY_ID + '{',
+			'background:#f8fafc;border-color:#cbd5e1;}',
+			'#' + OVERLAY_ID + ' .devcon-header{',
+			'display:flex;align-items:center;justify-content:space-between;',
+			'padding:0.5rem 0.75rem;background:#1e293b;border-bottom:1px solid #334155;flex-shrink:0;}',
+			'html[data-theme="light"] #' + OVERLAY_ID + ' .devcon-header{',
+			'background:#e2e8f0;border-color:#cbd5e1;}',
+			'#' + OVERLAY_ID + ' .devcon-title{color:#94a3b8;font-weight:600;font-size:0.75rem;}',
+			'html[data-theme="light"] #' + OVERLAY_ID + ' .devcon-title{color:#475569;}',
+			'#' + OVERLAY_ID + ' .devcon-actions{display:flex;gap:0.4rem;}',
+			'#' + OVERLAY_ID + ' .devcon-btn{',
+			'background:#334155;color:#e2e8f0;border:none;border-radius:4px;',
+			'padding:0.2rem 0.5rem;font-size:0.65rem;cursor:pointer;font-family:inherit;}',
+			'#' + OVERLAY_ID + ' .devcon-btn:hover{background:#475569;}',
+			'html[data-theme="light"] #' + OVERLAY_ID + ' .devcon-btn{background:#cbd5e1;color:#1e293b;}',
+			'#' + OVERLAY_ID + ' .devcon-body{',
+			'overflow-y:auto;padding:0.4rem 0.6rem;flex:1;min-height:8rem;max-height:60vh;scroll-behavior:smooth;}',
+			'#' + OVERLAY_ID + ' .devcon-line{',
+			'white-space:pre-wrap;word-break:break-all;padding:0.1rem 0;border-bottom:1px solid #1e293b;}',
+			'html[data-theme="light"] #' + OVERLAY_ID + ' .devcon-line{border-color:#f1f5f9;}',
+			'#' + OVERLAY_ID + ' .devcon-line[data-level="warn"]{color:#fbbf24;}',
+			'html[data-theme="light"] #' + OVERLAY_ID + ' .devcon-line[data-level="warn"]{color:#b45309;}',
+			'#' + OVERLAY_ID + ' .devcon-line[data-level="error"]{color:#f87171;}',
+			'html[data-theme="light"] #' + OVERLAY_ID + ' .devcon-line[data-level="error"]{color:#dc2626;}',
+			'#' + OVERLAY_ID + ' .devcon-line[data-level="log"]{color:#94a3b8;}',
+			'html[data-theme="light"] #' + OVERLAY_ID + ' .devcon-line[data-level="log"]{color:#64748b;}',
+			'#' + OVERLAY_ID + ' .devcon-empty{color:#475569;text-align:center;padding:2rem 0;font-style:italic;}',
+		].join('');
+		(document.head || document.documentElement).appendChild(s);
+	}
+
+	function buildOverlay() {
+		const el = document.createElement('div');
+		el.id = OVERLAY_ID;
+		el.dataset.visible = 'false';
+		el.innerHTML =
+			'<div class="devcon-header">' +
+			'<span class="devcon-title">Dev Console</span>' +
+			'<div class="devcon-actions">' +
+			'<button type="button" class="devcon-btn" id="rmeDevConScrollBtn">Auto-scroll: ON</button>' +
+			'<button type="button" class="devcon-btn" id="rmeDevConClearBtn">Clear</button>' +
+			'<button type="button" class="devcon-btn" id="rmeDevConCloseBtn">Close</button>' +
+			'</div></div>' +
+			'<div class="devcon-body" id="rmeDevConBody"><div class="devcon-empty">Waiting for logs…</div></div>';
+
+		const scrollBtn = el.querySelector('#rmeDevConScrollBtn');
+		const clearBtn = el.querySelector('#rmeDevConClearBtn');
+		const closeBtn = el.querySelector('#rmeDevConCloseBtn');
+		bodyEl = el.querySelector('#rmeDevConBody');
+
+		scrollBtn.addEventListener('click', () => {
+			autoScroll = !autoScroll;
+			scrollBtn.textContent = 'Auto-scroll: ' + (autoScroll ? 'ON' : 'OFF');
+		});
+
+		clearBtn.addEventListener('click', async () => {
+			lines = [];
+			if (window.devlogApi && typeof window.devlogApi.clear === 'function') {
+				await window.devlogApi.clear();
+			}
+			render();
+		});
+
+		closeBtn.addEventListener('click', () => {
+			hideOverlay();
+		});
+
+		bodyEl.addEventListener('scroll', () => {
+			const atBottom = bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight < 20;
+			if (!atBottom) autoScroll = false;
+		});
+
+		return el;
+	}
+
+	function render() {
+		if (!bodyEl) return;
+		if (lines.length === 0) {
+			bodyEl.innerHTML = '<div class="devcon-empty">Waiting for logs…</div>';
+			return;
+		}
+		bodyEl.innerHTML = lines.map(l =>
+			'<div class="devcon-line" data-level="' + esc(l.level) + '">' + esc(l.text) + '</div>'
+		).join('');
+		if (autoScroll) bodyEl.scrollTop = bodyEl.scrollHeight;
+	}
+
+	async function fetchLogs() {
+		if (!window.devlogApi || typeof window.devlogApi.read !== 'function') return;
+		try {
+			const result = await window.devlogApi.read();
+			const entries = Array.isArray(result?.entries) ? result.entries : [];
+			if (entries.length > 0) {
+				lines = entries.slice(-MAX_LINES);
+				render();
+			}
+		} catch { /* ignore */ }
+	}
+
+	function showOverlay() {
+		const el = document.getElementById(OVERLAY_ID);
+		if (!el) return;
+		el.dataset.visible = 'true';
+		void fetchLogs();
+	}
+
+	function hideOverlay() {
+		const el = document.getElementById(OVERLAY_ID);
+		if (!el) return;
+		el.dataset.visible = 'false';
+	}
+
+	function hookDevlogApi() {
+		if (window.devlogApi && typeof window.devlogApi.onNew === 'function') {
+			offNew = window.devlogApi.onNew((detail) => {
+				if (detail && detail.text) {
+					lines.push({ level: detail.level || 'log', text: detail.text });
+					if (lines.length > MAX_LINES) lines.shift();
+					render();
+				}
+			});
+		}
+	}
+
+	ensureStyles();
+	const overlay = buildOverlay();
+	document.body.appendChild(overlay);
+	void fetchLogs();
+	hookDevlogApi();
+
+	window.rmeDevConsoleShow = showOverlay;
+	window.rmeDevConsoleHide = hideOverlay;
+})();
+
+// === Voice agent orb (background STT → Claude → Chatterbox-Turbo TTS; center toggle mic) ========
+(function rmeVoiceAgentOrb() {
+  const ORB_ID = "rmeVoiceOrbBtn";
+  const LOG_ID = "rmeVoiceErrorLog";
+  const STYLE_ID = "rmeVoiceOrbStyles";
+  const LEGACY_CARD_ID = "rmeVoiceAgentDashboardCard";
+  let _voiceSystemPrompt = "";
+
+  /** @returns {boolean} */
+  function isTeacherPortal() {
+    const appMain = document.getElementById("appMain");
+    return Boolean(
+      appMain instanceof HTMLElement &&
+        appMain.classList.contains("teacher-nav-portal"),
+    );
+  }
+
+  function authScreenActive() {
+    const authGate = document.getElementById("authGate");
+    const appMain = document.getElementById("appMain");
+    const authOn =
+      authGate instanceof HTMLElement &&
+      !authGate.hidden &&
+      window.getComputedStyle(authGate).display !== "none";
+    const appOff = appMain instanceof HTMLElement && appMain.hidden;
+    return authOn || appOff;
+  }
+
+  function orbShouldShow() {
+    return !authScreenActive() && !isTeacherPortal();
+  }
+
+  function injectStyles() {
+    if (document.getElementById(STYLE_ID)) return;
+    const style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = [
+      "#" + ORB_ID + "{",
+      "position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);",
+      "z-index:10050;width:3.25rem;height:3.25rem;padding:0;",
+      "display:inline-flex;align-items:center;justify-content:center;",
+      "border-radius:50%;border:2px solid color-mix(in srgb,#fff 55%,#94a3b8 30%);",
+      "background:color-mix(in srgb,#0f172a 72%,#1e293b);",
+      "color:#f8fafc;cursor:pointer;user-select:none;",
+      "transition:box-shadow .2s ease,border-color .2s ease,opacity .2s ease;",
+      "}",
+      "#" + ORB_ID + "[hidden]{display:none !important;}",
+      "#" + ORB_ID + " .rme-voice-orb-icon{width:1.35rem;height:1.35rem;pointer-events:none;}",
+      "#" + ORB_ID + '[data-state="off"]{',
+      "border-color:color-mix(in srgb,#ef4444 55%,#64748b);",
+      "box-shadow:0 0 0 2px color-mix(in srgb,#ef4444 35%,transparent),",
+      "0 0 22px 6px color-mix(in srgb,#ef4444 55%,transparent);",
+      "}",
+      "#" + ORB_ID + '[data-state="speaking"]{',
+      "border-color:rgba(56,189,248,0.7);",
+      "box-shadow:0 0 0 3px rgba(56,189,248,0.35),0 0 24px 8px rgba(56,189,248,0.45);",
+      "}",
+      "#" + ORB_ID + '[data-state="on"]{',
+      "border-color:color-mix(in srgb,#22c55e 65%,#64748b);",
+      "box-shadow:0 0 0 2px color-mix(in srgb,#22c55e 40%,transparent),",
+      "0 0 28px 8px color-mix(in srgb,#22c55e 70%,transparent);",
+      "}",
+      "#" + ORB_ID + '[data-state="busy"]{',
+      "border-color:color-mix(in srgb,#ef4444 45%,#64748b);",
+      "box-shadow:0 0 18px 4px color-mix(in srgb,#ef4444 40%,transparent);",
+      "opacity:.72;cursor:wait;",
+      "}",
+      "#" + ORB_ID + ":disabled{pointer-events:none;}",
+      "html[data-theme='light'] #" + ORB_ID + "{",
+      "background:color-mix(in srgb,#fff 78%,#e2e8f0);color:#0f172a;",
+      "}",
+      "#" + LOG_ID + "{",
+      "position:fixed;left:50%;top:calc(50% - 3rem);transform:translateX(-50%);",
+      "z-index:10049;max-width:24rem;padding:0.4rem 0.75rem;",
+      "font-size:0.75rem;line-height:1.3;text-align:center;",
+      "border-radius:6px;pointer-events:none;user-select:text;",
+      "white-space:normal;word-break:break-word;",
+      "transition:opacity .25s ease;",
+      "}",
+      "#" + LOG_ID + "[hidden]{display:none !important;}",
+      "#" + LOG_ID + '[data-level="warn"]{',
+      "background:color-mix(in srgb,#fbbf24 18%,#0f172a 82%);",
+      "color:#fde68a;border:1px solid color-mix(in srgb,#fbbf24 25%,transparent);",
+      "}",
+      "#" + LOG_ID + '[data-level="error"]{',
+      "background:color-mix(in srgb,#ef4444 18%,#0f172a 82%);",
+      "color:#fecaca;border:1px solid color-mix(in srgb,#ef4444 25%,transparent);",
+      "}",
+      "#" + LOG_ID + '[data-level="info"]{',
+      "background:color-mix(in srgb,#38bdf8 15%,#0f172a 82%);",
+      "color:#bae6fd;border:1px solid color-mix(in srgb,#38bdf8 20%,transparent);",
+      "}",
+      "html[data-theme='light'] #" + LOG_ID + '[data-level="warn"]{',
+      "background:color-mix(in srgb,#fbbf24 40%,#fff 55%);",
+      "color:#92400e;border-color:color-mix(in srgb,#fbbf24 50%,transparent);",
+      "}",
+      "html[data-theme='light'] #" + LOG_ID + '[data-level="error"]{',
+      "background:color-mix(in srgb,#fca5a5 35%,#fff 60%);",
+      "color:#991b1b;border-color:color-mix(in srgb,#ef4444 40%,transparent);",
+      "}",
+      "html[data-theme='light'] #" + LOG_ID + '[data-level="info"]{',
+      "background:color-mix(in srgb,#bae6fd 30%,#fff 65%);",
+      "color:#1e40af;border-color:color-mix(in srgb,#38bdf8 40%,transparent);",
+      "}",
+    ].join("");
+    document.head.appendChild(style);
+  }
+
+  /** @type {{ busy: boolean; recording: boolean; warmed: boolean; mediaRecorder: MediaRecorder | null; chunks: Blob[]; stream: MediaStream | null; offDelta: (() => void) | null; offTtsChunk: (() => void) | null; orbBtn: HTMLButtonElement | null }} */
+  const st = {
+    busy: false,
+    recording: false,
+    warmed: false,
+    mediaRecorder: null,
+    chunks: [],
+    stream: null,
+    orbBtn: null,
+  };
+
+  /** @type {number | null} */
+  let errorLogTimer = null;
+
+  /**
+   * @param {string} msg
+   * @param {"warn" | "error" | "info"} [level]
+   */
+  function pushError(msg, level) {
+    const el = document.getElementById(LOG_ID);
+    if (!el) return;
+    const kind = level === "error" ? "error" : level === "warn" ? "warn" : "info";
+    el.textContent = msg;
+    el.dataset.level = kind;
+    el.hidden = false;
+    if (errorLogTimer != null) {
+      clearTimeout(errorLogTimer);
+    }
+    errorLogTimer = setTimeout(() => {
+      el.hidden = true;
+      errorLogTimer = null;
+    }, 8000);
+  }
+
+  /** @param {"off" | "on" | "busy"} state */
+  function setOrbState(state) {
+    const btn = st.orbBtn;
+    if (!(btn instanceof HTMLButtonElement)) return;
+    btn.dataset.state = state;
+    btn.setAttribute("aria-pressed", state === "on" ? "true" : "false");
+    btn.disabled = state === "busy";
+    const labels = {
+      off: "Voice assistant off — click to talk",
+      on: "Listening — click to stop and send",
+      busy: "Processing voice reply",
+    };
+    btn.setAttribute("aria-label", labels[state] || labels.off);
+  }
+
+  async function warmVoiceInBackground() {
+    if (st.warmed) return;
+    const api = window.voiceApi;
+    if (!api || typeof api.warmTts !== "function") return;
+    st.warmed = true;
+    try {
+      await api.warmTts();
+      // Fetch voice system prompt
+      if (typeof api.getSystemPrompt === "function") {
+        try { _voiceSystemPrompt = await api.getSystemPrompt(); } catch {}
+      }
+      // Fetch TTS provider status
+      if (typeof api.getStatus === "function") {
+        const status = await api.getStatus();
+        if (status && status.voiceGpuBadge) {
+          console.log(`[voice] ${status.voiceGpuBadge}`);
+          const btn = st.orbBtn;
+          if (btn instanceof HTMLButtonElement) {
+            btn.title = status.voiceGpuBadge;
+          }
+        }
+      }
+    } catch (e) {
+      st.warmed = false;
+      const m = e instanceof Error ? e.message : String(e);
+      console.warn("[voice] background warm failed:", m);
+      pushError("Warm: " + m, "warn");
+    }
+  }
+
+  /** @param {HTMLButtonElement} orbBtn */
+  function wireOrb(orbBtn) {
+    st.orbBtn = orbBtn;
+    setOrbState("off");
+
+    async function stopRecording() {
+      if (!st.mediaRecorder || st.mediaRecorder.state === "inactive") {
+        return null;
+      }
+      return new Promise((resolve) => {
+        const mr = st.mediaRecorder;
+        if (!mr) {
+          resolve(null);
+          return;
+        }
+        mr.addEventListener(
+          "stop",
+          () => {
+            const mime =
+              (st.chunks[0] && st.chunks[0].type) || "audio/webm";
+            const blob = st.chunks.length
+              ? new Blob(st.chunks, { type: mime })
+              : null;
+            st.chunks = [];
+            st.recording = false;
+            try {
+              st.stream?.getTracks().forEach((t) => t.stop());
+            } catch {
+              /* ignore */
+            }
+            st.stream = null;
+            st.mediaRecorder = null;
+            resolve(blob);
+          },
+          { once: true },
+        );
+        try {
+          mr.stop();
+        } catch {
+          resolve(null);
+        }
+      });
+    }
+
+    async function startRecording() {
+      if (st.busy || st.recording) return;
+      const api = window.voiceApi;
+      if (!api || typeof api.transcribe !== "function") {
+        console.warn("[voice] Voice API unavailable.");
+        pushError("Voice API unavailable", "warn");
+        return;
+      }
+      stopVoicePlayback();
+      try {
+        st.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (e) {
+        const m = e instanceof Error ? e.message : String(e);
+        console.warn("[voice] microphone:", m);
+        pushError("Mic: " + m, "warn");
+        setOrbState("off");
+        return;
+      }
+      st.chunks = [];
+      const mimeCandidates = [
+        "audio/webm;codecs=opus",
+        "audio/webm",
+        "audio/ogg;codecs=opus",
+      ];
+      let mime = "";
+      for (const m of mimeCandidates) {
+        if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(m)) {
+          mime = m;
+          break;
+        }
+      }
+      st.mediaRecorder = mime
+        ? new MediaRecorder(st.stream, { mimeType: mime })
+        : new MediaRecorder(st.stream);
+      st.mediaRecorder.addEventListener("dataavailable", (ev) => {
+        if (ev.data && ev.data.size > 0) st.chunks.push(ev.data);
+      });
+      st.mediaRecorder.start();
+      st.recording = true;
+      setOrbState("on");
+    }
+
+    async function runPipeline(blob) {
+      const api = window.voiceApi;
+      if (!api || !blob || !blob.size) {
+        return;
+      }
+      st.busy = true;
+      setOrbState("busy");
+      if (typeof window.rmeDevConsoleShow === "function") {
+        window.rmeDevConsoleShow();
+      }
+      try {
+        const stt = await api.transcribe(blob);
+        if (!stt?.ok || !String(stt.text || "").trim()) {
+          const m = stt?.error || "empty";
+          console.warn("[voice] transcribe:", m);
+          pushError("STT: " + m, "warn");
+          return;
+        }
+        const userText = String(stt.text).trim();
+        console.log("[voice] you:", userText);
+
+        resetVoicePlaybackSchedule();
+        getVoiceAudioContext();
+        setOrbState("speaking");
+        startVoiceGlow();
+
+        const history = window.__voiceHistory || [];
+
+        let fullText = "";
+        const unsubTts = api.onTtsChunk((detail) => {
+          if (detail.done) return;
+          if (detail.audio) {
+            scheduleVoiceTtsAudio(detail);
+          }
+        });
+        const turnResult = await api.assistantTurn({
+          messages: [].concat(history, [{ role: "user", content: userText }]),
+          maxTokens: 1024,
+          system: _voiceSystemPrompt || undefined,
+        });
+        unsubTts();
+
+        if (!turnResult?.ok) {
+          const m = turnResult?.error || "empty";
+          console.warn("[voice] assistant-turn:", m);
+          pushError("AI: " + m, "error");
+          return;
+        }
+        fullText = String(turnResult.text || "").trim();
+        if (!fullText) {
+          console.warn("[voice] assistant-turn returned empty text");
+          return;
+        }
+        console.log("[voice] assistant:", fullText);
+
+        st.busy = false;
+
+        window.__voiceHistory = (window.__voiceHistory || []).concat(
+          { role: "user", content: userText },
+          { role: "assistant", content: fullText },
+        );
+        if (window.__voiceHistory.length > 50) {
+          window.__voiceHistory = window.__voiceHistory.slice(-50);
+        }
+      } catch (e) {
+        const m = e instanceof Error ? e.message : String(e);
+        console.warn("[voice] pipeline:", m);
+        pushError("Pipeline: " + m, "error");
+      } finally {
+        st.busy = false;
+        if (voiceGlowAnimId == null) setOrbState("off");
+      }
+    }
+
+    /**
+     * @param {unknown} raw
+     * @returns {Uint8Array | null}
+     */
+    function ttsBytesFromPayload(raw) {
+      if (raw instanceof Uint8Array) return raw;
+      if (raw instanceof ArrayBuffer) return new Uint8Array(raw);
+      if (ArrayBuffer.isView(raw)) {
+        const v = /** @type {ArrayBufferView} */ (raw);
+        return new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
+      }
+      if (raw && typeof raw === "object") {
+        const o = /** @type {{ type?: string; data?: number[] }} */ (raw);
+        if (o.type === "Buffer" && Array.isArray(o.data)) {
+          return Uint8Array.from(o.data);
+        }
+        if (Array.isArray(o)) {
+          return Uint8Array.from(o);
+        }
+      }
+      if (typeof raw === "string" && raw.length) {
+        try {
+          const bin = atob(raw);
+          const out = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+          return out;
+        } catch {
+          return null;
+        }
+      }
+      return null;
+    }
+
+    /**
+     * Shared Web Audio context + queue used for gapless back-to-back streaming TTS chunks.
+     * Each WAV chunk is decoded into an AudioBuffer and scheduled at `voiceNextStartTime` so
+     * the next chunk begins the instant the previous one ends — no Audio-element gap.
+     */
+    let voiceAudioCtx = null;
+    let voiceNextStartTime = 0;
+    let voiceScheduleChain = Promise.resolve();
+    /** @type {Set<AudioBufferSourceNode>} */
+    const activeVoiceSources = new Set();
+    /** @type {AnalyserNode | null} */
+    let voiceAnalyser = null;
+    /** @type {number | null} */
+    let voiceGlowAnimId = null;
+
+    function getVoiceAudioContext() {
+      const Ctor = window.AudioContext || window.webkitAudioContext;
+      if (!Ctor) return null;
+      if (!voiceAudioCtx || voiceAudioCtx.state === "closed") {
+        voiceAudioCtx = new Ctor();
+        voiceAnalyser = voiceAudioCtx.createAnalyser();
+        voiceAnalyser.fftSize = 64;
+        voiceAnalyser.connect(voiceAudioCtx.destination);
+      }
+      if (voiceAudioCtx.state === "suspended") {
+        void voiceAudioCtx.resume();
+      }
+      return voiceAudioCtx;
+    }
+
+    function resetVoicePlaybackSchedule() {
+      voiceNextStartTime = 0;
+      voiceScheduleChain = Promise.resolve();
+    }
+
+    function startVoiceGlow() {
+      if (voiceGlowAnimId != null) return;
+      const btn = st.orbBtn;
+      if (!btn) return;
+      let emptyFrames = 0;
+      const step = () => {
+        let volume = 0;
+        if (voiceAnalyser) {
+          const data = new Uint8Array(voiceAnalyser.frequencyBinCount);
+          voiceAnalyser.getByteFrequencyData(data);
+          let sum = 0;
+          for (let i = 0; i < data.length; i++) sum += data[i];
+          volume = sum / (data.length * 255);
+        }
+        if (activeVoiceSources.size === 0) {
+          emptyFrames++;
+          if (emptyFrames > 30) {
+            stopVoiceGlow();
+            return;
+          }
+        } else {
+          emptyFrames = 0;
+        }
+        if (btn.dataset.state === "speaking") {
+          const intensity = 0.35 + volume * 1.1;
+          const glowSize = 14 + volume * 28;
+          const rc = Math.round(56 + volume * 120);
+          const gc = Math.round(189 + volume * 40);
+          const bc = Math.round(248 + volume * 7);
+          btn.style.boxShadow = `0 0 0 ${2 + volume * 4}px rgba(${rc},${gc},${bc},${0.3 + volume * 0.5}), 0 0 ${glowSize}px ${glowSize / 3}px rgba(${rc},${gc},${bc},${0.4 + volume * 0.4})`;
+          btn.style.borderColor = `rgba(${rc},${gc},${bc},${0.6 + volume * 0.4})`;
+        }
+        voiceGlowAnimId = requestAnimationFrame(step);
+      };
+      voiceGlowAnimId = requestAnimationFrame(step);
+    }
+
+    function stopVoiceGlow() {
+      if (voiceGlowAnimId != null) {
+        cancelAnimationFrame(voiceGlowAnimId);
+        voiceGlowAnimId = null;
+      }
+      const btn = st.orbBtn;
+      if (!btn) return;
+      btn.style.boxShadow = "";
+      btn.style.transform = "";
+      btn.style.borderColor = "";
+      setOrbState("off");
+    }
+
+    function stopVoicePlayback() {
+      stopVoiceGlow();
+      for (const src of activeVoiceSources) {
+        try {
+          src.stop();
+        } catch {
+          /* already stopped */
+        }
+      }
+      activeVoiceSources.clear();
+      voiceNextStartTime = 0;
+    }
+
+    /**
+     * Decode + schedule one chunk on the Web Audio timeline (gapless).
+     * Returns a promise that resolves when the chunk has been QUEUED (not when it ends),
+     * so successive chunks line up back-to-back with sample-accurate timing.
+     * @param {{ mimeType?: string; audio?: unknown; audioBase64?: string }} tts
+     */
+    function scheduleVoiceTtsAudio(tts) {
+      voiceScheduleChain = voiceScheduleChain
+        .catch(() => {})
+        .then(async () => {
+          const bytes =
+            ttsBytesFromPayload(tts.audio) ||
+            (typeof tts.audioBase64 === "string" && tts.audioBase64.length
+              ? ttsBytesFromPayload(tts.audioBase64)
+              : null);
+          if (!bytes || bytes.length <= 44) {
+            throw new Error("No playable audio from TTS.");
+          }
+          const ctx = getVoiceAudioContext();
+          if (!ctx) {
+            await playVoiceTtsAudio(tts);
+            return;
+          }
+          const ab = bytes.buffer.slice(
+            bytes.byteOffset,
+            bytes.byteOffset + bytes.byteLength,
+          );
+          let buffer;
+          try {
+            buffer = await ctx.decodeAudioData(ab);
+          } catch (err) {
+            const m = err instanceof Error ? err.message : String(err);
+            console.warn("[voice] decode failed, falling back to <audio>:", m);
+            pushError("Audio decode: " + m, "warn");
+            await playVoiceTtsAudio(tts);
+            return;
+          }
+          const source = ctx.createBufferSource();
+          source.buffer = buffer;
+          source.connect(ctx.destination);
+          const now = ctx.currentTime;
+          const startAt = Math.max(now + 0.005, voiceNextStartTime);
+          source.start(startAt);
+          voiceNextStartTime = startAt + buffer.duration;
+          activeVoiceSources.add(source);
+          source.onended = () => {
+            activeVoiceSources.delete(source);
+          };
+        });
+      return voiceScheduleChain;
+    }
+
+    /**
+     * Play TTS WAV via in-memory Blob URL (file:// is blocked by Electron URL safety).
+     * Fallback for non-streaming `speak()` results and decode failures.
+     * @param {{ mimeType?: string; audio?: unknown; audioBase64?: string }} tts
+     */
+    function playVoiceTtsAudio(tts) {
+      const mime = tts.mimeType || "audio/wav";
+      const bytes =
+        ttsBytesFromPayload(tts.audio) ||
+        (typeof tts.audioBase64 === "string" && tts.audioBase64.length
+          ? ttsBytesFromPayload(tts.audioBase64)
+          : null);
+
+      if (!bytes || bytes.length <= 44) {
+        return Promise.reject(
+          new Error("No playable audio returned from TTS."),
+        );
+      }
+
+      const blob = new Blob([bytes], { type: mime });
+      const url = URL.createObjectURL(blob);
+      return new Promise((resolve, reject) => {
+        const audio = new Audio(url);
+        const cleanup = () => URL.revokeObjectURL(url);
+        audio.onended = () => {
+          cleanup();
+          resolve();
+        };
+        audio.onerror = () => {
+          cleanup();
+          const code = audio.error?.code;
+          const msg = audio.error?.message || "Audio playback failed";
+          reject(
+            new Error(
+              code != null ? `Playback error (${code}): ${msg}` : msg,
+            ),
+          );
+        };
+        void audio.play().catch((err) => {
+          cleanup();
+          reject(err instanceof Error ? err : new Error(String(err)));
+        });
+      });
+    }
+
+    async function onOrbClick() {
+      if (st.busy) return;
+      if (st.recording) {
+        setOrbState("busy");
+        const blob = await stopRecording();
+        await runPipeline(blob);
+        return;
+      }
+      void startRecording();
+    }
+
+    orbBtn.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      void onOrbClick();
+    });
+
+    void warmVoiceInBackground();
+  }
+
+  const MIC_SVG =
+    '<svg class="rme-voice-orb-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
+    '<path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.71V19h2v-1.29A7 7 0 0 0 19 11h-2z"/>' +
+    "</svg>";
+
+  function ensureOrb() {
+    document.getElementById(LEGACY_CARD_ID)?.remove();
+
+    const show = orbShouldShow();
+    let orb = document.getElementById(ORB_ID);
+    if (!show) {
+      if (orb instanceof HTMLElement) orb.hidden = true;
+      return;
+    }
+
+    injectStyles();
+    let logEl = document.getElementById(LOG_ID);
+    if (!logEl) {
+      logEl = document.createElement("div");
+      logEl.id = LOG_ID;
+      logEl.hidden = true;
+      document.body.appendChild(logEl);
+    }
+    if (!(orb instanceof HTMLButtonElement)) {
+      orb = document.createElement("button");
+      orb.id = ORB_ID;
+      orb.type = "button";
+      orb.className = "rme-voice-orb-btn";
+      orb.dataset.state = "off";
+      orb.innerHTML = MIC_SVG;
+      wireOrb(orb);
+      document.body.appendChild(orb);
+    }
+    orb.hidden = false;
+    if (!st.warmed) void warmVoiceInBackground();
+  }
+
+  function tick() {
+    ensureOrb();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", tick, { once: true });
+  } else {
+    tick();
+  }
+  window.setInterval(tick, 1200);
+  window.addEventListener("focus", tick);
+})();
+
+/** @returns {"light" | "dark"} */
+function getAppTheme() {
+  return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+}
+
+/** @param {"light" | "dark"} theme */
+function setAppTheme(theme) {
+  const next = theme === "dark" ? "dark" : "light";
   applyTheme(next);
   try {
     payslipAppStateSetItem(THEME_KEY, next);
   } catch {
     /* ignore */
   }
+  tickNavRoleClockAndTeacherGreeting();
+  try {
+    window.dispatchEvent(
+      new CustomEvent("rme-app-theme-changed", { detail: { theme: next } }),
+    );
+  } catch {
+    /* ignore */
+  }
 }
+
+function toggleTheme() {
+  setAppTheme(getAppTheme() === "dark" ? "light" : "dark");
+}
+
+function getSignedInEmailForSettings() {
+  const fromTeacher = teacherContactEmail?.value?.trim() ?? "";
+  if (fromTeacher) {
+    return fromTeacher;
+  }
+  try {
+    const em = window.localStorage.getItem(AUTH_REMEMBER_EMAIL_KEY);
+    if (em) {
+      return String(em).trim();
+    }
+  } catch {
+    /* ignore */
+  }
+  return "";
+}
+
+function restartDesktopApp() {
+  if (
+    !window.confirm(
+      "Restart the desktop app? The app will quit and reopen.",
+    )
+  ) {
+    return;
+  }
+  closeNavMenu();
+  if (typeof window.shellApi?.relaunchApp === "function") {
+    void window.shellApi.relaunchApp();
+    return;
+  }
+  setStatus("Restart requires the desktop app (Electron).", true);
+}
+
+/** Sign out (admin or teacher) and close the desktop app — no return to sign-in gate. */
+async function signOutAndQuitDesktopApp() {
+  closeNavMenu();
+  stopTeacherPresenceHeartbeat();
+  let snapEmail = "";
+  let snapBg = "";
+  try {
+    if (typeof window.teacherAuth?.getSessionUser === "function") {
+      const { user } = await window.teacherAuth.getSessionUser();
+      if (user?.email) {
+        snapEmail = String(user.email).trim().toLowerCase();
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
+    if (payslipAppStateMirrorKeyPresent(APP_BG_IMAGE_URL_KEY)) {
+      const v = payslipAppUserStateMirror[APP_BG_IMAGE_URL_KEY];
+      if (typeof v === "string" && v.trim()) {
+        snapBg = v.trim();
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  if (snapEmail && snapBg) {
+    writeCachedAppBackgroundHrefForAuthEmail(snapEmail, snapBg);
+  }
+  try {
+    await flushPayslipAppUserStateDirtyNow();
+  } catch {
+    /* ignore */
+  }
+  clearTeacherPaySlipCache();
+  try {
+    await window.teacherAuth?.signOutSupabase?.();
+  } catch {
+    /* ignore */
+  }
+  try {
+    window.teacherAuth?.resetSupabaseClient?.();
+  } catch {
+    /* ignore */
+  }
+  if (typeof window.shellApi?.quitApp === "function") {
+    void window.shellApi.quitApp();
+    return;
+  }
+  try {
+    window.close();
+  } catch {
+    /* ignore */
+  }
+}
+
+function installRmeAppSettingsBridge() {
+  window.rmeAppSettings = {
+    openBackgroundPicker() {
+      void openAppBackgroundPickerModal();
+    },
+    getTheme: getAppTheme,
+    setTheme: setAppTheme,
+    isTeacherNavMode() {
+      return Boolean(isTeacherNavMode);
+    },
+    getEditorSidebarCollapsed: readEditorSidebarCollapsedPref,
+    setEditorSidebarCollapsed,
+    restartApp: restartDesktopApp,
+    getSignedInEmail: getSignedInEmailForSettings,
+  };
+  window.getAppTheme = getAppTheme;
+  window.setAppTheme = setAppTheme;
+  window.restartDesktopApp = restartDesktopApp;
+  window.openAppBackgroundPickerModal = openAppBackgroundPickerModal;
+}
+
+installRmeAppSettingsBridge();
 
 function closeNavMenu() {
   appMainEl?.classList.remove(NAV_MENU_OPEN_CLASS);
@@ -1281,16 +18126,223 @@ function clearTeacherPaySlipCache() {
 }
 
 /**
- * Teacher portal uses the same session key with values dashboard | teachers | payslips.
- * Legacy value teachers-pay-slips maps to dashboard.
+ * Teacher portal uses the same session key with values dashboard | payslips.
+ * Legacy value teachers-pay-slips maps to payslips.
  * @param {string} page
- * @returns {"dashboard" | "teachers" | "payslips"}
+ * @returns {"dashboard" | "payslips" | "planner" | "profile" | "settings" | "discord"}
  */
 function normalizeTeacherNavPage(page) {
-  if (page === "dashboard" || page === "teachers" || page === "payslips") {
-    return page;
+  const s = String(page ?? "")
+    .trim()
+    .toLowerCase();
+  if (s === "settings") {
+    return "settings";
+  }
+  if (
+    s === "planner" ||
+    s === "my planner" ||
+    s === "calendar" ||
+    s === "obsidian"
+  ) {
+    return "planner";
+  }
+  if (s === "profile" || s === "your profile") {
+    return "profile";
+  }
+  if (s === "discord") {
+    return "discord";
+  }
+  if (s === "payslips" || s === "teachers-pay-slips" || s === "teachers pay slips") {
+    return "payslips";
+  }
+  if (s === "teacher pay slips" || s === "teacher payslips") {
+    return "payslips";
+  }
+  if (s === "dashboard" || s === "home" || s === "teachers") {
+    return "dashboard";
   }
   return "dashboard";
+}
+
+/** Teacher portal: full My planner + Obsidian view (same workspace calendar pane as admin). */
+async function openTeacherPlannerPage() {
+  if (!isTeacherNavMode) {
+    return;
+  }
+  const scopeOk = await applyPlannerStorageScopeForSignedInUser();
+  if (!scopeOk) {
+    console.warn(
+      "My planner: storage scope not bound — notes and reminders may not save until you sign in again.",
+    );
+  }
+  showAppPage("planner");
+  window.rmePlannerUi?.refresh?.({ force: true });
+}
+
+/**
+ * My planner / Obsidian data is stored per signed-in user (Supabase auth id + profile).
+ * Call after sign-in and before opening the planner.
+ */
+/** @returns {Promise<boolean>} */
+async function applyPlannerStorageScopeForSignedInUser() {
+  const api = window.calendarStorageApi;
+  if (!api || typeof api.setScope !== "function") {
+    return false;
+  }
+  try {
+    const { user, error } = await window.teacherAuth.getSessionUser();
+    if (error || !user?.id) {
+      try {
+        delete window.__rmePlannerScopeId;
+      } catch {
+        /* ignore */
+      }
+      console.warn("planner scope: no signed-in user", error || "");
+      return false;
+    }
+    let firstName = "";
+    let lastName = "";
+    if (typeof window.teacherAuth.getTeacherProfileState === "function") {
+      const prof = await window.teacherAuth.getTeacherProfileState();
+      if (prof?.kind === "ok" && prof.row && typeof prof.row === "object") {
+        firstName = String(prof.row.first_name ?? "").trim();
+        lastName = String(prof.row.last_name ?? "").trim();
+      }
+    }
+    const scopeUserId = String(user.id).trim().toLowerCase();
+    window.__rmePlannerScopeId = scopeUserId;
+    const res = await api.setScope({
+      userId: scopeUserId,
+      email: user.email ?? "",
+      firstName,
+      lastName,
+    });
+    if (!res?.ok) {
+      console.warn("planner set-scope:", res?.message || "failed");
+      try {
+        delete window.__rmePlannerScopeId;
+      } catch {
+        /* ignore */
+      }
+      return false;
+    }
+    if (res.dir) {
+      console.info("planner storage dir:", res.dir);
+    }
+    const scopeDetail = {
+      userId: scopeUserId,
+      firstName,
+      lastName,
+      email: user.email ?? "",
+    };
+    if (typeof window.rmePlannerReloadScope === "function") {
+      await window.rmePlannerReloadScope();
+    } else {
+      window.dispatchEvent(
+        new CustomEvent("rme-planner-scope-changed", { detail: scopeDetail }),
+      );
+    }
+    return true;
+  } catch (e) {
+    console.warn("planner scope:", e);
+    return false;
+  }
+}
+
+const RME_JOHANNESBURG_TZ = "Africa/Johannesburg";
+
+/** Hour 0–23 in South Africa (Johannesburg, SAST = UTC+2). */
+function johannesburgHour24() {
+  const h = new Intl.DateTimeFormat("en-GB", {
+    timeZone: RME_JOHANNESBURG_TZ,
+    hour: "numeric",
+    hour12: false,
+  }).format(new Date());
+  const n = parseInt(String(h).replace(/\D/g, ""), 10);
+  return Number.isFinite(n) ? n % 24 : 12;
+}
+
+function johannesburgGreetingPhrase() {
+  const hour = johannesburgHour24();
+  if (hour >= 5 && hour < 12) {
+    return "Good morning";
+  }
+  if (hour >= 12 && hour < 17) {
+    return "Good afternoon";
+  }
+  return "Good evening";
+}
+
+/** One line for the nav cluster: weekday, date, time, SAST. */
+function johannesburgNavClockLine() {
+  try {
+    const d = new Date();
+    const parts = new Intl.DateTimeFormat("en-ZA", {
+      timeZone: RME_JOHANNESBURG_TZ,
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).formatToParts(d);
+    const map = /** @type {Record<string, string>} */ ({});
+    for (const p of parts) {
+      if (p.type !== "literal") {
+        map[p.type] = p.value;
+      }
+    }
+    const w = map.weekday ?? "";
+    const day = map.day ?? "";
+    const mon = map.month ?? "";
+    const hh = map.hour ?? "";
+    const mm = map.minute ?? "";
+    return `${w} ${day} ${mon} · ${hh}:${mm} SAST`;
+  } catch {
+    return (
+      new Intl.DateTimeFormat("en-GB", {
+        timeZone: RME_JOHANNESBURG_TZ,
+        dateStyle: "medium",
+        timeStyle: "short",
+      }).format(new Date()) + " SAST"
+    );
+  }
+}
+
+function tickNavRoleClockAndTeacherGreeting() {
+  if (navRoleClock && appMainEl && !appMainEl.hidden) {
+    navRoleClock.textContent = johannesburgNavClockLine();
+  }
+  if (
+    teacherPortalTopTitleGreeting &&
+    teacherPortalTopTitle &&
+    !teacherPortalTopTitle.hidden &&
+    teacherPortalTopTitle.dataset.hubSlug === "dashboard" &&
+    !teacherPortalTopTitleGreeting.hidden
+  ) {
+    teacherPortalTopTitleGreeting.textContent = johannesburgGreetingPhrase();
+  }
+}
+
+function startNavRoleClockTicker() {
+  if (navRoleClockTimerId) {
+    return;
+  }
+  tickNavRoleClockAndTeacherGreeting();
+  navRoleClockTimerId = window.setInterval(
+    tickNavRoleClockAndTeacherGreeting,
+    60_000,
+  );
+}
+
+function stopNavRoleClockTicker() {
+  if (navRoleClockTimerId) {
+    window.clearInterval(navRoleClockTimerId);
+    navRoleClockTimerId = 0;
+  }
+  if (navRoleClock) {
+    navRoleClock.textContent = "";
+  }
 }
 
 function syncTeacherPortalNavActive(teacherPage) {
@@ -1298,24 +18350,208 @@ function syncTeacherPortalNavActive(teacherPage) {
     "active",
     teacherPage === "dashboard",
   );
-  navTeacherGoProfile?.classList.toggle("active", teacherPage === "teachers");
-  navTeacherGoPaySlips?.classList.toggle(
-    "active",
-    teacherPage === "payslips",
-  );
+}
+
+/** Display name for the teacher portal top chrome (sync; uses profile DOM). */
+function resolveSignedInTeacherHeaderName() {
+  const fn = teacherFirstName?.value?.trim() ?? "";
+  const ln = teacherLastName?.value?.trim() ?? "";
+  const fromInputs = `${fn} ${ln}`.trim();
+  if (fromInputs) {
+    return fromInputs;
+  }
+  const fromLabel = teacherProfileName?.textContent?.trim() ?? "";
+  if (fromLabel && fromLabel !== "…" && fromLabel !== "—") {
+    return fromLabel;
+  }
+  const fromCloud = teacherHeaderCloudDisplayName?.trim() ?? "";
+  if (fromCloud) {
+    return fromCloud;
+  }
+  const email = teacherContactEmail?.value?.trim() ?? "";
+  const at = email.indexOf("@");
+  if (at > 0) {
+    return email.slice(0, at);
+  }
+  return "Teacher";
+}
+
+/** After profile fetch or edits, keep the top chrome name in sync (teacher only). */
+function refreshTeacherPortalTopTitleIfTeacher() {
+  if (!isTeacherNavMode) {
+    return;
+  }
+  syncTeacherPortalTopTitle(normalizeTeacherNavPage(readStoredNavPage()));
+}
+
+/** Fills {@link teacherHeaderCloudDisplayName} from Supabase and refreshes the top title. */
+async function hydrateTeacherPortalTopNameFromSession() {
+  if (!isTeacherNavMode) {
+    return;
+  }
+  if (normalizeTeacherNavPage(readStoredNavPage()) !== "dashboard") {
+    return;
+  }
+  if (typeof window.teacherAuth?.getTeacherProfileState !== "function") {
+    return;
+  }
+  try {
+    const state = await window.teacherAuth.getTeacherProfileState();
+    if (!state || state.kind !== "ok") {
+      return;
+    }
+    const meta = state.user_metadata || {};
+    const fallbackName =
+      typeof meta.full_name === "string"
+        ? meta.full_name
+        : typeof meta.name === "string"
+          ? meta.name
+          : "";
+    let nm = teacherDisplayName(state.row, fallbackName);
+    if (!nm || nm === "—") {
+      const emRaw = typeof state.email === "string" ? state.email.trim() : "";
+      const at = emRaw.indexOf("@");
+      nm = at > 0 ? emRaw.slice(0, at) : "Teacher";
+    }
+    teacherHeaderCloudDisplayName = nm.trim();
+    syncTeacherPortalTopTitle("dashboard");
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Centered title in .app-top-chrome (teacher portal only). */
+function syncTeacherPortalTopTitle(teacherPage) {
+  if (
+    !teacherPortalTopTitle ||
+    !teacherPortalTopTitleEmoji ||
+    !teacherPortalTopTitleText
+  ) {
+    clearTeacherHubTitleChromeReveal();
+    return;
+  }
+  if (!isTeacherNavMode) {
+    teacherPortalTopTitle.hidden = true;
+    clearTeacherHubTitleChromeReveal();
+    return;
+  }
+  if (!pageTeachersPaySlipsHubEl || !pageTeachersPaySlipsHubEl.isConnected) {
+    teacherPortalTopTitle.hidden = true;
+    clearTeacherHubTitleChromeReveal();
+    return;
+  }
+  const slug = normalizeTeacherNavPage(teacherPage);
+  if (
+    slug !== "settings" &&
+    slug !== "planner" &&
+    pageTeachersPaySlipsHubEl.hidden
+  ) {
+    teacherPortalTopTitle.hidden = true;
+    clearTeacherHubTitleChromeReveal();
+    return;
+  }
+  teacherPortalTopTitle.hidden = false;
+  teacherPortalTopTitle.dataset.hubSlug = slug;
+  if (slug === "settings") {
+    if (teacherPortalTopTitleGreeting) {
+      teacherPortalTopTitleGreeting.hidden = true;
+      teacherPortalTopTitleGreeting.setAttribute("aria-hidden", "true");
+    }
+    teacherPortalTopTitleEmoji.textContent = "⚙️";
+    teacherPortalTopTitleText.textContent = "Settings";
+    teacherPortalTopTitle.setAttribute("aria-label", "Settings");
+    clearTeacherHubTitleChromeReveal();
+    return;
+  }
+  if (slug === "planner") {
+    if (teacherPortalTopTitleGreeting) {
+      teacherPortalTopTitleGreeting.hidden = true;
+      teacherPortalTopTitleGreeting.setAttribute("aria-hidden", "true");
+    }
+    teacherPortalTopTitleEmoji.textContent = "🧠";
+    teacherPortalTopTitleText.textContent = WORKSPACE_PLANNER_TITLE;
+    teacherPortalTopTitle.setAttribute(
+      "aria-label",
+      WORKSPACE_PLANNER_TITLE,
+    );
+    clearTeacherHubTitleChromeReveal();
+    return;
+  }
+  if (slug === "payslips") {
+    if (teacherPortalTopTitleGreeting) {
+      teacherPortalTopTitleGreeting.hidden = true;
+      teacherPortalTopTitleGreeting.setAttribute("aria-hidden", "true");
+    }
+    teacherPortalTopTitleEmoji.textContent = "💳";
+    teacherPortalTopTitleText.textContent = "Pay slips";
+    teacherPortalTopTitle.removeAttribute("aria-label");
+  } else if (slug === "profile") {
+    if (teacherPortalTopTitleGreeting) {
+      teacherPortalTopTitleGreeting.hidden = true;
+      teacherPortalTopTitleGreeting.setAttribute("aria-hidden", "true");
+    }
+    teacherPortalTopTitleEmoji.textContent = "👤";
+    teacherPortalTopTitleText.textContent = "Profile";
+    teacherPortalTopTitle.setAttribute("aria-label", "Your profile");
+    clearTeacherHubTitleChromeReveal();
+  } else if (slug === "discord") {
+    if (teacherPortalTopTitleGreeting) {
+      teacherPortalTopTitleGreeting.hidden = true;
+      teacherPortalTopTitleGreeting.setAttribute("aria-hidden", "true");
+    }
+    teacherPortalTopTitleEmoji.textContent = "";
+    teacherPortalTopTitleText.textContent = "Discord";
+    teacherPortalTopTitle.setAttribute("aria-label", "Discord");
+    clearTeacherHubTitleChromeReveal();
+  } else {
+    if (teacherPortalTopTitleGreeting) {
+      teacherPortalTopTitleGreeting.hidden = false;
+      teacherPortalTopTitleGreeting.removeAttribute("aria-hidden");
+      teacherPortalTopTitleGreeting.textContent = johannesburgGreetingPhrase();
+    }
+    teacherPortalTopTitleEmoji.textContent = "";
+    const nm = resolveSignedInTeacherHeaderName();
+    teacherPortalTopTitleText.textContent = nm;
+    teacherPortalTopTitle.setAttribute("aria-label", `${johannesburgGreetingPhrase()}, ${nm}`);
+  }
+  if (slug === "dashboard" && !teacherPortalTopTitle.hidden) {
+    scheduleTeacherHubTitleChromeReveal();
+  } else {
+    clearTeacherHubTitleChromeReveal();
+  }
 }
 
 function readStoredNavPage() {
   try {
     const p = sessionStorage.getItem(APP_NAV_PAGE_KEY);
     if (isTeacherNavMode) {
-      if (p === "dashboard" || p === "teachers" || p === "payslips") {
-        return p;
+      if (p === "settings") {
+        return "settings";
       }
-      if (p === "teachers-pay-slips") {
+      if (
+        p === "planner" ||
+        p === "my planner" ||
+        p === "calendar" ||
+        p === "obsidian"
+      ) {
+        return "planner";
+      }
+      if (p === "profile" || p === "your profile") {
+        return "profile";
+      }
+      if (p === "discord") {
+        return "discord";
+      }
+      if (p === "payslips" || p === "teachers-pay-slips") {
+        return "payslips";
+      }
+      if (p === "dashboard" || p === "home" || p === "teachers") {
         return "dashboard";
       }
       return "dashboard";
+    }
+    if (p === "settings") {
+      return "settings";
     }
     if (p === "home" || p === "teachers") {
       return p;
@@ -1340,6 +18576,18 @@ function notionDefaultWorkspacePages() {
       id: WORKSPACE_VAULT_PAGE_ID,
       title: "Vault",
       kind: "vault",
+      fixed: true,
+    },
+    {
+      id: WORKSPACE_CALENDAR_PAGE_ID,
+      title: WORKSPACE_PLANNER_TITLE,
+      kind: "calendar",
+      fixed: true,
+    },
+    {
+      id: WORKSPACE_VOICE_PAGE_ID,
+      title: WORKSPACE_VOICE_TITLE,
+      kind: "voice",
       fixed: true,
     },
     {
@@ -1378,7 +18626,12 @@ function stripBrokenWorkspaceParents(pages) {
       continue;
     }
     const par = byId.get(pid);
-    if (par && par.kind === "trash") {
+    if (
+      par &&
+      (par.kind === "trash" ||
+        par.kind === "calendar" ||
+        par.kind === "voice")
+    ) {
       p.parentId = null;
     }
   }
@@ -1424,12 +18677,21 @@ function workspaceTreeFromFlatPages(pages) {
       node.page.parentId = null;
       pid = "";
     }
+    if (node.page.kind === "calendar" || node.page.kind === "voice") {
+      node.page.parentId = null;
+      pid = "";
+    }
     if (!pid || !byId.has(pid)) {
       node.page.parentId = null;
       continue;
     }
     const par = byId.get(pid);
-    if (!par || par.page.kind === "trash") {
+    if (
+      !par ||
+      par.page.kind === "trash" ||
+      par.page.kind === "calendar" ||
+      par.page.kind === "voice"
+    ) {
       node.page.parentId = null;
       continue;
     }
@@ -1475,6 +18737,32 @@ function enforceTrashRootLast(roots) {
 }
 
 /**
+ * Keeps My planner and Voice assistant pinned just above Trash at the root of the Pages sidebar.
+ * @param {WorkspacePageTreeNode[]} roots
+ */
+function enforcePlannerChromeBeforeTrash(roots) {
+  const ti = roots.findIndex((r) => r.page.kind === "trash");
+  if (ti < 0) {
+    return;
+  }
+  /** @type {WorkspacePageTreeNode[]} */
+  const extracted = [];
+  for (const kind of ["calendar", "voice"]) {
+    const ix = roots.findIndex((r) => r.page.kind === kind);
+    if (ix >= 0) {
+      const [node] = roots.splice(ix, 1);
+      node.page.parentId = null;
+      extracted.push(node);
+    }
+  }
+  if (!extracted.length) {
+    return;
+  }
+  const insertAt = roots.findIndex((r) => r.page.kind === "trash");
+  roots.splice(insertAt >= 0 ? insertAt : roots.length, 0, ...extracted);
+}
+
+/**
  * @param {WorkspacePageTreeNode[]} roots
  * @returns {NotionWorkspacePage[]}
  */
@@ -1517,7 +18805,7 @@ function normalizeWorkspaceChromeOrder(nextIn) {
     } else {
       const prev = map.get(q.id);
       const parentResolved =
-        q.kind === "trash"
+        q.kind === "trash" || q.kind === "calendar" || q.kind === "voice"
           ? null
           : q.parentId != null && String(q.parentId).trim()
             ? String(q.parentId).trim()
@@ -1538,6 +18826,7 @@ function normalizeWorkspaceChromeOrder(nextIn) {
   pages = stripBrokenWorkspaceParents(pages);
   const tree = workspaceTreeFromFlatPages(pages);
   enforceTrashRootLast(tree);
+  enforcePlannerChromeBeforeTrash(tree);
   return workspaceFlatFromTree(tree);
 }
 
@@ -1750,7 +19039,12 @@ function insertWorkspaceSiblingAfter(roots, targetId, node) {
  */
 function insertWorkspaceChildLast(roots, parentId, node) {
   const par = findWorkspaceTreeNode(roots, parentId);
-  if (!par || par.page.kind === "trash") {
+  if (
+    !par ||
+    par.page.kind === "trash" ||
+    par.page.kind === "calendar" ||
+    par.page.kind === "voice"
+  ) {
     return false;
   }
   node.page.parentId = parentId;
@@ -1796,6 +19090,7 @@ function applyWorkspacePageDrop(dragId, targetId, zone) {
     insertWorkspaceSiblingAfter(roots, t, dragged);
   }
   enforceTrashRootLast(roots);
+  enforcePlannerChromeBeforeTrash(roots);
   syncWorkspaceSubtreeParentIds(roots, null);
   notionWorkspacePagesState = workspaceFlatFromTree(roots);
   if (z === "into") {
@@ -1915,10 +19210,33 @@ function sanitizeWorkspacePageEntry(v) {
     };
   }
 
+  if (o.kind === "calendar" && idRaw === WORKSPACE_CALENDAR_PAGE_ID) {
+    return {
+      id: WORKSPACE_CALENDAR_PAGE_ID,
+      title: workspacePlannerDisplayTitle(titleBase),
+      kind: "calendar",
+      fixed: true,
+      parentId: null,
+    };
+  }
+
+  if (o.kind === "voice" && idRaw === WORKSPACE_VOICE_PAGE_ID) {
+    return {
+      id: WORKSPACE_VOICE_PAGE_ID,
+      title:
+        titleBase === "Untitled" ? WORKSPACE_VOICE_TITLE : titleBase,
+      kind: "voice",
+      fixed: true,
+      parentId: null,
+    };
+  }
+
   if (
     idRaw === WORKSPACE_PAYSLIPS_PAGE_ID ||
     idRaw === WORKSPACE_TRASH_PAGE_ID ||
-    idRaw === WORKSPACE_VAULT_PAGE_ID
+    idRaw === WORKSPACE_VAULT_PAGE_ID ||
+    idRaw === WORKSPACE_CALENDAR_PAGE_ID ||
+    idRaw === WORKSPACE_VOICE_PAGE_ID
   ) {
     return null;
   }
@@ -2169,6 +19487,12 @@ function workspacePaneElFor(id) {
   if (sid === WORKSPACE_VAULT_NOTION_LINKS_PAGE_ID) {
     return notionWsPaneVaultNotionLinksEl;
   }
+  if (sid === WORKSPACE_CALENDAR_PAGE_ID) {
+    return notionWsPaneCalendarEl;
+  }
+  if (sid === WORKSPACE_VOICE_PAGE_ID) {
+    return notionWsPaneVoiceEl;
+  }
   if (sid === WORKSPACE_TRASH_PAGE_ID) {
     return notionWsPaneTrashEl;
   }
@@ -2230,6 +19554,9 @@ function resolveFloatingDraftMountHostElement(pageId) {
     return null;
   }
   if (sid === WORKSPACE_VAULT_NOTION_LINKS_PAGE_ID) {
+    return null;
+  }
+  if (sid === WORKSPACE_CALENDAR_PAGE_ID || sid === WORKSPACE_VOICE_PAGE_ID) {
     return null;
   }
   const pane = workspacePaneElFor(sid);
@@ -3301,6 +20628,7 @@ function snapshotPersistentAppStateToMirror() {
  * Does not block unload; duplicate `beforeunload`/`pagehide` pairs are deduped.
  */
 function flushPersistentAppStateOnExit() {
+  void window.rmePlannerFlushAll?.();
   if (!payslipAppUserStateCloudReady) {
     return;
   }
@@ -3627,7 +20955,12 @@ function ensureBlankSubpagesHostInPane(pageId) {
  */
 function syncWorkspaceSubpageEmbedForParent(parentId) {
   const pid = String(parentId ?? "").trim();
-  if (!pid || pid === WORKSPACE_TRASH_PAGE_ID) {
+  if (
+    !pid ||
+    pid === WORKSPACE_TRASH_PAGE_ID ||
+    pid === WORKSPACE_CALENDAR_PAGE_ID ||
+    pid === WORKSPACE_VOICE_PAGE_ID
+  ) {
     return;
   }
   if (pid === WORKSPACE_PAYSLIPS_PAGE_ID) {
@@ -3643,7 +20976,7 @@ function syncWorkspaceSubpageEmbedForParent(parentId) {
 
 function syncWorkspaceSubpageEmbedsForAllParents() {
   for (const p of notionWorkspacePagesState) {
-    if (p.kind === "trash") {
+    if (p.kind === "trash" || p.kind === "calendar" || p.kind === "voice") {
       continue;
     }
     syncWorkspaceSubpageEmbedForParent(p.id);
@@ -3752,7 +21085,9 @@ function syncNotionWorkspacePageSidebarLabel(pageId, provisionalTitle) {
       String(provisionalTitle).trim() &&
       pg?.kind !== "trash" &&
       pg?.kind !== "payslips" &&
-      pg?.kind !== "vault"
+      pg?.kind !== "vault" &&
+      pg?.kind !== "calendar" &&
+      pg?.kind !== "voice"
     ) {
       btn.textContent = String(provisionalTitle).trim();
       return;
@@ -3775,7 +21110,11 @@ function syncNotionWorkspacePageSidebarLabel(pageId, provisionalTitle) {
         ? "Dashboard"
         : pg?.kind === "vault"
           ? "Vault"
-          : (pg?.title ?? "Untitled");
+          : pg?.kind === "calendar"
+            ? WORKSPACE_PLANNER_TITLE
+            : pg?.kind === "voice"
+              ? WORKSPACE_VOICE_TITLE
+              : (pg?.title ?? "Untitled");
   });
 }
 
@@ -3797,7 +21136,15 @@ function wrapForWorkspacePageRow(pageId) {
 function activateNotionWorkspacePage(pageId) {
   flushAllFloatingDraftPersistence();
   let pid = typeof pageId === "string" ? pageId.trim() : "";
-  if (!pid || !notionWorkspacePagesState.some((p) => p.id === pid)) {
+  const inState = notionWorkspacePagesState.some((p) => p.id === pid);
+  const builtInPane =
+    pid === WORKSPACE_PAYSLIPS_PAGE_ID ||
+    pid === WORKSPACE_VAULT_PAGE_ID ||
+    pid === WORKSPACE_TRASH_PAGE_ID ||
+    pid === WORKSPACE_VAULT_NOTION_LINKS_PAGE_ID ||
+    pid === WORKSPACE_CALENDAR_PAGE_ID ||
+    pid === WORKSPACE_VOICE_PAGE_ID;
+  if (!pid || (!inState && !builtInPane)) {
     pid = WORKSPACE_PAYSLIPS_PAGE_ID;
   }
   notionWorkspaceActiveId = pid;
@@ -3831,13 +21178,18 @@ function syncNavOpenWorkspaceDashboardActive() {
 }
 
 /** Admin: switch to Home, expand the Pages sidebar if needed, open the Payslips / Dashboard workspace page. */
-function openWorkspaceDashboardInSidebar() {
+/** @param {{ expandSidebar?: boolean; openDetails?: boolean } | void} [opts] */
+function openWorkspaceDashboardInSidebar(opts) {
+  const o = opts && typeof opts === "object" ? opts : null;
+  const expandSidebar = !o || o.expandSidebar !== false;
+  const openDetails = !o || o.openDetails !== false;
   if (isTeacherNavMode) {
     return;
   }
   closeNavMenu();
   showAppPage("home");
   if (
+    expandSidebar &&
     notionWorkspaceEl?.classList.contains("notion-workspace--sidebar-collapsed")
   ) {
     notionWorkspaceEl.classList.remove("notion-workspace--sidebar-collapsed");
@@ -3846,7 +21198,7 @@ function openWorkspaceDashboardInSidebar() {
     refreshEditorSidebarToggleButtonState();
   }
   activateNotionWorkspacePage(WORKSPACE_PAYSLIPS_PAGE_ID);
-  if (notionDetailsEl instanceof HTMLDetailsElement) {
+  if (openDetails && notionDetailsEl instanceof HTMLDetailsElement) {
     notionDetailsEl.open = true;
   }
   wrapForWorkspacePageRow(WORKSPACE_PAYSLIPS_PAGE_ID)?.scrollIntoView({
@@ -3895,8 +21247,14 @@ function appendWorkspaceBranchToDOM(container, node, depth) {
 function buildWorkspaceSidebarPageRow(p, depth, hasChildPages) {
   const row = document.createElement("div");
   row.className = "notion-editor-page-row";
-  if (p.kind !== "trash") {
+  if (p.kind !== "trash" && p.kind !== "calendar" && p.kind !== "voice") {
     row.classList.add("notion-editor-page-row--draggable");
+  }
+  if (p.kind === "calendar") {
+    row.classList.add("notion-editor-page-row--calendar");
+  }
+  if (p.kind === "voice") {
+    row.classList.add("notion-editor-page-row--voice");
   }
   row.dataset.pageId = p.id;
   if (depth > 0) {
@@ -3931,6 +21289,10 @@ function buildWorkspaceSidebarPageRow(p, depth, hasChildPages) {
   if (p.kind === "trash") {
     row.classList.add("notion-editor-page-row--trash");
     populateWorkspaceTrashNavButton(tab, p.title ?? "Trash");
+  } else if (p.kind === "calendar") {
+    tab.textContent = WORKSPACE_PLANNER_TITLE;
+  } else if (p.kind === "voice") {
+    tab.textContent = WORKSPACE_VOICE_TITLE;
   } else {
     tab.textContent =
       p.kind === "payslips"
@@ -3951,7 +21313,9 @@ function buildWorkspaceSidebarPageRow(p, depth, hasChildPages) {
     p.fixed ||
     p.kind === "payslips" ||
     p.kind === "vault" ||
-    p.kind === "trash"
+    p.kind === "trash" ||
+    p.kind === "calendar" ||
+    p.kind === "voice"
   ) {
     close.hidden = true;
     close.disabled = true;
@@ -3963,7 +21327,7 @@ function buildWorkspaceSidebarPageRow(p, depth, hasChildPages) {
   row.addEventListener("dragover", onWorkspacePageRowDragOver);
   row.addEventListener("drop", onWorkspacePageRowDrop);
 
-  if (p.kind !== "trash") {
+  if (p.kind !== "trash" && p.kind !== "calendar" && p.kind !== "voice") {
     row.draggable = true;
     row.addEventListener("dragstart", onWorkspacePageRowDragStart);
     row.addEventListener("dragend", onWorkspacePageRowDragEnd);
@@ -4954,6 +22318,8 @@ function applyHydratedFloatingReplicaShadowFromNotionMirror(
   rep.shadow.rows = paddedRows;
   rep.shadow.pageIds = pids;
 
+  backfillSchoolColumnFromCoolNameInRows(rep.shadow.columns, rep.shadow.rows);
+
   rep.shadow.linkedNotionPageId = normalizeNotionRecordIdForMatch(
     typeof linkedFallbackNormHex === "string" ? linkedFallbackNormHex : "",
   );
@@ -5277,6 +22643,9 @@ function setTeacherNavMode(on) {
   isTeacherNavMode = on;
   if (appMainEl) {
     appMainEl.classList.toggle("teacher-nav-portal", Boolean(on));
+    if (!on) {
+      appMainEl.classList.remove("teacher-planner-open");
+    }
   }
   if (navAdminHomeGroup) {
     navAdminHomeGroup.hidden = on;
@@ -5292,79 +22661,227 @@ function setTeacherNavMode(on) {
   }
   if (!on) {
     navTeacherGoDashboard?.classList.remove("active");
-    navTeacherGoProfile?.classList.remove("active");
-    navTeacherGoPaySlips?.classList.remove("active");
   }
   if (navRoleLabel) {
     navRoleLabel.textContent = on ? "TEACHER" : "Admin";
+  }
+  if (!on && teacherPortalTopTitle) {
+    teacherPortalTopTitle.hidden = true;
+    clearTeacherHubTitleChromeReveal();
   }
   syncEditorSidebarToggleChrome();
   syncNavOpenWorkspaceDashboardActive();
 }
 
 /**
- * @param {"home" | "teachers" | "payslips" | "dashboard" | "teachers-pay-slips"} page
+ * @param {"home" | "teachers" | "payslips" | "dashboard" | "teachers-pay-slips" | "settings"} page
  */
 function showAppPage(page) {
   flushAllFloatingDraftPersistence();
+  const wantsSettings = page === "settings";
+
   if (isTeacherNavMode) {
-    const teacherPage = normalizeTeacherNavPage(
-      page === "home" ? "dashboard" : String(page),
-    );
+    const teacherPage = wantsSettings
+      ? "settings"
+      : normalizeTeacherNavPage(
+          page === "home" ? "dashboard" : String(page),
+        );
     try {
       sessionStorage.setItem(APP_NAV_PAGE_KEY, teacherPage);
     } catch {
       /* ignore */
     }
+    const onPlanner = teacherPage === "planner";
+    appMainEl?.classList.toggle("teacher-planner-open", onPlanner);
+    if (pageHomeEl) {
+      pageHomeEl.hidden = !onPlanner;
+    }
+    if (pageSettingsEl) {
+      pageSettingsEl.hidden = teacherPage !== "settings";
+    }
+    if (teacherPage === "settings") {
+      appMainEl?.classList.remove("teacher-planner-open");
+      if (pageHomeEl) {
+        pageHomeEl.hidden = true;
+      }
+      if (pageTeachersPaySlipsHubEl) {
+        pageTeachersPaySlipsHubEl.hidden = true;
+      }
+      if (pageTeacherDashboardEl) {
+        pageTeacherDashboardEl.hidden = true;
+      }
+      if (pageTeacherPaySlipsEl) {
+        pageTeacherPaySlipsEl.hidden = true;
+      }
+      if (pageTeacherDiscordEl) {
+        pageTeacherDiscordEl.hidden = true;
+      }
+      if (pageTeachersEl) {
+        pageTeachersEl.hidden = true;
+      }
+      syncTeacherPortalTopTitle(teacherPage);
+      navGoHome?.classList.remove("active");
+      navGoTeachers?.classList.remove("active");
+      syncTeacherPortalNavActive(teacherPage);
+      syncNavOpenWorkspaceDashboardActive();
+      if (navTeacherDashboardRefreshGroup) {
+        navTeacherDashboardRefreshGroup.hidden = true;
+      }
+      closeNavMenu();
+      if (adminTeachersPanel) {
+        adminTeachersPanel.hidden = true;
+      }
+      if (teacherOwnProfileWrap) {
+        teacherOwnProfileWrap.hidden = true;
+      }
+      window.dispatchEvent(new CustomEvent("rme-app-settings-page-open"));
+      window.rmeSettingsPage?.render?.();
+      syncEditorSidebarToggleChrome();
+      return;
+    }
+    if (teacherPage === "planner") {
+      void (async () => {
+        await applyPlannerStorageScopeForSignedInUser();
+        if (pageTeachersPaySlipsHubEl) {
+          pageTeachersPaySlipsHubEl.hidden = true;
+        }
+        if (pageTeacherDashboardEl) {
+          pageTeacherDashboardEl.hidden = true;
+        }
+        if (pageTeacherPaySlipsEl) {
+          pageTeacherPaySlipsEl.hidden = true;
+        }
+        if (pageTeacherDiscordEl) {
+          pageTeacherDiscordEl.hidden = true;
+        }
+        if (pageTeachersEl) {
+          pageTeachersEl.hidden = true;
+        }
+        syncTeacherPortalTopTitle(teacherPage);
+        navGoHome?.classList.remove("active");
+        navGoTeachers?.classList.remove("active");
+        syncTeacherPortalNavActive(teacherPage);
+        syncNavOpenWorkspaceDashboardActive();
+        if (navTeacherDashboardRefreshGroup) {
+          navTeacherDashboardRefreshGroup.hidden = true;
+        }
+        closeNavMenu();
+        if (adminTeachersPanel) {
+          adminTeachersPanel.hidden = true;
+        }
+        if (teacherOwnProfileWrap) {
+          teacherOwnProfileWrap.hidden = true;
+        }
+        if (notionWorkspaceEl) {
+          notionWorkspaceEl.classList.add("notion-workspace--sidebar-collapsed");
+          notionEditorSidebarEl?.setAttribute("aria-hidden", "true");
+        }
+        activateNotionWorkspacePage(WORKSPACE_CALENDAR_PAGE_ID);
+        syncEditorSidebarToggleChrome();
+        window.requestAnimationFrame(() => {
+          window.rmePlannerUi?.refresh?.({ force: true });
+        });
+      })();
+      return;
+    }
     if (pageTeachersPaySlipsHubEl) {
       pageTeachersPaySlipsHubEl.hidden = false;
     }
-    if (pageHomeEl) {
-      pageHomeEl.hidden = true;
+    syncTeacherPortalTopTitle(teacherPage);
+    if (teacherPage === "dashboard") {
+      void hydrateTeacherPortalTopNameFromSession();
     }
-    if (teachersPaySlipsHubTitle) {
-      teachersPaySlipsHubTitle.textContent =
-        teacherPage === "dashboard"
-          ? "Dashboard"
-          : teacherPage === "teachers"
-            ? "Profile"
-            : "Pay slips";
-    }
+    const onDashboard = teacherPage === "dashboard";
+    const onPayslips = teacherPage === "payslips";
+    const onProfile = teacherPage === "profile";
+    const onDiscord = teacherPage === "discord";
     if (pageTeacherDashboardEl) {
-      pageTeacherDashboardEl.hidden = teacherPage !== "dashboard";
+      pageTeacherDashboardEl.hidden = !onDashboard;
     }
     if (pageTeacherPaySlipsEl) {
-      pageTeacherPaySlipsEl.hidden = teacherPage !== "payslips";
+      pageTeacherPaySlipsEl.hidden = !onPayslips;
+    }
+    if (pageTeacherDiscordEl) {
+      pageTeacherDiscordEl.hidden = !onDiscord;
     }
     if (pageTeachersEl) {
-      pageTeachersEl.hidden = teacherPage !== "teachers";
+      pageTeachersEl.hidden = !onProfile;
     }
     navGoHome?.classList.remove("active");
     navGoTeachers?.classList.remove("active");
     syncTeacherPortalNavActive(teacherPage);
     syncNavOpenWorkspaceDashboardActive();
     if (navTeacherDashboardRefreshGroup) {
-      navTeacherDashboardRefreshGroup.hidden = false;
+      navTeacherDashboardRefreshGroup.hidden = !onDashboard;
     }
     closeNavMenu();
     if (adminTeachersPanel) {
       adminTeachersPanel.hidden = true;
     }
     if (teacherOwnProfileWrap) {
-      teacherOwnProfileWrap.hidden = false;
+      teacherOwnProfileWrap.hidden = !onProfile;
     }
-    if (teacherPage === "dashboard") {
+    if (onDashboard) {
       void loadTeacherDashboard();
-    } else if (teacherPage === "teachers") {
+    } else if (onProfile) {
       void loadTeacherProfile();
-    } else {
-      void loadTeacherPaySlips();
+    } else if (onPayslips) {
+      void loadTeacherPaySlips({});
     }
     syncEditorSidebarToggleChrome();
     return;
   }
+
+  if (wantsSettings) {
+    try {
+      sessionStorage.setItem(APP_NAV_PAGE_KEY, "settings");
+    } catch {
+      /* ignore */
+    }
+    if (teacherPortalTopTitle) {
+      teacherPortalTopTitle.hidden = true;
+      clearTeacherHubTitleChromeReveal();
+    }
+    if (pageTeachersPaySlipsHubEl) {
+      pageTeachersPaySlipsHubEl.hidden = true;
+    }
+    if (pageHomeEl) {
+      pageHomeEl.hidden = true;
+    }
+    if (pageTeacherDashboardEl) {
+      pageTeacherDashboardEl.hidden = true;
+    }
+    if (pageTeacherPaySlipsEl) {
+      pageTeacherPaySlipsEl.hidden = true;
+    }
+    if (pageTeacherDiscordEl) {
+      pageTeacherDiscordEl.hidden = true;
+    }
+    if (pageTeachersEl) {
+      pageTeachersEl.hidden = true;
+    }
+    if (pageSettingsEl) {
+      pageSettingsEl.hidden = false;
+    }
+    navGoHome?.classList.remove("active");
+    navGoTeachers?.classList.remove("active");
+    syncNavOpenWorkspaceDashboardActive();
+    if (navTeacherDashboardRefreshGroup) {
+      navTeacherDashboardRefreshGroup.hidden = true;
+    }
+    closeNavMenu();
+    window.dispatchEvent(new CustomEvent("rme-app-settings-page-open"));
+    window.rmeSettingsPage?.render?.();
+    syncEditorSidebarToggleChrome();
+    return;
+  }
+
   /** @type {"home" | "teachers"} */
   const target = page === "teachers" ? "teachers" : "home";
+  if (teacherPortalTopTitle) {
+    teacherPortalTopTitle.hidden = true;
+    clearTeacherHubTitleChromeReveal();
+  }
   try {
     sessionStorage.setItem(APP_NAV_PAGE_KEY, target);
   } catch {
@@ -5372,20 +22889,23 @@ function showAppPage(page) {
   }
   const hubForAdminTeachers = target === "teachers";
   const hubOpen = hubForAdminTeachers;
+  if (pageSettingsEl) {
+    pageSettingsEl.hidden = true;
+  }
   if (pageTeachersPaySlipsHubEl) {
     pageTeachersPaySlipsHubEl.hidden = !hubOpen;
   }
   if (pageHomeEl) {
     pageHomeEl.hidden = target !== "home";
   }
-  if (hubOpen && teachersPaySlipsHubTitle) {
-    teachersPaySlipsHubTitle.textContent = "Teachers directory";
-  }
   if (pageTeacherDashboardEl) {
     pageTeacherDashboardEl.hidden = true;
   }
   if (pageTeacherPaySlipsEl) {
     pageTeacherPaySlipsEl.hidden = true;
+  }
+  if (pageTeacherDiscordEl) {
+    pageTeacherDiscordEl.hidden = true;
   }
   if (pageTeachersEl) {
     pageTeachersEl.hidden = !hubOpen;
@@ -5806,6 +23326,12 @@ async function loadAdminTeachersList() {
           ? row.email.trim()
           : "—";
 
+      const tdPassword = document.createElement("td");
+      tdPassword.className = "admin-teachers-password-cell";
+      tdPassword.textContent = "—";
+      tdPassword.title =
+        "Passwords cannot be shown: Supabase Auth stores a one-way hash only. In the Supabase dashboard use Authentication → Users to send a recovery email or set a new password.";
+
       const tdJoined = document.createElement("td");
       tdJoined.textContent = formatTeacherDateLabel(
         row &&
@@ -5828,6 +23354,7 @@ async function loadAdminTeachersList() {
       tr.appendChild(tdPhoto);
       tr.appendChild(tdName);
       tr.appendChild(tdEmail);
+      tr.appendChild(tdPassword);
       tr.appendChild(tdJoined);
       tr.appendChild(tdUpd);
       adminTeachersTbody.appendChild(tr);
@@ -6035,7 +23562,7 @@ async function refreshTeacherProfileNotionLinkUi(profileRow, opts) {
   }
 }
 
-async function loadTeacherProfile() {
+async function loadTeacherProfile(opts) {
   revokeTeacherAvatarPreview();
   setTeacherProfileFormMessage("", null);
   resetTeacherProfileNotionLinkUi();
@@ -6059,11 +23586,14 @@ async function loadTeacherProfile() {
   if (typeof window.teacherAuth?.getTeacherProfileState !== "function") {
     setTeacherProfileError("Sign-in is not available in this view.");
     resetTeacherProfileForm();
+    refreshTeacherPortalTopTitleIfTeacher();
     return;
   }
 
   try {
-    const state = await window.teacherAuth.getTeacherProfileState();
+    const state = await window.teacherAuth.getTeacherProfileState({
+      force: Boolean(opts?.force),
+    });
     if (state.kind === "not_configured") {
       setTeacherProfileError("Supabase is not configured.");
       if (teacherProfileName) {
@@ -6115,7 +23645,7 @@ async function loadTeacherProfile() {
         /first_name|last_name|bank_details|national_id|phone_number|schema cache|column/i.test(
           state.rowError,
         )
-          ? " If you recently updated the app, run the latest supabase/migrations scripts (e.g. 002_teacher_profile.sql, 005_teacher_bank_id.sql, 006_teacher_phone.sql, 007_payslip_notion_person_links.sql, 008_payslip_app_user_state.sql) in the Supabase SQL editor."
+          ? " If you recently updated the app, run the latest supabase/migrations scripts (e.g. 002_teacher_profile.sql, 005_teacher_bank_id.sql, 006_teacher_phone.sql, 007_payslip_notion_person_links.sql, 008_payslip_app_user_state.sql, 011_teacher_notion_person_resolve.sql, 012_payslip_app_backgrounds.sql, 013_payslip_app_backgrounds_bundle_wallpapers.sql, 014_payslip_app_backgrounds_storage.sql) in the Supabase SQL editor."
           : "";
       setTeacherProfileError(`${state.rowError}${hint}`);
       if (teacherProfileName) {
@@ -6248,6 +23778,8 @@ async function loadTeacherProfile() {
       teacherProfileName.textContent = "—";
     }
     resetTeacherProfileForm();
+  } finally {
+    refreshTeacherPortalTopTitleIfTeacher();
   }
 }
 
@@ -6358,7 +23890,7 @@ teacherProfileForm?.addEventListener("submit", async (ev) => {
   const savedPhone = phoneNumber;
   const savedBank = bankDetails;
   const savedNational = nationalId;
-  await loadTeacherProfile();
+  await loadTeacherProfile({ force: true });
   if (
     savedPhone.trim() &&
     teacherPhoneNumber &&
@@ -6390,8 +23922,45 @@ themeToggleEl?.addEventListener("click", () => {
   closeNavMenu();
 });
 
+navOpenAppBackgroundPicker?.addEventListener("click", () => {
+  void openAppBackgroundPickerModal();
+});
+
+navOpenSettings?.addEventListener("click", () => {
+  showAppPage("settings");
+});
+appBackgroundPickerUseDefault?.addEventListener("click", () => {
+  pickAppBackgroundDefault();
+});
+appBackgroundPickerClose?.addEventListener("click", () => {
+  appBackgroundPickerDialog?.close();
+});
+appBackgroundPickerDialog?.addEventListener("close", () => {
+  detachAppBackgroundPickerImgObserver();
+});
+if (appBackgroundPickerScroll instanceof HTMLElement) {
+  let appBgPickerScrollEndTimer = 0;
+  appBackgroundPickerScroll.addEventListener(
+    "scroll",
+    () => {
+      appBackgroundPickerScroll.classList.add("is-scrolling");
+      window.clearTimeout(appBgPickerScrollEndTimer);
+      appBgPickerScrollEndTimer = window.setTimeout(() => {
+        appBackgroundPickerScroll.classList.remove("is-scrolling");
+      }, 140);
+    },
+    { passive: true },
+  );
+}
+
 authThemeToggle?.addEventListener("click", () => {
   toggleTheme();
+});
+navWindowMinimizeBtn?.addEventListener("click", (ev) => {
+  ev.stopPropagation();
+  if (typeof window.windowApi?.minimize === "function") {
+    void window.windowApi.minimize();
+  }
 });
 navMenuBtn?.addEventListener("click", (ev) => {
   ev.stopPropagation();
@@ -6412,12 +23981,6 @@ navGoTeachers?.addEventListener("click", () => {
 navTeacherGoDashboard?.addEventListener("click", () => {
   showAppPage("dashboard");
 });
-navTeacherGoProfile?.addEventListener("click", () => {
-  showAppPage("teachers");
-});
-navTeacherGoPaySlips?.addEventListener("click", () => {
-  showAppPage("payslips");
-});
 
 toggleEditorSidebarBtn?.addEventListener("click", () => {
   if (!notionWorkspaceEl || toggleEditorSidebarBtn.hidden) {
@@ -6426,13 +23989,7 @@ toggleEditorSidebarBtn?.addEventListener("click", () => {
   const nowCollapsed = notionWorkspaceEl.classList.toggle(
     "notion-workspace--sidebar-collapsed",
   );
-  persistEditorSidebarCollapsed(nowCollapsed);
-  if (nowCollapsed) {
-    notionEditorSidebarEl?.setAttribute("aria-hidden", "true");
-  } else {
-    notionEditorSidebarEl?.removeAttribute("aria-hidden");
-  }
-  refreshEditorSidebarToggleButtonState();
+  setEditorSidebarCollapsed(nowCollapsed);
 });
 
 notionWsPanesRootEl?.addEventListener("click", (ev) => {
@@ -6448,22 +24005,6 @@ notionWsPanesRootEl?.addEventListener("click", (ev) => {
 
 navTeacherDashboardRefreshBtn?.addEventListener("click", () => {
   void globalRefreshNotionConnections();
-});
-
-navRestartAppBtn?.addEventListener("click", () => {
-  if (
-    !window.confirm(
-      "Restart the desktop app? The app will quit and reopen.",
-    )
-  ) {
-    return;
-  }
-  closeNavMenu();
-  if (typeof window.shellApi?.relaunchApp === "function") {
-    void window.shellApi.relaunchApp();
-    return;
-  }
-  setStatus("Restart requires the desktop app (Electron).", true);
 });
 
 function hiddenColsStorageKey() {
@@ -7039,6 +24580,7 @@ function selectAdminTeacherTab(teacherId) {
     return;
   }
   rawTable = v.rawTable;
+  backfillSchoolColumnFromCoolNameInRows(rawTable.columns, rawTable.rows);
 
   if (filterSchoolEl) {
     filterSchoolEl.value = v.filterSchool;
@@ -7186,6 +24728,7 @@ function ingestAdminTeacherNotionSections(sections, sourcesMeta) {
     return;
   }
   rawTable = v.rawTable;
+  backfillSchoolColumnFromCoolNameInRows(rawTable.columns, rawTable.rows);
 
   if (filterSchoolEl) {
     filterSchoolEl.value = v.filterSchool;
@@ -7518,6 +25061,7 @@ function openRowOverlay(columns, row, pageId) {
 /** Pay-slip overlay (teacher): hide these Notion property labels (normalized match). */
 const TEACHER_PAYSLIP_ROW_DETAIL_OMIT = new Set([
   "email",
+  "e-mail",
   "bank details",
   "contract",
   "id",
@@ -7551,6 +25095,34 @@ function displayNotionSheetColumnLabel(colName) {
 
 function omitFromTeacherPaySlipRowDetail(colName) {
   return TEACHER_PAYSLIP_ROW_DETAIL_OMIT.has(normalizeNotionColumnLabel(colName));
+}
+
+/**
+ * Teacher portal pay-slip grid: same columns hidden as the row overlay (email, contract, etc.).
+ * @param {string[]} columns
+ * @param {string[][]} rows
+ * @returns {{ columns: string[]; rows: string[][] }}
+ */
+function filterTeacherPaySlipsTableViewColumns(columns, rows) {
+  if (!Array.isArray(columns) || columns.length === 0) {
+    return {
+      columns: [],
+      rows: Array.isArray(rows) ? rows.map(() => []) : [],
+    };
+  }
+  const keepIdx = [];
+  for (let i = 0; i < columns.length; i += 1) {
+    if (!omitFromTeacherPaySlipRowDetail(columns[i])) {
+      keepIdx.push(i);
+    }
+  }
+  const newCols = keepIdx.map((j) => columns[j]);
+  const newRows = Array.isArray(rows)
+    ? rows.map((row) =>
+        Array.isArray(row) ? keepIdx.map((j) => row[j]) : [],
+      )
+    : [];
+  return { columns: newCols, rows: newRows };
 }
 
 function teacherPayslipSessionOrder(name) {
@@ -7859,7 +25431,7 @@ function renderRowDetail(detail) {
     dt.textContent = displayNotionSheetColumnLabel(colName);
     const dd = document.createElement("dd");
     const val = row[i];
-    let display = displayCellInSchoolSheet(columns, i, val);
+    let display = displayCellInSchoolSheet(columns, i, val, row);
     if (overlayDateIdx >= 0 && i === overlayDateIdx) {
       const pretty = formatDateCellPretty(val);
       if (pretty !== "") {
@@ -7925,6 +25497,31 @@ async function savePaySlipPdfFromRow(title, columns, row, opts) {
   }
 }
 
+/**
+ * Teacher pay-slip table: same PDF export as #rowDetailDownloadPdf (sliced row).
+ * @param {string[]} columns
+ * @param {string[]} row
+ */
+function createTeacherPayslipRowPdfButton(columns, row) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "teacher-payslips-row-pdf-btn";
+  btn.title = "Download pay slip as PDF";
+  btn.setAttribute("aria-label", "Download pay slip as PDF");
+  btn.innerHTML =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>';
+  const snapCols = columns.slice();
+  const snapRow = row.slice();
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const title = rowLabelFromCells(snapRow);
+    void savePaySlipPdfFromRow(title, snapCols, snapRow, {
+      teacherPaySlipOnly: true,
+    });
+  });
+  return btn;
+}
+
 function trimTeacherNotionSourceId(v) {
   if (v == null) {
     return "";
@@ -7935,23 +25532,31 @@ function trimTeacherNotionSourceId(v) {
 /**
  * Cache is valid only if it was loaded for the same Notion source the profile
  * specifies (so linking a dedicated DB invalidates an older default-DB snapshot).
- * @param {{ notionDatabaseId?: string; notionDataSourceId?: string } | null} cache
+ * @param {{ notionDatabaseId?: string; notionDataSourceId?: string; notionPersonRecordId?: string } | null} cache
  * @param {string} notionDatabaseId
  * @param {string} notionDataSourceId
+ * @param {string} notionPersonRecordId
  */
 function teacherPaySlipCacheMatchesNotionSource(
   cache,
   notionDatabaseId,
   notionDataSourceId,
+  notionPersonRecordId,
 ) {
   if (!cache) {
     return false;
   }
   const wantDb = trimTeacherNotionSourceId(notionDatabaseId);
   const wantDs = trimTeacherNotionSourceId(notionDataSourceId);
+  const wantPerson = trimTeacherNotionSourceId(notionPersonRecordId);
   const gotDb = trimTeacherNotionSourceId(cache.notionDatabaseId);
   const gotDs = trimTeacherNotionSourceId(cache.notionDataSourceId);
-  return gotDb === wantDb && gotDs === wantDs;
+  const gotPerson = trimTeacherNotionSourceId(cache.notionPersonRecordId);
+  return (
+    gotDb === wantDb &&
+    gotDs === wantDs &&
+    gotPerson === wantPerson
+  );
 }
 
 /**
@@ -7967,6 +25572,7 @@ function teacherPaySlipCacheMatchesNotionSource(
  *   noEmail?: boolean;
  *   notionDatabaseId?: string;
  *   notionDataSourceId?: string;
+ *   notionPersonRecordId?: string;
  * }>}
  */
 async function fetchTeacherPaySlipTable(opts) {
@@ -7980,9 +25586,46 @@ async function fetchTeacherPaySlipTable(opts) {
   }
 
   let email = "";
+  let notionDatabaseId = "";
+  let notionDataSourceId = "";
+  let notionPersonRecordId = "";
   try {
-    const { user } = await window.teacherAuth.getSessionUser();
-    email = user && typeof user.email === "string" ? user.email.trim() : "";
+    const [sessionOutcome, profileOutcome] = await Promise.allSettled([
+      window.teacherAuth.getSessionUser(),
+      window.teacherAuth.getTeacherProfileState(),
+    ]);
+    if (sessionOutcome.status === "fulfilled") {
+      const user = sessionOutcome.value?.user;
+      email =
+        user && typeof user.email === "string" ? user.email.trim() : "";
+    }
+    if (profileOutcome.status === "fulfilled") {
+      const profileRes = profileOutcome.value;
+      if (profileRes && profileRes.kind === "ok" && profileRes.row) {
+        const r = profileRes.row;
+        const nd =
+          r.notion_database_id != null
+            ? String(r.notion_database_id).trim()
+            : "";
+        const ns =
+          r.notion_data_source_id != null
+            ? String(r.notion_data_source_id).trim()
+            : "";
+        if (nd) {
+          notionDatabaseId = nd;
+        }
+        if (ns) {
+          notionDataSourceId = ns;
+        }
+        const npr =
+          r.notion_person_record_id != null
+            ? String(r.notion_person_record_id).trim()
+            : "";
+        if (npr) {
+          notionPersonRecordId = npr;
+        }
+      }
+    }
   } catch {
     /* ignore */
   }
@@ -7990,39 +25633,23 @@ async function fetchTeacherPaySlipTable(opts) {
     return { ok: false, message: "no_email", noEmail: true };
   }
 
-  let notionDatabaseId = "";
-  let notionDataSourceId = "";
-  try {
-    const profile = await window.teacherAuth.getTeacherProfileState();
-    if (profile.kind === "ok" && profile.row) {
-      const r = profile.row;
-      const nd =
-        r.notion_database_id != null ? String(r.notion_database_id).trim() : "";
-      const ns =
-        r.notion_data_source_id != null
-          ? String(r.notion_data_source_id).trim()
-          : "";
-      if (nd) {
-        notionDatabaseId = nd;
-      }
-      if (ns) {
-        notionDataSourceId = ns;
-      }
+  /**
+   * @param {string} notionPersonRecordIdForMatch
+   */
+  function teacherPaySlipCacheSnapshotIfHit(notionPersonRecordIdForMatch) {
+    if (
+      force ||
+      !teacherPaySlipCache ||
+      !Array.isArray(teacherPaySlipCache.columns) ||
+      !teacherPaySlipCacheMatchesNotionSource(
+        teacherPaySlipCache,
+        notionDatabaseId,
+        notionDataSourceId,
+        notionPersonRecordIdForMatch,
+      )
+    ) {
+      return null;
     }
-  } catch {
-    /* ignore */
-  }
-
-  if (
-    !force &&
-    teacherPaySlipCache &&
-    Array.isArray(teacherPaySlipCache.columns) &&
-    teacherPaySlipCacheMatchesNotionSource(
-      teacherPaySlipCache,
-      notionDatabaseId,
-      notionDataSourceId,
-    )
-  ) {
     return {
       ok: true,
       columns: teacherPaySlipCache.columns.slice(),
@@ -8032,7 +25659,36 @@ async function fetchTeacherPaySlipTable(opts) {
       noEmailColumn: false,
       notionDatabaseId: teacherPaySlipCache.notionDatabaseId,
       notionDataSourceId: teacherPaySlipCache.notionDataSourceId,
+      notionPersonRecordId: teacherPaySlipCache.notionPersonRecordId,
     };
+  }
+
+  const cacheHitBeforePersonRpc = teacherPaySlipCacheSnapshotIfHit(
+    notionPersonRecordId,
+  );
+  if (cacheHitBeforePersonRpc) {
+    return cacheHitBeforePersonRpc;
+  }
+
+  if (
+    !notionPersonRecordId &&
+    typeof window.teacherAuth.fetchTeacherNotionPersonRecordId === "function"
+  ) {
+    try {
+      const link = await window.teacherAuth.fetchTeacherNotionPersonRecordId();
+      if (link && link.ok && typeof link.id === "string" && link.id.trim()) {
+        notionPersonRecordId = link.id.trim();
+      }
+    } catch {
+      /* ignore — RPC may be missing until migration 011 is applied */
+    }
+  }
+
+  const cacheHitAfterPersonRpc = teacherPaySlipCacheSnapshotIfHit(
+    notionPersonRecordId,
+  );
+  if (cacheHitAfterPersonRpc) {
+    return cacheHitAfterPersonRpc;
   }
 
   let result;
@@ -8041,6 +25697,7 @@ async function fetchTeacherPaySlipTable(opts) {
       email,
       databaseId: notionDatabaseId,
       dataSourceId: notionDataSourceId,
+      notionPersonRecordId: notionPersonRecordId || undefined,
     });
   } catch (e) {
     return {
@@ -8068,6 +25725,7 @@ async function fetchTeacherPaySlipTable(opts) {
     fetchedAt: Date.now(),
     notionDatabaseId,
     notionDataSourceId,
+    notionPersonRecordId,
   };
 
   return {
@@ -8078,6 +25736,7 @@ async function fetchTeacherPaySlipTable(opts) {
     noEmailColumn,
     notionDatabaseId,
     notionDataSourceId,
+    notionPersonRecordId,
   };
 }
 
@@ -8557,10 +26216,6 @@ function resetTeacherDashboardPlaceholders() {
       el.textContent = "—";
     }
   }
-  if (teacherDashDataSyncNote) {
-    teacherDashDataSyncNote.textContent = "";
-    teacherDashDataSyncNote.hidden = true;
-  }
   resetTeacherNetProfitDonutChart();
   resetTeacherDashboardAnalyticsDom();
 }
@@ -8572,15 +26227,131 @@ function resetTeacherNetChartSummaryCards() {
   if (teacherNetChartPaySlipCountEl) {
     teacherNetChartPaySlipCountEl.textContent = "—";
   }
+  if (teacherNetChartTotalClassesEl) {
+    teacherNetChartTotalClassesEl.textContent = "—";
+  }
+  if (teacherNetChartClassesWrapEl) {
+    teacherNetChartClassesWrapEl.hidden = true;
+  }
+  if (teacherNetChartPeriodRowEl) {
+    teacherNetChartPeriodRowEl.hidden = true;
+  }
   if (teacherNetChartSummaryRowEl) {
     teacherNetChartSummaryRowEl.hidden = true;
   }
 }
 
+function resetTeacherNetChartRateCards() {
+  if (!teacherNetChartRatesRow) {
+    return;
+  }
+  teacherNetChartRatesRow.innerHTML = "";
+  teacherNetChartRatesRow.hidden = true;
+}
+
+/**
+ * Notion columns that hold class counts (not per-class rates or money totals).
+ * @param {string} columnName
+ * @returns {boolean}
+ */
+function isClassCountColumn(columnName) {
+  const s = dashNormCol(columnName).replace(/\s+/g, " ");
+  if (!s || /\brate\b/.test(s)) {
+    return false;
+  }
+  if (isZarEditableMoneyColumn(columnName)) {
+    return false;
+  }
+  if (
+    /\bnet\b/.test(s) ||
+    /\bfees?\b/.test(s) ||
+    /\btotal\s*amount\b/.test(s) ||
+    /\bexchange\b/.test(s)
+  ) {
+    return false;
+  }
+  const hasCancel =
+    s.includes("cancelation") || s.includes("cancellation");
+  if (hasCancel) {
+    return (
+      (/\badults?\b/.test(s) || /\bkids?\b/.test(s) || /\bclass/.test(s)) &&
+      !/\brate\b/.test(s)
+    );
+  }
+  if (s === "classes" || s === "class") {
+    return true;
+  }
+  if (s === "adults" || s === "adult" || s === "kids" || s === "kid") {
+    return true;
+  }
+  if (/\badults?\s+classes?\b/.test(s) || /\bkids?\s+classes?\b/.test(s)) {
+    return true;
+  }
+  if (/\bclasses?\b/.test(s) && !/\btrials?\b/.test(s)) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * @param {string[]} columns
+ * @returns {number[]}
+ */
+function findClassCountColumnIndices(columns) {
+  /** @type {number[]} */
+  const out = [];
+  columns.forEach((c, i) => {
+    if (isClassCountColumn(c)) {
+      out.push(i);
+    }
+  });
+  return out;
+}
+
+/**
+ * Sum adults, kids, classes, and cancellation class counts across all pay slips.
+ * If a single "Classes" column exists, use only that to avoid double-counting.
+ * @param {string[]} columns
+ * @param {string[][]} rows
+ * @returns {number | null}
+ */
+function sumTotalClassesFromPaySlipTable(columns, rows) {
+  if (!Array.isArray(columns) || !columns.length || !Array.isArray(rows)) {
+    return null;
+  }
+  const genericIdx = columns.findIndex((c) => {
+    const s = dashNormCol(c);
+    return s === "classes" || s === "class";
+  });
+  const indices =
+    genericIdx >= 0 ? [genericIdx] : findClassCountColumnIndices(columns);
+  if (!indices.length) {
+    return null;
+  }
+  let sum = 0;
+  let anyNumeric = false;
+  for (const row of rows) {
+    if (!Array.isArray(row)) {
+      continue;
+    }
+    for (const i of indices) {
+      const n = parseNumberFromCell(row[i]);
+      if (n == null || !Number.isFinite(n)) {
+        continue;
+      }
+      anyNumeric = true;
+      sum += n;
+    }
+  }
+  return anyNumeric ? Math.round(sum * 100) / 100 : null;
+}
+
 /**
  * @param {{ dateLabel: string }[]} items
+ * @param {string[]} columns
+ * @param {string[][]} rows
  */
-function updateTeacherNetChartSummaryCards(items) {
+function updateTeacherNetChartSummaryCards(items, columns, rows) {
   if (
     !teacherNetChartSummaryRowEl ||
     !teacherNetChartPayPeriodRangeEl ||
@@ -8597,8 +26368,92 @@ function updateTeacherNetChartSummaryCards(items) {
       ? first.dateLabel
       : `${first.dateLabel} – ${last.dateLabel}`;
   teacherNetChartPayPeriodRangeEl.textContent = rangeText;
+  if (teacherNetChartPeriodRowEl) {
+    teacherNetChartPeriodRowEl.hidden = false;
+  }
   teacherNetChartPaySlipCountEl.textContent = String(items.length);
+
+  const totalClasses = sumTotalClassesFromPaySlipTable(columns, rows);
+  if (teacherNetChartTotalClassesEl) {
+    teacherNetChartTotalClassesEl.textContent =
+      totalClasses == null
+        ? "—"
+        : Number.isInteger(totalClasses)
+          ? String(totalClasses)
+          : String(totalClasses);
+  }
+  if (teacherNetChartClassesWrapEl) {
+    teacherNetChartClassesWrapEl.hidden = false;
+  }
+
   teacherNetChartSummaryRowEl.hidden = false;
+}
+
+/**
+ * Teacher dashboard: one glass card per class / cancellation / trial rate (latest slip).
+ * Rate cards below the Net composition card (`#teacherNetChartRatesRow`).
+ * Exchange rate and exchange amount are omitted (shown on the pay summary cards).
+ * @param {string[]} columns
+ * @param {string[][]} rows
+ */
+function renderTeacherNetChartRateCards(columns, rows) {
+  if (!teacherNetChartRatesRow) {
+    return;
+  }
+  teacherNetChartRatesRow.innerHTML = "";
+  const idx = findLatestPaySlipRowIndex(columns, rows);
+  if (idx < 0 || !rows[idx]) {
+    teacherNetChartRatesRow.hidden = true;
+    return;
+  }
+  const row = rows[idx];
+  /** @type {{ colIdx: number; label: string; display: string; moneyCode: "USD" | "ZAR" }[]} */
+  const items = [];
+  columns.forEach((colName, i) => {
+    if (!teacherNetChartColumnIsRateTickerEligible(colName)) {
+      return;
+    }
+    const spec = notionMoneySpecForColumn(colName);
+    if (!spec) {
+      return;
+    }
+    items.push({
+      colIdx: i,
+      label: displayNotionSheetColumnLabel(colName),
+      display: formatMoneyCellForDisplay(spec, row[i]),
+      moneyCode: spec.code,
+    });
+  });
+  if (!items.length) {
+    teacherNetChartRatesRow.hidden = true;
+    return;
+  }
+
+  let usdAccent = 0;
+  items.forEach((c) => {
+    const card = document.createElement("article");
+    card.className = "teacher-net-chart-rate-card";
+    if (c.moneyCode === "USD") {
+      card.classList.add("teacher-net-chart-rate-card--usd");
+      card.dataset.accent = String(usdAccent % 4);
+      usdAccent += 1;
+    } else {
+      card.classList.add("teacher-net-chart-rate-card--zar");
+    }
+    card.setAttribute("aria-label", `${c.label}: ${c.display}`);
+
+    const lab = document.createElement("span");
+    lab.className = "teacher-net-chart-rate-card-label";
+    lab.textContent = c.label;
+    const val = document.createElement("span");
+    val.className = "teacher-net-chart-rate-card-value";
+    val.textContent = c.display;
+    card.appendChild(lab);
+    card.appendChild(val);
+    teacherNetChartRatesRow.appendChild(card);
+  });
+
+  teacherNetChartRatesRow.hidden = false;
 }
 
 /**
@@ -8623,16 +26478,18 @@ function resetTeacherNetProfitDonutChart() {
   if (teacherDashDonutCenterMain) {
     teacherDashDonutCenterMain.textContent = "—";
   }
+  resetTeacherNetChartRateCards();
 }
 
-/** Pastel donut segments (reference chart). */
+/** Saturated donut segments — distinct on glass / dark UI. */
 const TEACHER_DONUT_SLICE_COLORS = [
-  "#81c784",
-  "#ffd54f",
-  "#64b5f6",
-  "#ba68c8",
-  "#4dd0e1",
-  "#ff8a65",
+  "#22c55e",
+  "#eab308",
+  "#2563eb",
+  "#a855f7",
+  "#6366f1",
+  "#14b8a6",
+  "#f97316",
 ];
 /** Gap between slices (radians); reveals frame background. */
 const TEACHER_DONUT_SLICE_GAP_RAD = 0.05;
@@ -8670,6 +26527,7 @@ function teacherNetDonutSlicePath(cx, cy, rIn, rOut, a0, a1) {
  */
 function renderTeacherNetProfitDonut(columns, rows) {
   resetTeacherNetChartSummaryCards();
+  resetTeacherNetChartRateCards();
   if (
     !teacherDashboardNetChartWrap ||
     !teacherDashNetDonutSvg ||
@@ -8755,7 +26613,17 @@ function renderTeacherNetProfitDonut(columns, rows) {
   const cx = 100;
   const cy = 100;
   const rOut = 97.5;
-  const rIn = 94.25;
+  /**
+   * Ring thickness in **viewBox** units is chosen so that, at the CSS width of
+   * `.teacher-dashboard-net-donut-visual`, the on-screen band matches the old
+   * 228px layout (rIn 91.75 → ~5.75 vb) — bigger chart, same physical ring.
+   */
+  const vbSize = 200;
+  /** Must match `.teacher-dashboard-net-donut-visual` width in `index.html`. */
+  const visualPx = 292;
+  const ringVbLegacy = 97.5 - 91.75;
+  const ringPxLegacy = ringVbLegacy * (228 / vbSize);
+  const rIn = rOut - ringPxLegacy / (visualPx / vbSize);
   const ns = "http://www.w3.org/2000/svg";
   const gap = TEACHER_DONUT_SLICE_GAP_RAD;
   const nSl = items.length;
@@ -8799,7 +26667,8 @@ function renderTeacherNetProfitDonut(columns, rows) {
     "aria-label",
     `Net profit total ${formatDashCurrencyZar(sumNet)}. ${items.length} pay periods. ${ariaParts.join("; ")}`,
   );
-  updateTeacherNetChartSummaryCards(items);
+  updateTeacherNetChartSummaryCards(items, columns, rows);
+  renderTeacherNetChartRateCards(columns, rows);
 }
 
 /**
@@ -8849,17 +26718,6 @@ function renderTeacherDashboardFromTable(columns, rows) {
         : "—";
   }
 
-  const fetchedAt = teacherPaySlipCache?.fetchedAt;
-  if (
-    teacherDashDataSyncNote &&
-    typeof fetchedAt === "number" &&
-    Number.isFinite(fetchedAt)
-  ) {
-    teacherDashDataSyncNote.textContent = `Data loaded ${new Date(
-      fetchedAt,
-    ).toLocaleString()}`;
-    teacherDashDataSyncNote.hidden = false;
-  }
 }
 
 /**
@@ -8870,6 +26728,7 @@ async function loadTeacherDashboard(opts) {
   if (!isTeacherNavMode) {
     return;
   }
+  const force = Boolean(opts?.force);
   if (teacherDashboardError) {
     teacherDashboardError.hidden = true;
     teacherDashboardError.textContent = "";
@@ -8878,21 +26737,36 @@ async function loadTeacherDashboard(opts) {
     teacherDashboardHint.hidden = true;
     teacherDashboardHint.textContent = "";
   }
-  if (teacherDashboardGridWrap) {
-    teacherDashboardGridWrap.hidden = true;
-  }
-  const teacherDashAnalyticsWrap = document.getElementById(
-    "teacherDashAnalyticsWrap",
-  );
-  if (teacherDashAnalyticsWrap) {
-    teacherDashAnalyticsWrap.hidden = true;
-  }
-  if (teacherDashboardChartCard) {
-    teacherDashboardChartCard.hidden = true;
-  }
-  resetTeacherDashboardPlaceholders();
-  if (teacherDashboardLoading) {
-    teacherDashboardLoading.hidden = false;
+
+  const hadWarmCache =
+    !force &&
+    teacherPaySlipCache &&
+    Array.isArray(teacherPaySlipCache.columns) &&
+    Array.isArray(teacherPaySlipCache.rows) &&
+    teacherPaySlipCache.rows.length > 0;
+
+  if (!hadWarmCache) {
+    if (teacherDashboardGridWrap) {
+      teacherDashboardGridWrap.hidden = true;
+    }
+    const teacherDashAnalyticsWrap = document.getElementById(
+      "teacherDashAnalyticsWrap",
+    );
+    if (teacherDashAnalyticsWrap) {
+      teacherDashAnalyticsWrap.hidden = true;
+    }
+    if (teacherDashboardChartCard) {
+      teacherDashboardChartCard.hidden = true;
+    }
+    if (teacherNetChartRatesRow) {
+      teacherNetChartRatesRow.hidden = true;
+    }
+    resetTeacherDashboardPlaceholders();
+    if (teacherDashboardLoading) {
+      teacherDashboardLoading.hidden = false;
+    }
+  } else if (teacherDashboardLoading) {
+    teacherDashboardLoading.hidden = true;
   }
 
   if (typeof window.notionApi?.queryTeacherPaySlips !== "function") {
@@ -8902,8 +26776,29 @@ async function loadTeacherDashboard(opts) {
     return;
   }
 
+  if (hadWarmCache && teacherPaySlipCache) {
+    renderTeacherDashboardFromTable(
+      teacherPaySlipCache.columns,
+      teacherPaySlipCache.rows,
+    );
+    if (teacherDashboardGridWrap) {
+      teacherDashboardGridWrap.hidden = false;
+    }
+    const teacherDashAnalyticsWrapWarm = document.getElementById(
+      "teacherDashAnalyticsWrap",
+    );
+    if (teacherDashAnalyticsWrapWarm) {
+      teacherDashAnalyticsWrapWarm.removeAttribute("hidden");
+      teacherDashAnalyticsWrapWarm.hidden = false;
+    }
+    if (teacherDashboardChartCard) {
+      teacherDashboardChartCard.removeAttribute("hidden");
+      teacherDashboardChartCard.hidden = false;
+    }
+  }
+
   const fetched = await fetchTeacherPaySlipTable({
-    force: Boolean(opts?.force),
+    force,
   });
   if (teacherDashboardLoading) {
     teacherDashboardLoading.hidden = true;
@@ -9009,14 +26904,160 @@ async function loadTeacherDashboard(opts) {
 }
 
 /**
+ * Teacher portal: same Notion column grid styling as the admin payslip sheet
+ * (`data-sheet` / `renderTbody` display rules), read-only except row “Open”.
+ * @param {string[]} columns
+ * @param {string[][]} rows
+ * @param {string[]} pageIds
+ */
+function renderTeacherPaySlipsAdminStyleTable(columns, rows, pageIds) {
+  const theadEl = teacherPaySlipsThead;
+  const tbodyEl = teacherPaySlipsTbody;
+  if (!theadEl || !tbodyEl || !Array.isArray(columns)) {
+    return;
+  }
+  theadEl.innerHTML = "";
+  tbodyEl.innerHTML = "";
+  if (columns.length === 0) {
+    if (teacherPaySlipsFooterHint) {
+      teacherPaySlipsFooterHint.textContent = "";
+    }
+    if (teacherPaySlipsSheetFooter) {
+      teacherPaySlipsSheetFooter.hidden = true;
+    }
+    return;
+  }
+
+  const headRow = document.createElement("tr");
+  columns.forEach((col, colIdx) => {
+    const colTitle = displayNotionSheetColumnLabel(col);
+    const th = document.createElement("th");
+    th.className = "th-with-menu teacher-payslips-th--readonly";
+    th.scope = "col";
+    th.dataset.colIndex = String(colIdx);
+    const inner = document.createElement("div");
+    inner.className = "th-inner";
+    const wrap = document.createElement("span");
+    wrap.className = "th-label";
+    wrap.draggable = false;
+    const icon = document.createElement("span");
+    icon.className = "th-icon";
+    icon.setAttribute("aria-hidden", "true");
+    icon.textContent = HEADER_ICONS[colIdx % HEADER_ICONS.length];
+    const labelText = document.createElement("span");
+    labelText.className = "th-label-text";
+    labelText.textContent = colTitle;
+    wrap.appendChild(icon);
+    wrap.appendChild(labelText);
+    inner.appendChild(wrap);
+    th.appendChild(inner);
+    headRow.appendChild(th);
+  });
+  theadEl.appendChild(headRow);
+
+  const ids = Array.isArray(pageIds) ? pageIds : [];
+  const dateIdx = findDateColumnIndex(columns);
+  const firstCell = 0;
+
+  for (let idx = 0; idx < rows.length; idx += 1) {
+    const row = rows[idx];
+    if (!Array.isArray(row)) {
+      continue;
+    }
+    const pageId = String(ids[idx] ?? "").trim();
+    const tr = document.createElement("tr");
+    tr.className = "tr-with-peek floating-draft-data-row";
+
+    for (let cellIdx = 0; cellIdx < columns.length; cellIdx += 1) {
+      const colName = columns[cellIdx];
+      const cell = row[cellIdx];
+      const td = document.createElement("td");
+      const display = displayCellInSchoolSheet(columns, cellIdx, cell, row);
+      const moneySpec = notionMoneySpecForColumn(colName);
+
+      if (cellIdx === firstCell) {
+        const wrap = document.createElement("div");
+        wrap.className = "cell-with-open";
+        const nameBlock = document.createElement("div");
+        nameBlock.className = "teacher-payslips-name-block";
+        if (moneySpec !== null) {
+          nameBlock.appendChild(
+            createReadOnlyMoneyCell(moneySpec, cell, { inline: true }),
+          );
+        } else {
+          const span = document.createElement("span");
+          span.className = "cell-primary";
+          span.textContent = display;
+          nameBlock.appendChild(span);
+        }
+        nameBlock.appendChild(createTeacherPayslipRowPdfButton(columns, row));
+        wrap.appendChild(nameBlock);
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "row-open-peek teacher-payslips-open-btn";
+        btn.textContent = "Open";
+        btn.title = "Show this pay slip in a window over the table";
+        const snapCols = columns.slice();
+        const snapRow = row.slice();
+        const snapPageId = pageId;
+        btn.addEventListener("click", () =>
+          openRowOverlay(snapCols, snapRow, snapPageId),
+        );
+        wrap.appendChild(btn);
+        td.appendChild(wrap);
+      } else if (moneySpec !== null) {
+        td.appendChild(createReadOnlyMoneyCell(moneySpec, cell));
+      } else if (isPillColumn(colName) && display.trim() !== "") {
+        td.className = "cell-pill-wrap";
+        const pill = document.createElement("span");
+        pill.className = teacherPayslipPillClasses(colName);
+        pill.textContent = display;
+        td.appendChild(pill);
+      } else if (dateIdx >= 0 && cellIdx === dateIdx) {
+        const pretty = formatDateCellPretty(cell);
+        td.textContent = pretty !== "" ? pretty : display;
+      } else {
+        td.textContent = display;
+      }
+      if (dateIdx >= 0 && cellIdx === dateIdx) {
+        td.classList.add("teacher-payslips-td--date-col");
+      }
+      td.dataset.colIndex = String(cellIdx);
+      tr.appendChild(td);
+    }
+    tbodyEl.appendChild(tr);
+  }
+
+  if (teacherPaySlipsFooterHint) {
+    teacherPaySlipsFooterHint.textContent = `${rows.length} row(s) loaded.`;
+  }
+  if (teacherPaySlipsSheetFooter) {
+    teacherPaySlipsSheetFooter.hidden = rows.length === 0;
+  }
+}
+
+/**
  * @param {{ force?: boolean }} [opts]
  * When force is true, bypasses cached pay-slip table data (explicit refresh).
  */
 async function loadTeacherPaySlips(opts) {
   const forceFetch = Boolean(opts?.force);
-  if (!isTeacherNavMode || !teacherPaySlipsSection) {
+  if (!isTeacherNavMode) {
     return;
   }
+  if (!teacherPaySlipsSection) {
+    const host = document.getElementById("pageTeacherPaySlips");
+    if (host && !host.querySelector("[data-teacher-payslips-layout-missing]")) {
+      const p = document.createElement("p");
+      p.className = "teacher-profile-error";
+      p.dataset.teacherPayslipsLayoutMissing = "";
+      p.textContent =
+        "Pay slips layout is missing (likely after an older app version cleared this page). Fully quit and reopen the app once to restore it.";
+      host.replaceChildren(p);
+    }
+    return;
+  }
+  pageTeacherPaySlipsEl?.classList.remove("rme-clean-tps-mounted");
   teacherPaySlipsSection.hidden = false;
   if (teacherPaySlipsHint) {
     teacherPaySlipsHint.hidden = true;
@@ -9031,6 +27072,15 @@ async function loadTeacherPaySlips(opts) {
   }
   if (teacherPaySlipsTbody) {
     teacherPaySlipsTbody.innerHTML = "";
+  }
+  if (teacherPaySlipsThead) {
+    teacherPaySlipsThead.innerHTML = "";
+  }
+  if (teacherPaySlipsFooterHint) {
+    teacherPaySlipsFooterHint.textContent = "";
+  }
+  if (teacherPaySlipsSheetFooter) {
+    teacherPaySlipsSheetFooter.hidden = true;
   }
 
   const hadCache =
@@ -9083,19 +27133,28 @@ async function loadTeacherPaySlips(opts) {
       const dedicated =
         Boolean(fetched.notionDatabaseId) ||
         Boolean(fetched.notionDataSourceId);
-      try {
-        const { user } = await window.teacherAuth.getSessionUser();
-        const em =
-          user && typeof user.email === "string" ? user.email.trim() : "";
-        teacherPaySlipsHint.textContent = dedicated
-          ? "No pay slip rows in your Notion database yet."
-          : "No pay slips found. Check that your Notion pay slip rows include this exact email: " +
-            (em || "(your sign-in email)") +
-            " (any property is fine, including the page title).";
-      } catch {
-        teacherPaySlipsHint.textContent = dedicated
-          ? "No pay slip rows in your Notion database yet."
-          : "No pay slips found.";
+      const personId =
+        typeof fetched.notionPersonRecordId === "string"
+          ? fetched.notionPersonRecordId.trim()
+          : "";
+      if (dedicated && personId) {
+        teacherPaySlipsHint.textContent =
+          "No pay slip rows reference your Notion person id yet. Check that slip rows include your admin “Names & Notion row IDs” id, or ask an admin to set teachers.notion_person_record_id / verify your first and last name match that table.";
+      } else {
+        try {
+          const { user } = await window.teacherAuth.getSessionUser();
+          const em =
+            user && typeof user.email === "string" ? user.email.trim() : "";
+          teacherPaySlipsHint.textContent = dedicated
+            ? "No pay slip rows in your Notion database yet."
+            : "No pay slips found. Check that your Notion pay slip rows include this exact email: " +
+              (em || "(your sign-in email)") +
+              " (any property is fine, including the page title).";
+        } catch {
+          teacherPaySlipsHint.textContent = dedicated
+            ? "No pay slip rows in your Notion database yet."
+            : "No pay slips found.";
+        }
       }
       teacherPaySlipsHint.hidden = false;
     }
@@ -9106,60 +27165,17 @@ async function loadTeacherPaySlips(opts) {
     return;
   }
 
-  const dateIdx = findDateColumnIndex(columns);
-  rows.forEach((row, rowIndex) => {
-    const pageId = pageIds[rowIndex] || "";
-    const tr = document.createElement("tr");
-    tr.className = "tr-with-peek";
-
-    const tdTitle = document.createElement("td");
-    const wrap = document.createElement("div");
-    wrap.className = "cell-with-open";
-    const span = document.createElement("span");
-    span.className = "cell-primary";
-    span.textContent = rowLabelFromCells(row);
-    const openBtn = document.createElement("button");
-    openBtn.type = "button";
-    openBtn.className = "row-open-peek";
-    const icon = document.createElement("span");
-    icon.className = "row-open-peek-icon";
-    icon.setAttribute("aria-hidden", "true");
-    icon.textContent = "\u29C9";
-    openBtn.appendChild(icon);
-    openBtn.appendChild(document.createTextNode(" Open"));
-    openBtn.title = "Show this pay slip in a window over the table";
-    const snapCols = columns.slice();
-    const snapRow = row.slice();
-    const snapPageId = pageId;
-    openBtn.addEventListener("click", () =>
-      openRowOverlay(snapCols, snapRow, snapPageId),
-    );
-    wrap.appendChild(span);
-    wrap.appendChild(openBtn);
-    tdTitle.appendChild(wrap);
-
-    const tdDate = document.createElement("td");
-    const rawD =
-      dateIdx >= 0 && row[dateIdx] != null ? String(row[dateIdx]).trim() : "";
-    tdDate.textContent = rawD ? formatDashDisplayDate(row[dateIdx]) : "—";
-    const tdPdf = document.createElement("td");
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "teacher-payslip-pdf-btn";
-    btn.textContent = "Download PDF";
-    const snapTitle = rowLabelFromCells(row);
-    btn.addEventListener("click", () => {
-      savePaySlipPdfFromRow(snapTitle, snapCols, snapRow, {
-        teacherPaySlipOnly: true,
-      });
-    });
-    tdPdf.appendChild(btn);
-    tr.appendChild(tdTitle);
-    tr.appendChild(tdDate);
-    tr.appendChild(tdPdf);
-    teacherPaySlipsTbody.appendChild(tr);
-  });
-  syncTeacherPaySlipsOverlay(columns, rows, pageIds);
+  const tableView = filterTeacherPaySlipsTableViewColumns(columns, rows);
+  renderTeacherPaySlipsAdminStyleTable(
+    tableView.columns,
+    tableView.rows,
+    pageIds,
+  );
+  syncTeacherPaySlipsOverlay(
+    tableView.columns,
+    tableView.rows,
+    pageIds,
+  );
   if (teacherPaySlipsTableWrap) {
     teacherPaySlipsTableWrap.hidden = false;
   }
@@ -9173,6 +27189,18 @@ function isPillColumn(columnName) {
   return /school|status|tags?|type|category|label|department|role|stage|pipeline|global|team/i.test(
     String(columnName),
   );
+}
+
+/** Same pill chrome as `.teacher-payslip-detail` on the teacher pay slips table. */
+function teacherPayslipPillClasses(columnName) {
+  const s = String(columnName || "");
+  if (/school|global|campus|location|site|venue/i.test(s)) {
+    return "teacher-payslip-detail__pill teacher-payslip-detail__pill--school";
+  }
+  if (/status|paid|payment|stage|state|pipeline/i.test(s)) {
+    return "teacher-payslip-detail__pill teacher-payslip-detail__pill--status";
+  }
+  return "teacher-payslip-detail__pill teacher-payslip-detail__pill--neutral";
 }
 
 const FLOATING_REPLICA_PROP_KINDS_ALL = /** @type {const} */ ([
@@ -9772,6 +27800,10 @@ function scoreSchoolColumnCandidate(col) {
   if (n === "school name") {
     return 100;
   }
+  /** Plain-text school label (often a formula); below "School Name" relation (100), above generic "School" (50). */
+  if (n === "school names" || n === "schoolnames") {
+    return 88;
+  }
   if (/\bschool\b/.test(n) && /\bname\b/.test(n)) {
     return 85;
   }
@@ -9830,20 +27862,131 @@ function isSuppressedSchoolTableLabel(val) {
   return n === "magic english" || n === "talking global";
 }
 
+/** True when the cell is only a Notion page UUID (unresolved relation title). */
+function isLikelyNotionPageUuid(s) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    String(s ?? "").trim(),
+  );
+}
+
+/**
+ * Notion "School Names" (plural) — plain-text / formula column with the readable school label.
+ */
+function findSchoolNamesPropertyColumnIndex(columns) {
+  if (!Array.isArray(columns)) {
+    return -1;
+  }
+  let idx = columns.findIndex((c) => {
+    const n = normalizedNotionSheetColumnLabel(c);
+    return n === "school names" || n === "schoolnames";
+  });
+  if (idx >= 0) {
+    return idx;
+  }
+  return columns.findIndex((c) =>
+    /\bschool\s*names\b/i.test(String(c ?? "").trim()),
+  );
+}
+
+/**
+ * Notion "Cool name" (or similar) status/select column that stores the human-readable school.
+ */
+function findCoolNameSchoolSourceColumnIndex(columns) {
+  if (!Array.isArray(columns)) {
+    return -1;
+  }
+  let idx = columns.findIndex((c) => {
+    const n = normalizedNotionSheetColumnLabel(c);
+    return n === "cool name" || n === "coolname";
+  });
+  if (idx >= 0) {
+    return idx;
+  }
+  return columns.findIndex((c) => /\bcool\s*name\b/i.test(String(c ?? "").trim()));
+}
+
+/**
+ * Readable school string for a row: **School Names** first, then **Cool name**.
+ * @param {string[]} columns
+ * @param {unknown[]} row
+ */
+function auxiliarySchoolLabelTextFromRow(columns, row) {
+  if (!Array.isArray(row) || !Array.isArray(columns)) {
+    return "";
+  }
+  const namesIdx = findSchoolNamesPropertyColumnIndex(columns);
+  const coolIdx = findCoolNameSchoolSourceColumnIndex(columns);
+  if (namesIdx >= 0) {
+    const t = normalizeSchoolCellForUi(row[namesIdx] ?? "");
+    if (t && !isLikelyNotionPageUuid(t)) {
+      return t;
+    }
+  }
+  if (coolIdx >= 0) {
+    const t = normalizeSchoolCellForUi(row[coolIdx] ?? "");
+    if (t && !isLikelyNotionPageUuid(t)) {
+      return t;
+    }
+  }
+  return "";
+}
+
+/**
+ * When "School Name" is empty or only a relation id, copy **School Names** or **Cool name** into it
+ * so pills and filters show the same school Notion uses.
+ * @param {string[]} columns
+ * @param {unknown[][]} rows
+ */
+function backfillSchoolColumnFromCoolNameInRows(columns, rows) {
+  const schoolIdx = findSchoolColumnIndex(columns);
+  const namesIdx = findSchoolNamesPropertyColumnIndex(columns);
+  const coolIdx = findCoolNameSchoolSourceColumnIndex(columns);
+  const hasAuxSource =
+    (namesIdx >= 0 && namesIdx !== schoolIdx) || (coolIdx >= 0 && coolIdx !== schoolIdx);
+  if (schoolIdx < 0 || !hasAuxSource) {
+    return;
+  }
+  for (const row of rows) {
+    if (!Array.isArray(row)) {
+      continue;
+    }
+    const schoolRaw = normalizeSchoolCellForUi(row[schoolIdx] ?? "");
+    const fill = auxiliarySchoolLabelTextFromRow(columns, row);
+    if ((!schoolRaw || isLikelyNotionPageUuid(schoolRaw)) && fill) {
+      row[schoolIdx] = fill;
+    }
+  }
+}
+
 /**
  * @param {string[]} columns
  * @param {number} cellIdx
  * @param {unknown} cell
+ * @param {unknown[] | null | undefined} [row] when set, enables School Names / Cool name → School name display fallback
  */
-function displayCellInSchoolSheet(columns, cellIdx, cell) {
+function displayCellInSchoolSheet(columns, cellIdx, cell, row) {
   const schoolIdx = findSchoolColumnIndex(columns);
-  if (schoolIdx >= 0 && cellIdx === schoolIdx && isSuppressedSchoolTableLabel(cell)) {
+  let out = "";
+  if (cell != null) {
+    out = String(cell);
+  }
+  if (schoolIdx >= 0 && cellIdx === schoolIdx && isSuppressedSchoolTableLabel(out)) {
     return "";
   }
-  if (cell == null) {
-    return "";
+  if (
+    schoolIdx >= 0 &&
+    cellIdx === schoolIdx &&
+    Array.isArray(row)
+  ) {
+    const trimmed = normalizeSchoolCellForUi(out);
+    if (!trimmed || isLikelyNotionPageUuid(trimmed)) {
+      const aux = auxiliarySchoolLabelTextFromRow(columns, row);
+      if (aux) {
+        return aux;
+      }
+    }
   }
-  return String(cell);
+  return out;
 }
 
 function findDateColumnIndex(columns) {
@@ -9953,7 +28096,7 @@ const DISPLAY_SHORT_MONTHS = [
 
 /**
  * @param {string} ymd `YYYY-MM-DD`
- * @returns {string} e.g. Mar 31 06
+ * @returns {string} e.g. Mar 31 / 2006
  */
 function formatYmdAsMarDdYy(ymd) {
   const parts = ymd.split("-");
@@ -9974,7 +28117,7 @@ function formatYmdAsMarDdYy(ymd) {
   if (Number.isNaN(d.getTime())) {
     return ymd;
   }
-  return `${DISPLAY_SHORT_MONTHS[d.getMonth()]} ${d.getDate()} ${String(y).slice(-2)}`;
+  return `${DISPLAY_SHORT_MONTHS[d.getMonth()]} ${d.getDate()} / ${y}`;
 }
 
 /**
@@ -10076,6 +28219,39 @@ function notionMoneySpecForColumn(columnName) {
     return { code: "USD", prefix: "$" };
   }
   return null;
+}
+
+/**
+ * Money-backed columns for the teacher dashboard rates strip (class /
+ * kids / trial / cancellation rates). Omits exchange rate, exchange amount,
+ * and lump totals or fees.
+ * @param {string} columnName
+ * @returns {boolean}
+ */
+function teacherNetChartColumnIsRateTickerEligible(columnName) {
+  if (notionMoneySpecForColumn(columnName) == null) {
+    return false;
+  }
+  const s = dashNormCol(columnName).replace(/\s+/g, " ");
+  if (!s) {
+    return false;
+  }
+  if (/\bnet\b/.test(s) && /\bamount\b/.test(s)) {
+    return false;
+  }
+  if (/\bfees?\b/.test(s) && !/\brate\b/.test(s)) {
+    return false;
+  }
+  if (/\btotal\b/.test(s) && /\bamount\b/.test(s) && !/\brate\b/.test(s)) {
+    return false;
+  }
+  if (/\bexchange\b/.test(s) && /\bamount\b/.test(s) && !/\brate\b/.test(s)) {
+    return false;
+  }
+  if (/\bexchange\b/.test(s) && /\brate\b/.test(s)) {
+    return false;
+  }
+  return /\brate\b/.test(s);
 }
 
 /**
@@ -11134,7 +29310,7 @@ function renderTbody(columns, indices, tbodyTarget) {
       const cell = row[cellIdx];
       const colName = columns[cellIdx];
       const td = document.createElement("td");
-      const display = displayCellInSchoolSheet(columns, cellIdx, cell);
+      const display = displayCellInSchoolSheet(columns, cellIdx, cell, row);
       const canEditDate =
         dateIdx >= 0 &&
         cellIdx === dateIdx &&
@@ -12070,7 +30246,7 @@ function appendFloatingReplicaTableCell(
   const columns = rep.shadow.columns;
   const colName = columns[cellIdx];
   const cell = row[cellIdx];
-  const display = displayCellInSchoolSheet(columns, cellIdx, cell);
+  const display = displayCellInSchoolSheet(columns, cellIdx, cell, row);
   ensureFloatingReplicaShadowColumnKinds(rep);
   const fk = effectiveFloatingReplicaPropKind(rep, cellIdx);
   const moneySpec = notionMoneySpecForColumn(colName);
@@ -13605,6 +31781,8 @@ function ingestNotionTable(columns, rows, pageIds) {
     pageIds: Array.isArray(pageIds) ? pageIds : [],
   };
 
+  backfillSchoolColumnFromCoolNameInRows(rawTable.columns, rawTable.rows);
+
   if (!rawTable.columns.length) {
     tableEl.hidden = true;
     if (tableSheetFooterEl) {
@@ -14191,8 +32369,6 @@ async function globalRefreshNotionConnections() {
     ) {
       await fetchTeacherPaySlipTable({ force: true });
       await loadTeacherDashboard({ force: false });
-      await loadTeacherPaySlips({ force: false });
-      await loadTeacherProfile();
     }
   } finally {
     if (
@@ -14236,6 +32412,15 @@ function setAuthError(msg) {
   }
 }
 
+function supabaseNotConfiguredMessage() {
+  return (
+    "Supabase is not configured. The installed app does not use your dev project .env — " +
+    "it reads %APPDATA%\\recruit-my-english\\.env (and the keys baked into the installer). " +
+    "Add SUPABASE_URL and SUPABASE_ANON_KEY from your dev .env to that file, save, restart, " +
+    "or run npm run release again from a machine whose .env has those values set."
+  );
+}
+
 function normalizeEmailForRole(s) {
   return String(s || "").trim().toLowerCase();
 }
@@ -14265,14 +32450,22 @@ async function supabaseSessionUserIsAdmin(user) {
 /** Full app with Notion (Supabase session, admin email). */
 async function enterAdminApp() {
   setTeacherNavMode(false);
+  // Match teacher flow: hydrate theme + wallpaper from Supabase before showing the shell
+  // so the dashboard never briefly renders with stale defaults.
+  await hydratePayslipAppUserStateAfterAuth();
+  await applyPlannerStorageScopeForSignedInUser();
   if (authGateEl) {
     authGateEl.hidden = true;
   }
+  syncHtmlAuthGateOpenClass();
   if (appMainEl) {
     appMainEl.hidden = false;
   }
-  await hydratePayslipAppUserStateAfterAuth();
-  await refreshNotionWorkspaceAfterRemoteStateLoaded();
+  window.setTimeout(() => {
+    void refreshNotionWorkspaceAfterRemoteStateLoaded().catch((e) => {
+      console.warn("notion workspace refresh after admin sign-in:", e);
+    });
+  }, 0);
   applyStoredAppPage();
   loadNotion();
   void loadPayslipNotionLinksHybrid().then(() => {
@@ -14282,6 +32475,7 @@ async function enterAdminApp() {
       payslipMappedFilterRefreshSheetIfPossible();
     }
   });
+  startNavRoleClockTicker();
 }
 
 function syncRememberMeCheckbox() {
@@ -14352,6 +32546,11 @@ authRememberMe?.addEventListener("change", () => {
     );
     applyRememberedCredentialsToForm();
   }
+  try {
+    applyAppBackgroundFromStoredPreference();
+  } catch {
+    /* ignore */
+  }
 });
 
 authForm?.addEventListener("submit", async (ev) => {
@@ -14390,7 +32589,7 @@ authForm?.addEventListener("submit", async (ev) => {
       const { user, error: uerr } =
         await window.teacherAuth.getSessionUser();
       if (uerr === "not_configured") {
-        setAuthError("Supabase is not configured.");
+        setAuthError(supabaseNotConfiguredMessage());
         return;
       }
       if (uerr) {
@@ -14425,7 +32624,7 @@ authForm?.addEventListener("submit", async (ev) => {
     const { user, error: userErr } =
       await window.teacherAuth.getSessionUser();
     if (userErr === "not_configured") {
-      setAuthError("Supabase is not configured.");
+      setAuthError(supabaseNotConfiguredMessage());
       return;
     }
     if (userErr) {
@@ -14472,11 +32671,12 @@ async function applySupabaseAuthGateUi() {
 
 async function enterTeacherApp() {
   await hydratePayslipAppUserStateAfterAuth();
-  await refreshNotionWorkspaceAfterRemoteStateLoaded();
+  await applyPlannerStorageScopeForSignedInUser();
   setTeacherNavMode(true);
   if (authGateEl) {
     authGateEl.hidden = true;
   }
+  syncHtmlAuthGateOpenClass();
   if (appMainEl) {
     appMainEl.hidden = false;
   }
@@ -14487,14 +32687,32 @@ async function enterTeacherApp() {
   }
   startTeacherPresenceHeartbeat();
   applyStoredAppPage();
+  window.setTimeout(() => {
+    void refreshNotionWorkspaceAfterRemoteStateLoaded().catch((e) => {
+      console.warn("notion workspace refresh after teacher sign-in:", e);
+    });
+  }, 0);
+  startNavRoleClockTicker();
 }
 
 async function showAuthScreen(_hasAdminAccount) {
+  const supabaseGateUi = applySupabaseAuthGateUi();
   closeNavMenu();
   hideCloudSaveOverlay();
   stopTeacherPresenceHeartbeat();
+  stopNavRoleClockTicker();
+  teacherHeaderCloudDisplayName = "";
+  try {
+    await window.rmePlannerFlushAll?.();
+    delete window.__rmePlannerScopeId;
+    await window.calendarStorageApi?.setScope?.({ userId: "" });
+    window.rmePlannerClearScope?.();
+  } catch {
+    /* ignore */
+  }
   setTeacherNavMode(false);
   clearTeacherPaySlipCache();
+  clearAppBackgroundPickerCatalogCache();
   payslipAppUserStateCloudReady = false;
   payslipAppExitSnapshotStarted = false;
   floatingDraftWorkspacePageUserActivated.clear();
@@ -14526,31 +32744,20 @@ async function showAuthScreen(_hasAdminAccount) {
   setAuthError("");
   authRegisterMode = false;
   syncAuthFormMode();
-  await applySupabaseAuthGateUi();
+  await supabaseGateUi;
   queueMicrotask(() => {
     syncRememberMeCheckbox();
   });
+  try {
+    applyAppBackgroundFromStoredPreference();
+  } catch {
+    /* ignore */
+  }
+  syncHtmlAuthGateOpenClass();
 }
 
-logoutBtn?.addEventListener("click", async () => {
-  closeNavMenu();
-  try {
-    await window.teacherAuth?.signOutSupabase?.();
-  } catch {
-    /* ignore */
-  }
-  try {
-    window.teacherAuth?.resetSupabaseClient?.();
-  } catch {
-    /* ignore */
-  }
-  let has = true;
-  try {
-    has = await window.authApi.hasAdmin();
-  } catch {
-    has = true;
-  }
-  await showAuthScreen(has);
+logoutBtn?.addEventListener("click", () => {
+  void signOutAndQuitDesktopApp();
 });
 
 async function boot() {
@@ -14574,9 +32781,12 @@ async function boot() {
     return;
   }
 
-  /* Always show the sign-in gate on launch: clear any persisted Supabase session instead of restoring it. */
-  try {
-    if (typeof window.teacherAuth?.getSessionUser === "function") {
+  /** Clear any restored Supabase session before the sign-in gate (parallel with has-admin IPC). */
+  async function clearBootTeacherSessionIfPresent() {
+    try {
+      if (typeof window.teacherAuth?.getSessionUser !== "function") {
+        return;
+      }
       const { user, error } = await window.teacherAuth.getSessionUser();
       if (!error && user) {
         try {
@@ -14590,16 +32800,19 @@ async function boot() {
           /* ignore */
         }
       }
+    } catch (e) {
+      console.warn("teacher session check:", e);
     }
-  } catch (e) {
-    console.warn("teacher session check:", e);
   }
+
+  const sessionClearPromise = clearBootTeacherSessionIfPresent();
 
   let has = false;
   try {
     has = await window.authApi.hasAdmin();
   } catch (e) {
     console.error("auth:has-admin IPC failed:", e);
+    await sessionClearPromise;
     if (authGateEl) {
       authGateEl.hidden = false;
     }
@@ -14615,11 +32828,14 @@ async function boot() {
     return;
   }
 
+  await sessionClearPromise;
   await showAuthScreen(has);
 }
 
 window.__persistFloatingReplicasNow = flushAllFloatingDraftPersistence;
 window.__saveAllAppStateToSupabaseNow = saveAllAppStateToSupabaseNow;
+
+installRmeAppSettingsBridge();
 
 initNotionWorkspace();
 hydrateCanvasDraftTablesFromStorage();
@@ -14648,4 +32864,1063 @@ try {
 } catch {
   /* ignore */
 }
+
+// === RME: macOS-style dock (cosine magnification + same targets as nav menu) =
+(function rmeMacOSDock() {
+  const dockRoot = document.getElementById("rmeMacDockRoot");
+  const dockSurface = document.getElementById("rmeMacDock");
+  const dockTrack = document.getElementById("rmeMacDockTrack");
+  if (
+    !(dockRoot instanceof HTMLElement) ||
+    !(dockSurface instanceof HTMLElement) ||
+    !(dockTrack instanceof HTMLElement) ||
+    !(appMainEl instanceof HTMLElement)
+  ) {
+    return;
+  }
+
+  function normDockTitle(v) {
+    return String(v ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  function findTeacherPaySlipsPageId() {
+    try {
+      const pages = Array.isArray(notionWorkspacePagesState)
+        ? notionWorkspacePagesState
+        : [];
+      const hit = pages.find((page) => {
+        const t = normDockTitle(page?.title);
+        return (
+          page &&
+          page.kind !== "trash" &&
+          (t === "teacher pay slips" || t.includes("teacher pay slips"))
+        );
+      });
+      return hit?.id ? String(hit.id) : "";
+    } catch {
+      return "";
+    }
+  }
+
+  /**
+   * @typedef {{ id: string; name: string; dockLabel: string; mode: "admin" | "teacher" | "both"; icon: string; iconTeacher?: string }} DockAppDef
+   */
+
+  /** @type {DockAppDef[]} */
+  const DOCK_APP_DEFS = [
+    {
+      id: "dock-teacher-dash",
+      name: "Dashboard",
+      dockLabel: "Dashboard",
+      mode: "teacher",
+      icon: "📈",
+    },
+    {
+      id: "dock-ws-dash",
+      name: "Workspace Dashboard",
+      dockLabel: "Workspace",
+      mode: "admin",
+      icon: "🏠",
+    },
+    {
+      id: "dock-calendar",
+      name: WORKSPACE_PLANNER_TITLE,
+      dockLabel: WORKSPACE_PLANNER_TITLE,
+      mode: "both",
+      icon: "🧠",
+      iconTeacher: "🧠",
+    },
+    {
+      id: "dock-voice",
+      name: WORKSPACE_VOICE_TITLE,
+      dockLabel: "Voice",
+      mode: "admin",
+      icon: "🎙️",
+    },
+    {
+      id: "dock-teachers",
+      name: "Teachers",
+      dockLabel: "Teachers",
+      mode: "admin",
+      icon: "🧑‍🏫",
+    },
+    {
+      id: "dock-tps",
+      name: "Teacher Pay Slips",
+      dockLabel: "Pay slips",
+      mode: "both",
+      icon: "📘",
+      iconTeacher: "📘",
+    },
+    {
+      id: "dock-teacher-profile",
+      name: "Profile",
+      dockLabel: "Profile",
+      mode: "teacher",
+      icon: "👤",
+    },
+    {
+      id: "dock-discord",
+      name: "Discord",
+      dockLabel: "Discord",
+      mode: "teacher",
+      icon: "",
+    },
+    {
+      id: "dock-vault",
+      name: "The Vault",
+      dockLabel: "Vault",
+      mode: "both",
+      icon: "🛡️",
+      iconTeacher: "🔑",
+    },
+    {
+      id: "dock-notion-row-ids",
+      name: "Names & Notion Row IDs",
+      dockLabel: "Row IDs",
+      mode: "admin",
+      icon: "🆔",
+    },
+    {
+      id: "dock-theme",
+      name: "Light or dark mode",
+      dockLabel: "Theme",
+      mode: "both",
+      icon: "🌙",
+    },
+    {
+      id: "dock-restart",
+      name: "Restart app",
+      dockLabel: "Restart",
+      mode: "both",
+      icon: "🖥️",
+      iconTeacher: "⚙️",
+    },
+    {
+      id: "dock-signout",
+      name: "Sign out",
+      dockLabel: "Sign out",
+      mode: "both",
+      icon: "👋",
+      iconTeacher: "✌️",
+    },
+  ];
+
+  /** Reserved vertical space per slot for caption + icon stack (layout height; captions are in-flow in CSS). */
+  const DOCK_LABEL_BAND = 17;
+
+  /** @type {{ mouseClientX: number | null; smoothMagnifyX: number | null; scales: number[]; positions: number[]; slots: HTMLElement[]; apps: DockAppDef[]; anim: number; suppressMagnify: boolean }} */
+  const st = {
+    mouseClientX: null,
+    smoothMagnifyX: null,
+    scales: [],
+    positions: [],
+    slots: [],
+    apps: [],
+    anim: 0,
+    suppressMagnify: false,
+  };
+  let dockModeKey = "";
+
+  /** @type {{ pointerId: number | null; fromIndex: number; appId: string; btn: HTMLElement | null; x0: number; y0: number; dragged: boolean }} */
+  const dockDrag = {
+    pointerId: null,
+    fromIndex: -1,
+    appId: "",
+    btn: null,
+    x0: 0,
+    y0: 0,
+    dragged: false,
+  };
+
+  function themeDockEmoji() {
+    const dark = document.documentElement.dataset.theme === "dark";
+    return dark ? "☀️" : "🌙";
+  }
+
+  /** @param {DockAppDef} app */
+  function dockEmojiForApp(app) {
+    if (app.id === "dock-theme") {
+      return themeDockEmoji();
+    }
+    if (
+      isTeacherNavMode &&
+      typeof app.iconTeacher === "string" &&
+      app.iconTeacher.length
+    ) {
+      return app.iconTeacher;
+    }
+    return app.icon;
+  }
+
+  /** @param {DockAppDef} app */
+  function dockCaptionForApp(app) {
+    const raw =
+      typeof app.dockLabel === "string" && app.dockLabel.trim().length
+        ? app.dockLabel.trim()
+        : app.name.trim();
+    return raw.length > 18 ? `${raw.slice(0, 17)}…` : raw;
+  }
+
+  function discordDockLogoUrl() {
+    try {
+      return new URL(
+        "assets/discord-dock-logo.png",
+        document.baseURI || window.location.href,
+      ).href;
+    } catch {
+      return "assets/discord-dock-logo.png";
+    }
+  }
+
+  function syncDockThemeEmojisInDom() {
+    const glyph = themeDockEmoji();
+    for (const slot of st.slots) {
+      if (
+        slot instanceof HTMLElement &&
+        slot.dataset.dockId === "dock-theme"
+      ) {
+        const em = slot.querySelector(".rme-mac-dock-emoji");
+        if (em instanceof HTMLElement && em.textContent !== glyph) {
+          em.textContent = glyph;
+        }
+      }
+    }
+  }
+
+  function getResponsiveConfig() {
+    const smaller = Math.min(window.innerWidth, window.innerHeight);
+    if (smaller < 480) {
+      return {
+        baseIconSize: Math.max(30, smaller * 0.057 + 2),
+        maxScale: 1.5,
+        effectWidth: smaller * 0.52,
+      };
+    }
+    if (smaller < 768) {
+      return {
+        baseIconSize: Math.max(34, smaller * 0.051 + 2),
+        maxScale: 1.56,
+        effectWidth: smaller * 0.46,
+      };
+    }
+    if (smaller < 1024) {
+      return {
+        baseIconSize: Math.max(38, smaller * 0.046 + 2),
+        maxScale: 1.62,
+        effectWidth: smaller * 0.42,
+      };
+    }
+    return {
+      baseIconSize: Math.max(42, Math.min(50, smaller * 0.04 + 2)),
+      maxScale: 1.68,
+      effectWidth: 368,
+    };
+  }
+
+  let cfg = getResponsiveConfig();
+  const minScale = 1;
+
+  function currentAppsForMode() {
+    const teacher = Boolean(isTeacherNavMode);
+    const list = DOCK_APP_DEFS.filter((d) => {
+      if (teacher && (d.id === "dock-vault" || d.id === "dock-restart")) {
+        return false;
+      }
+      if (d.mode === "both") {
+        return true;
+      }
+      return teacher ? d.mode === "teacher" : d.mode === "admin";
+    });
+    if (!teacher) {
+      const vi = list.findIndex((d) => d.id === "dock-vault");
+      if (vi > 0) {
+        const [v] = list.splice(vi, 1);
+        list.unshift(v);
+      }
+    }
+    return list;
+  }
+
+  /**
+   * Notion panes live under #pageHome; from Teachers directory the workspace
+   * is hidden until we return Home and expand the sidebar (same idea as
+   * openWorkspaceDashboardInSidebar).
+   * @param {string} workspacePageId
+   */
+  function dockOpenWorkspacePage(workspacePageId) {
+    const wid =
+      typeof workspacePageId === "string" ? workspacePageId.trim() : "";
+    if (!wid) {
+      return;
+    }
+    if (isTeacherNavMode) {
+      if (wid === WORKSPACE_CALENDAR_PAGE_ID) {
+        void openTeacherPlannerPage();
+        return;
+      }
+      try {
+        activateNotionWorkspacePage(wid);
+      } catch (e) {
+        console.warn("dock workspace (teacher):", e);
+      }
+      return;
+    }
+    closeNavMenu();
+    showAppPage("home");
+    activateNotionWorkspacePage(wid);
+    wrapForWorkspacePageRow(wid)?.scrollIntoView({
+      block: "nearest",
+      inline: "nearest",
+    });
+  }
+
+  function dockOrderStorageKey() {
+    return isTeacherNavMode
+      ? "rmeMacDockOrder:v2:teacher"
+      : "rmeMacDockOrder:v2:admin";
+  }
+
+  function loadDockOrderIds() {
+    try {
+      const raw = window.localStorage.getItem(dockOrderStorageKey());
+      if (!raw) {
+        return null;
+      }
+      const arr = JSON.parse(raw);
+      return Array.isArray(arr)
+        ? arr.filter((x) => typeof x === "string" && x.length)
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function saveDockOrderIds(ids) {
+    try {
+      window.localStorage.setItem(
+        dockOrderStorageKey(),
+        JSON.stringify(ids),
+      );
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function applySavedDockOrder(apps) {
+    const saved = loadDockOrderIds();
+    if (!saved || saved.length === 0) {
+      return apps;
+    }
+    const byId = new Map(apps.map((a) => [a.id, a]));
+    const out = [];
+    const seen = new Set();
+    for (const id of saved) {
+      const a = byId.get(id);
+      if (a) {
+        out.push(a);
+        seen.add(id);
+      }
+    }
+    for (const a of apps) {
+      if (!seen.has(a.id)) {
+        out.push(a);
+      }
+    }
+    return out;
+  }
+
+  function dockOrderKeyForRebuild() {
+    const s = loadDockOrderIds();
+    return s && s.length ? s.join("|") : "_";
+  }
+
+  function reorderDockSlotsAt(fromIndex, clientX) {
+    const n = st.apps.length;
+    if (fromIndex < 0 || fromIndex >= n || !st.slots.length) {
+      return;
+    }
+    let toIndex = 0;
+    let best = Infinity;
+    for (let i = 0; i < st.slots.length; i++) {
+      const r = st.slots[i].getBoundingClientRect();
+      const cx = r.left + r.width / 2;
+      const d = Math.abs(clientX - cx);
+      if (d < best) {
+        best = d;
+        toIndex = i;
+      }
+    }
+    if (toIndex === fromIndex) {
+      return;
+    }
+    const next = st.apps.slice();
+    const [it] = next.splice(fromIndex, 1);
+    next.splice(toIndex, 0, it);
+    saveDockOrderIds(next.map((a) => a.id));
+    dockModeKey = "";
+  }
+
+  function rebuildDockSlotsIfNeeded() {
+    const key = `${isTeacherNavMode ? "t" : "a"}:${dockOrderKeyForRebuild()}:discord-circle-v4`;
+    if (key === dockModeKey && st.apps.length) {
+      return;
+    }
+    dockModeKey = key;
+    st.apps = applySavedDockOrder(currentAppsForMode());
+    st.slots = [];
+    dockTrack.replaceChildren();
+    const n = st.apps.length;
+    st.scales = Array.from({ length: n }, () => minScale);
+    st.positions = calculatePositions(st.scales);
+    for (let i = 0; i < n; i++) {
+      const app = st.apps[i];
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "rme-mac-dock-slot";
+      btn.dataset.dockId = app.id;
+      btn.title = app.name;
+      btn.setAttribute("aria-label", app.name);
+      const inner = document.createElement("span");
+      inner.className = "rme-mac-dock-slot-inner";
+      const wrap = document.createElement("span");
+      wrap.className = "rme-mac-dock-emoji-wrap";
+      if (app.id === "dock-discord") {
+        wrap.classList.add("rme-mac-dock-emoji-wrap--discord");
+        const img = document.createElement("img");
+        img.className = "rme-mac-dock-discord-img";
+        img.src = discordDockLogoUrl();
+        img.alt = "";
+        img.decoding = "async";
+        img.draggable = false;
+        img.setAttribute("aria-hidden", "true");
+        wrap.appendChild(img);
+      } else {
+        const em = document.createElement("span");
+        em.className = "rme-mac-dock-emoji";
+        em.setAttribute("aria-hidden", "true");
+        em.textContent = dockEmojiForApp(app);
+        wrap.appendChild(em);
+      }
+      inner.appendChild(wrap);
+      const dot = document.createElement("span");
+      dot.className = "rme-mac-dock-dot";
+      dot.hidden = true;
+      inner.appendChild(dot);
+      const cap = document.createElement("span");
+      cap.className = "rme-mac-dock-label";
+      cap.setAttribute("aria-hidden", "true");
+      cap.textContent = dockCaptionForApp(app);
+      inner.appendChild(cap);
+      btn.appendChild(inner);
+      const slotIndex = i;
+      btn.addEventListener("pointerdown", (ev) => {
+        onDockSlotPointerDown(ev, slotIndex, app, btn);
+      });
+      dockTrack.appendChild(btn);
+      st.slots.push(btn);
+    }
+  }
+
+  /**
+   * Horizontal padding on the dock pill and gap between icons (same value).
+   */
+  function dockHGap() {
+    const w = window.innerWidth;
+    if (w < 480) return 11;
+    if (w < 768) return 14;
+    if (w < 1024) return 16;
+    return 18;
+  }
+
+  function dockVPad() {
+    return Math.max(4, cfg.baseIconSize * 0.052);
+  }
+
+  function calculateTargetMagnification(mousePosition) {
+    const n = st.apps.length;
+    if (!n) {
+      return [];
+    }
+    const { baseIconSize, maxScale, effectWidth } = cfg;
+    const dark = document.documentElement.dataset.theme === "dark";
+    const ew = effectWidth * (dark ? 1.14 : 1.06);
+    const sp = dockHGap();
+    if (mousePosition === null) {
+      return Array.from({ length: n }, () => minScale);
+    }
+    return st.apps.map((_, index) => {
+      const normalIconCenter =
+        index * (baseIconSize + sp) + baseIconSize / 2;
+      const minX = mousePosition - ew / 2;
+      const maxX = mousePosition + ew / 2;
+      if (normalIconCenter < minX || normalIconCenter > maxX) {
+        return minScale;
+      }
+      const theta = ((normalIconCenter - minX) / ew) * 2 * Math.PI;
+      const capped = Math.min(Math.max(theta, 0), 2 * Math.PI);
+      const scaleFactor = (1 - Math.cos(capped)) / 2;
+      return minScale + scaleFactor * (maxScale - minScale);
+    });
+  }
+
+  function calculatePositions(scales) {
+    const { baseIconSize } = cfg;
+    const sp = dockHGap();
+    let currentX = 0;
+    return scales.map((scale) => {
+      const scaledWidth = baseIconSize * scale;
+      const centerX = currentX + scaledWidth / 2;
+      currentX += scaledWidth + sp;
+      return centerX;
+    });
+  }
+
+  function openAppsForDots() {
+    /** @type {string[]} */
+    const open = [];
+    const tpsId = findTeacherPaySlipsPageId();
+    const aid =
+      typeof notionWorkspaceActiveId === "string"
+        ? notionWorkspaceActiveId.trim()
+        : "";
+
+    if (navTeacherGoDashboard?.classList.contains("active")) {
+      open.push("dock-teacher-dash");
+    }
+    if (navOpenWorkspaceDashboard?.classList.contains("active")) {
+      open.push("dock-ws-dash");
+    }
+    if (aid === WORKSPACE_CALENDAR_PAGE_ID) {
+      open.push("dock-calendar");
+    }
+    if (aid === WORKSPACE_VOICE_PAGE_ID) {
+      open.push("dock-voice");
+    }
+    if (navGoTeachers?.classList.contains("active")) {
+      open.push("dock-teachers");
+    }
+    if (isTeacherNavMode) {
+      try {
+        const p = sessionStorage.getItem(APP_NAV_PAGE_KEY);
+        if (p === "payslips") {
+          open.push("dock-tps");
+        }
+        if (
+          p === "planner" ||
+          p === "my planner" ||
+          p === "calendar" ||
+          p === "obsidian"
+        ) {
+          open.push("dock-calendar");
+        }
+        if (p === "profile" || p === "your profile") {
+          open.push("dock-teacher-profile");
+        }
+        if (p === "discord") {
+          open.push("dock-discord");
+        }
+      } catch {
+        /* ignore */
+      }
+    } else if (tpsId && aid === tpsId) {
+      open.push("dock-tps");
+    }
+    if (aid === WORKSPACE_VAULT_PAGE_ID) {
+      open.push("dock-vault");
+    }
+    if (aid === WORKSPACE_VAULT_NOTION_LINKS_PAGE_ID) {
+      open.push("dock-notion-row-ids");
+    }
+    return open;
+  }
+
+  function syncDots() {
+    const open = openAppsForDots();
+    for (let i = 0; i < st.slots.length; i++) {
+      const id = st.apps[i]?.id;
+      const dot = st.slots[i]?.querySelector(".rme-mac-dock-dot");
+      if (!(dot instanceof HTMLElement) || !id) {
+        continue;
+      }
+      /* No indicator dot — avoids squeezing the icon (Discord logo was clipped at the top). */
+      if (id === "dock-teacher-dash" || id === "dock-discord") {
+        dot.hidden = true;
+        continue;
+      }
+      const on = open.includes(id);
+      dot.hidden = !on;
+    }
+  }
+
+  function applyLayoutStyles(contentWidth) {
+    const gx = dockHGap();
+    const py = dockVPad();
+    dockSurface.style.width = `${contentWidth + gx * 2}px`;
+    dockSurface.style.borderRadius = "14px";
+    dockSurface.style.padding = `${py}px ${gx}px`;
+    dockSurface.style.removeProperty("box-shadow");
+    dockTrack.style.height = `${cfg.baseIconSize + DOCK_LABEL_BAND}px`;
+  }
+
+  function tick() {
+    if (dockRoot.hidden) {
+      st.anim = 0;
+      return;
+    }
+    rebuildDockSlotsIfNeeded();
+    const n = st.apps.length;
+    if (!n) {
+      st.anim = 0;
+      return;
+    }
+
+    const magnifyXRaw =
+      st.suppressMagnify || st.mouseClientX == null
+        ? null
+        : st.mouseClientX - dockTrack.getBoundingClientRect().left;
+
+    if (st.suppressMagnify || magnifyXRaw == null) {
+      st.smoothMagnifyX = null;
+    } else if (st.smoothMagnifyX == null) {
+      st.smoothMagnifyX = magnifyXRaw;
+    } else {
+      const dark = document.documentElement.dataset.theme === "dark";
+      const smoothAlpha = dark ? 0.16 : 0.21;
+      st.smoothMagnifyX += (magnifyXRaw - st.smoothMagnifyX) * smoothAlpha;
+    }
+
+    const magnifyX = st.suppressMagnify ? null : st.smoothMagnifyX;
+    const idleDockLayout = magnifyX == null;
+
+    const targetScales = calculateTargetMagnification(magnifyX);
+    const targetPos = calculatePositions(targetScales);
+    const lerpActive = magnifyX != null && !st.suppressMagnify;
+    const dark = document.documentElement.dataset.theme === "dark";
+    let lerpScale;
+    let lerpPos;
+    if (lerpActive) {
+      lerpScale = dark ? 0.15 : 0.175;
+      lerpPos = dark ? 0.108 : 0.124;
+    } else {
+      lerpScale = dark ? 0.09 : 0.105;
+      lerpPos = dark ? 0.072 : 0.085;
+    }
+
+    for (let i = 0; i < n; i++) {
+      st.scales[i] += (targetScales[i] - st.scales[i]) * lerpScale;
+      st.positions[i] += (targetPos[i] - st.positions[i]) * lerpPos;
+    }
+
+    const sp = dockHGap();
+    let contentW =
+      n > 0
+        ? Math.max(
+            ...st.positions.map((pos, i) => {
+              return pos + (cfg.baseIconSize * st.scales[i]) / 2;
+            }),
+          )
+        : n * (cfg.baseIconSize + sp) - sp;
+
+    applyLayoutStyles(contentW);
+
+    for (let i = 0; i < n; i++) {
+      const slot = st.slots[i];
+      const scale = st.scales[i];
+      const pos = st.positions[i] ?? 0;
+      const scaled = cfg.baseIconSize * scale;
+      const leftPx = pos - scaled / 2;
+      const hPx = scaled + DOCK_LABEL_BAND;
+      slot.style.left = `${idleDockLayout ? Math.round(leftPx) : leftPx}px`;
+      slot.style.width = `${idleDockLayout ? Math.round(scaled) : scaled}px`;
+      slot.style.height = `${idleDockLayout ? Math.round(hPx) : hPx}px`;
+      slot.style.zIndex = String(Math.round(scale * 10));
+      const wrap = slot.querySelector(".rme-mac-dock-emoji-wrap");
+      const em = slot.querySelector(".rme-mac-dock-emoji");
+      const discordImg = slot.querySelector(".rme-mac-dock-discord-img");
+      const dockAppId = st.apps[i]?.id ?? "";
+      const isDiscordDock = dockAppId === "dock-discord";
+      let boxRatio = 0.58;
+      let fontRatio = 0.84;
+      if (isTeacherNavMode) {
+        /* Same box + font for every teacher slot; no translateY (was misaligned 📈 / 📘 / 🌙 / ✌️). */
+        boxRatio = 0.64;
+        fontRatio = 0.86;
+      }
+      const box = Math.max(18, scaled * boxRatio);
+      const boxPx = idleDockLayout ? Math.round(box) : box;
+      const fontPx = idleDockLayout ? Math.round(box * fontRatio) : box * fontRatio;
+      if (wrap instanceof HTMLElement) {
+        wrap.style.width = `${boxPx}px`;
+        wrap.style.height = `${boxPx}px`;
+        wrap.style.removeProperty("transform");
+        wrap.style.display = "flex";
+        wrap.style.alignItems = "center";
+        wrap.style.justifyContent = "center";
+        if (isDiscordDock) {
+          wrap.style.overflow = "visible";
+          wrap.style.paddingTop = "0";
+        } else {
+          wrap.style.removeProperty("overflow");
+          wrap.style.removeProperty("paddingTop");
+        }
+      }
+      if (isDiscordDock && discordImg instanceof HTMLImageElement) {
+        const iconPx = idleDockLayout
+          ? Math.max(22, Math.round(boxPx * 0.88))
+          : Math.max(22, boxPx * 0.88);
+        discordImg.style.width = `${iconPx}px`;
+        discordImg.style.height = `${iconPx}px`;
+        discordImg.style.display = "block";
+        discordImg.style.objectFit = "contain";
+        discordImg.style.flexShrink = "0";
+        if (discordImg.src !== discordDockLogoUrl()) {
+          discordImg.src = discordDockLogoUrl();
+        }
+      } else if (em instanceof HTMLElement) {
+        em.style.width = `${boxPx}px`;
+        em.style.height = `${boxPx}px`;
+        em.style.fontSize = `${fontPx}px`;
+        em.style.lineHeight = "1";
+        em.style.display = "flex";
+        em.style.alignItems = "center";
+        em.style.justifyContent = "center";
+        em.style.overflow = "hidden";
+      }
+      const dot = slot.querySelector(".rme-mac-dock-dot");
+      if (dot instanceof HTMLElement) {
+        dot.style.removeProperty("bottom");
+        dot.style.width = `${Math.max(3, cfg.baseIconSize * 0.06)}px`;
+        dot.style.height = `${Math.max(3, cfg.baseIconSize * 0.06)}px`;
+      }
+    }
+
+    syncDots();
+
+    const scalesMoving = targetScales.some(
+      (t, i) => Math.abs(t - st.scales[i]) > 0.0008,
+    );
+    const posMoving = targetPos.some(
+      (t, i) => Math.abs(t - st.positions[i]) > 0.035,
+    );
+    if (
+      scalesMoving ||
+      posMoving ||
+      (st.mouseClientX != null && !st.suppressMagnify)
+    ) {
+      st.anim = requestAnimationFrame(tick);
+    } else {
+      st.anim = 0;
+    }
+  }
+
+  function ensureAnim() {
+    if (!st.anim) {
+      st.anim = requestAnimationFrame(tick);
+    }
+  }
+
+  function onDockSurfaceMove(ev) {
+    if (dockDrag.pointerId != null) {
+      return;
+    }
+    st.mouseClientX = ev.clientX;
+    ensureAnim();
+  }
+
+  function onDockSurfaceLeave() {
+    st.mouseClientX = null;
+    st.smoothMagnifyX = null;
+    ensureAnim();
+  }
+
+  function dockSlotPointerMove(ev) {
+    if (
+      dockDrag.pointerId == null ||
+      ev.pointerId !== dockDrag.pointerId ||
+      !(dockDrag.btn instanceof HTMLElement)
+    ) {
+      return;
+    }
+    const dx = ev.clientX - dockDrag.x0;
+    const dy = ev.clientY - dockDrag.y0;
+    if (
+      !dockDrag.dragged &&
+      Math.abs(dx) > 10 &&
+      Math.abs(dx) > Math.abs(dy) * 0.85
+    ) {
+      dockDrag.dragged = true;
+      st.suppressMagnify = true;
+      st.mouseClientX = null;
+      dockDrag.btn.classList.add("rme-mac-dock-slot--dragging");
+    }
+  }
+
+  function dockSlotPointerEnd(ev) {
+    if (
+      dockDrag.pointerId == null ||
+      ev.pointerId !== dockDrag.pointerId ||
+      !(dockDrag.btn instanceof HTMLElement)
+    ) {
+      return;
+    }
+    const btn = dockDrag.btn;
+    const appId = dockDrag.appId;
+    const fromIndex = dockDrag.fromIndex;
+    const wasDrag = dockDrag.dragged;
+    const isCancel = ev.type === "pointercancel";
+
+    btn.removeEventListener("pointermove", dockSlotPointerMove);
+    btn.removeEventListener("pointerup", dockSlotPointerEnd);
+    btn.removeEventListener("pointercancel", dockSlotPointerEnd);
+    try {
+      btn.releasePointerCapture(ev.pointerId);
+    } catch {
+      /* ignore */
+    }
+    btn.classList.remove("rme-mac-dock-slot--dragging");
+
+    dockDrag.pointerId = null;
+    dockDrag.btn = null;
+    st.suppressMagnify = false;
+
+    if (isCancel) {
+      return;
+    }
+    if (wasDrag) {
+      reorderDockSlotsAt(fromIndex, ev.clientX);
+      ensureAnim();
+    } else {
+      onDockAppClick(appId, btn);
+    }
+  }
+
+  /**
+   * @param {PointerEvent} ev
+   * @param {number} index
+   * @param {DockAppDef} app
+   * @param {HTMLElement} btn
+   */
+  function onDockSlotPointerDown(ev, index, app, btn) {
+    if (ev.pointerType === "mouse" && ev.button !== 0) {
+      return;
+    }
+    if (dockDrag.pointerId != null) {
+      return;
+    }
+    dockDrag.pointerId = ev.pointerId;
+    dockDrag.fromIndex = index;
+    dockDrag.appId = app.id;
+    dockDrag.btn = btn;
+    dockDrag.x0 = ev.clientX;
+    dockDrag.y0 = ev.clientY;
+    dockDrag.dragged = false;
+    try {
+      btn.setPointerCapture(ev.pointerId);
+    } catch {
+      /* ignore */
+    }
+    btn.addEventListener("pointermove", dockSlotPointerMove);
+    btn.addEventListener("pointerup", dockSlotPointerEnd);
+    btn.addEventListener("pointercancel", dockSlotPointerEnd);
+  }
+
+  /**
+   * @param {string} appId
+   * @param {HTMLElement} slot
+   */
+  function onDockAppClick(appId, slot) {
+    slot.classList.remove("rme-mac-dock-slot--bounce");
+    void slot.offsetWidth;
+    slot.classList.add("rme-mac-dock-slot--bounce");
+
+    try {
+      if (appId === "dock-teacher-dash") {
+        showAppPage("dashboard");
+      } else if (appId === "dock-ws-dash") {
+        openWorkspaceDashboardInSidebar({
+          expandSidebar: false,
+          openDetails: false,
+        });
+      } else if (appId === "dock-calendar") {
+        if (isTeacherNavMode) {
+          void openTeacherPlannerPage();
+        } else {
+          dockOpenWorkspacePage(WORKSPACE_CALENDAR_PAGE_ID);
+        }
+      } else if (appId === "dock-voice") {
+        dockOpenWorkspacePage(WORKSPACE_VOICE_PAGE_ID);
+      } else if (appId === "dock-teachers") {
+        showAppPage("teachers");
+      } else if (appId === "dock-tps") {
+        if (isTeacherNavMode) {
+          showAppPage("payslips");
+        } else {
+          const id = findTeacherPaySlipsPageId();
+          if (id) {
+            dockOpenWorkspacePage(id);
+          }
+        }
+      } else if (appId === "dock-teacher-profile") {
+        showAppPage("profile");
+      } else if (appId === "dock-discord") {
+        showAppPage("discord");
+      } else if (appId === "dock-vault") {
+        dockOpenWorkspacePage(WORKSPACE_VAULT_PAGE_ID);
+      } else if (appId === "dock-notion-row-ids") {
+        dockOpenWorkspacePage(WORKSPACE_VAULT_NOTION_LINKS_PAGE_ID);
+      } else if (appId === "dock-theme") {
+        if (typeof toggleTheme === "function") {
+          toggleTheme();
+        }
+        closeNavMenu();
+      } else if (appId === "dock-restart") {
+        if (
+          !window.confirm(
+            "Restart the desktop app? The app will quit and reopen.",
+          )
+        ) {
+          return;
+        }
+        closeNavMenu();
+        if (typeof window.shellApi?.relaunchApp === "function") {
+          void window.shellApi.relaunchApp();
+          return;
+        }
+        if (typeof setStatus === "function") {
+          setStatus("Restart requires the desktop app (Electron).", true);
+        }
+      } else if (appId === "dock-signout") {
+        logoutBtn?.click();
+      }
+    } catch (e) {
+      console.warn("mac dock action:", e);
+    }
+  }
+
+  function syncDockChromeVisibility() {
+    const authOn = authGateEl instanceof HTMLElement && !authGateEl.hidden;
+    const appOff = appMainEl.hidden;
+    const hide = authOn || appOff;
+    dockRoot.hidden = hide;
+    dockRoot.setAttribute("aria-hidden", hide ? "true" : "false");
+    document.body.classList.toggle("rme-mac-dock-active", !hide);
+    if (!hide) {
+      ensureAnim();
+    }
+  }
+
+  try {
+    new MutationObserver(() => {
+      syncDockThemeEmojisInDom();
+    }).observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
+  } catch (_e) {
+    /* ignore */
+  }
+
+  dockSurface.addEventListener("mousemove", onDockSurfaceMove);
+  dockSurface.addEventListener("mouseleave", onDockSurfaceLeave);
+  window.rmeIdlePower?.runOnAdaptiveInterval?.(
+    () => {
+      if (dockRoot.hidden || !st.slots.length) {
+        return;
+      }
+      syncDots();
+      syncDockThemeEmojisInDom();
+    },
+    {
+      activeMs: 2500,
+      idleMs: 15000,
+      hiddenMs: 60000,
+      shouldRun: () => !dockRoot.hidden,
+    },
+  ) ??
+    window.setInterval(() => {
+      if (dockRoot.hidden || !st.slots.length) {
+        return;
+      }
+      syncDots();
+      syncDockThemeEmojisInDom();
+    }, 350);
+  window.addEventListener("resize", () => {
+    cfg = getResponsiveConfig();
+    st.mouseClientX = null;
+    st.smoothMagnifyX = null;
+    const n = st.apps.length;
+    if (n) {
+      st.scales = Array.from({ length: n }, () => minScale);
+      st.positions = calculatePositions(st.scales);
+    }
+    ensureAnim();
+  });
+
+  try {
+    const mo = new MutationObserver(() => {
+      syncDockChromeVisibility();
+      ensureAnim();
+      syncHtmlAuthGateOpenClass();
+    });
+    if (authGateEl instanceof HTMLElement) {
+      mo.observe(authGateEl, { attributes: true, attributeFilter: ["hidden"] });
+    }
+    mo.observe(appMainEl, { attributes: true, attributeFilter: ["hidden"] });
+    mo.observe(appMainEl, { attributes: true, attributeFilter: ["class"] });
+  } catch (_e) {
+    /* ignore */
+  }
+
+  syncDockChromeVisibility();
+  ensureAnim();
+  syncHtmlAuthGateOpenClass();
+})();
+
+(function setupTeacherDiscordPage() {
+  /** @type {Record<string, string>} */
+  const RME_DISCORD_URLS = {
+    support:
+      "https://discordapp.com/channels/1427230838470479904/1427412707317125363",
+  };
+
+  function bind() {
+    const root = document.getElementById("pageTeacherDiscord");
+    if (!(root instanceof HTMLElement) || root.dataset.discordBound === "1") {
+      return;
+    }
+    root.dataset.discordBound = "1";
+    root.addEventListener("click", (ev) => {
+      const btn = ev.target.closest("[data-discord-link]");
+      if (!(btn instanceof HTMLElement) || !root.contains(btn)) {
+        return;
+      }
+      const key = btn.getAttribute("data-discord-link");
+      const url = key ? RME_DISCORD_URLS[key] : "";
+      if (!url) {
+        return;
+      }
+      void (async () => {
+        const api = window.shellApi;
+        if (api && typeof api.openExternalUrl === "function") {
+          const res = await api.openExternalUrl(url);
+          if (res?.ok === false && typeof setStatus === "function") {
+            setStatus(res.message || "Could not open Discord.", true);
+          }
+          return;
+        }
+        window.open(url, "_blank", "noopener,noreferrer");
+      })();
+    });
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", bind, { once: true });
+  } else {
+    bind();
+  }
+})();
+
 boot();
+
+

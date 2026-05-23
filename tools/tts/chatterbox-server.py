@@ -1,0 +1,118 @@
+"""Chatterbox-Turbo TTS server — OpenAI-compatible /v1/audio/speech endpoint.
+
+Usage:
+    pip install -r tools/tts/requirements.txt
+    python tools/tts/chatterbox-server.py [--port 8123] [--device auto]
+
+The device auto-detects CUDA, then MPS, then falls back to CPU.
+"""
+
+import argparse
+import io
+import logging
+import os
+import sys
+import time
+
+logging.basicConfig(level=logging.INFO, format="[chatterbox] %(message)s")
+log = logging.getLogger(__name__)
+
+parser = argparse.ArgumentParser(description="Chatterbox-Turbo TTS server")
+parser.add_argument("--port", type=int, default=8123, help="Port to listen on")
+parser.add_argument("--device", default="auto", help="Device: cuda, cpu, auto")
+parser.add_argument("--model", default="turbo", choices=["turbo", "original", "multilingual"])
+args = parser.parse_args()
+
+# Resolve device
+device = args.device
+if device == "auto":
+    import torch
+    if torch.cuda.is_available():
+        device = "cuda"
+        log.info("CUDA detected")
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        device = "mps"
+        log.info("MPS detected")
+    else:
+        device = "cpu"
+        log.info("No GPU, using CPU")
+
+log.info("Loading Chatterbox model (device=%s model=%s)...", device, args.model)
+sys.stdout.flush()
+t0 = time.time()
+
+model = None
+sample_rate = 24000
+
+if args.model == "turbo":
+    from chatterbox.tts_turbo import ChatterboxTurboTTS
+    model = ChatterboxTurboTTS.from_pretrained(device=device)
+    sample_rate = getattr(model, "sr", 24000)
+    log.info("Chatterbox-Turbo loaded in %.1fs, sr=%d", time.time() - t0, sample_rate)
+else:
+    try:
+        from chatterbox.tts import ChatterboxTTS
+    except ImportError:
+        log.error("Could not import ChatterboxTTS. Is chatterbox-tts installed?")
+        log.error("Run: pip install -r tools/tts/requirements.txt")
+        sys.exit(1)
+    model = ChatterboxTTS.from_pretrained(device=device)
+    log.info("Chatterbox loaded in %.1fs", time.time() - t0)
+
+model_sample_rate = getattr(model, "sr", getattr(model, "sample_rate", 24000))
+log.info("Model sample rate: %d", model_sample_rate)
+
+# Patch norm_loudness to preserve float32 (pyloudnorm internally converts to float64)
+import numpy as _np
+model.norm_loudness = lambda wav, sr: wav.astype(_np.float32) if hasattr(wav, 'astype') else wav.float()
+
+# FastAPI server
+from fastapi import FastAPI, Response
+from pydantic import BaseModel
+import uvicorn
+
+app = FastAPI(title="Chatterbox TTS")
+
+
+OUTPUT_SR = 48000
+
+
+class TTSRequest(BaseModel):
+    input: str
+    voice: str = "abigail"
+    model: str = "tts-1"
+    exaggeration: float = 0.35
+    cfg_weight: float = 0.55
+
+
+@app.post("/v1/audio/speech")
+async def speech(req: TTSRequest):
+    import soundfile as sf
+    kwargs = dict(
+        exaggeration=req.exaggeration,
+        cfg_weight=req.cfg_weight,
+    )
+    if req.voice and os.path.isfile(req.voice):
+        kwargs["audio_prompt_path"] = req.voice
+    wav = model.generate(req.input, **kwargs)
+    if isinstance(wav, tuple):
+        wav = wav[0]
+    arr = wav.cpu().numpy() if hasattr(wav, "cpu") else wav
+    if arr.ndim > 1:
+        arr = arr.squeeze()
+    # Resample to 48kHz preserving float32
+    if model_sample_rate != OUTPUT_SR:
+        import librosa as _lb
+        arr = _lb.resample(arr, orig_sr=model_sample_rate, target_sr=OUTPUT_SR).astype(_np.float32)
+    buf = io.BytesIO()
+    sf.write(buf, arr, OUTPUT_SR, format="WAV", subtype="PCM_24")
+    return Response(content=buf.getvalue(), media_type="audio/wav")
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")

@@ -1,3 +1,5 @@
 node_modules/
 dist/
+tools/voice/
 .env
+supabase.public.env

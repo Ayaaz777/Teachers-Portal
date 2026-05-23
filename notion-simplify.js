@@ -22,7 +22,7 @@ const SHORT_MONTH_NAMES = [
  * @param {number} y full year
  * @param {number} month1to12
  * @param {number} day
- * @returns {string} e.g. Mar 31 06
+ * @returns {string} e.g. Mar 31 / 2006
  */
 function formatYmdPartsAsMarDdYy(y, month1to12, day) {
   const d = new Date(y, month1to12 - 1, day);
@@ -30,13 +30,12 @@ function formatYmdPartsAsMarDdYy(y, month1to12, day) {
     return "";
   }
   const mo = SHORT_MONTH_NAMES[d.getMonth()];
-  const yy = String(d.getFullYear()).slice(-2);
-  return `${mo} ${d.getDate()} ${yy}`;
+  return `${mo} ${d.getDate()} / ${d.getFullYear()}`;
 }
 
 /**
  * @param {string | undefined | null} isoLike Notion date start/end or ISO datetime
- * @returns {string} e.g. Mar 31 06
+ * @returns {string} e.g. Mar 31 / 2006
  */
 function formatNotionDateForDisplay(isoLike) {
   if (isoLike == null || isoLike === "") {
