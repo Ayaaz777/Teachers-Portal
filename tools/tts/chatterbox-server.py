@@ -17,10 +17,10 @@ import time
 logging.basicConfig(level=logging.INFO, format="[chatterbox] %(message)s")
 log = logging.getLogger(__name__)
 
-parser = argparse.ArgumentParser(description="Chatterbox-Turbo TTS server")
+parser = argparse.ArgumentParser(description="Chatterbox TTS server")
 parser.add_argument("--port", type=int, default=8123, help="Port to listen on")
 parser.add_argument("--device", default="auto", help="Device: cuda, cpu, auto")
-parser.add_argument("--model", default="turbo", choices=["turbo", "original", "multilingual"])
+parser.add_argument("--model", default=os.environ.get("RME_CHATTERBOX_MODEL", "original"), choices=["turbo", "original", "multilingual"])
 args = parser.parse_args()
 
 # Resolve device
