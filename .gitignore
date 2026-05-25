@@ -1,5 +1,12 @@
 node_modules/
 dist/
-tools/voice/
-.env
-supabase.public.env
+build/
+/.env
+.env.local
+.env.development
+.env.test
+.aider.chat.history.md
+.aider.conf.yml
+.aider.input.history
+.aider.tags.cache.v4/
+.aiderignore
