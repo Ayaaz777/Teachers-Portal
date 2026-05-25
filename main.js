@@ -520,7 +520,8 @@ async function queryDataSourceAllPages(token, dataSourceId) {
         message +=
           "\n\nFix checklist:\n" +
           "• Use an Internal integration: Notion integrations page → New integration → type Internal. Copy the full secret (one line, no spaces).\n" +
-          "• If the integration is Public (OAuth), the integration secret is not the API key — this app expects the internal integration secret only, unless you add OAuth.\n" +
+          "- The OAuth bot invite URL only needs client_id, scope, and permissions.\n" +
+          "No secret of any kind is required for this URL — never include one.\n" +
           "• After pasting, save .env and restart the app. Try \"Refresh secret\" in Notion if this key was ever shared.";
       }
       const err = new Error(message);
@@ -3556,5 +3557,4 @@ ipcMain.handle('dream:reset', async () => {
     }
   });
 }
-
 
