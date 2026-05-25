@@ -145,6 +145,7 @@ const distillation = require("./lib/distillation");
 const searchTools = require("./lib/search");
 const { embed } = require("./lib/embeddings");
 const { extractAndStore: extractFacts } = require("./lib/voice-agent/fact-extractor");
+const discordBot = require("./lib/discord/index");
 
 let mainWindow = null;
 /** @type {NotionApi | null} */
@@ -3525,6 +3526,12 @@ ipcMain.handle('dream:reset', async () => {
     registerAutoUpdateIpc(ipcMain);
     createWindow();
     initAutoUpdate(() => mainWindow);
+    // Start Discord bot if configured
+    try {
+      discordBot.start().catch((e) => console.warn('[discord] start failed', e));
+    } catch (e) {
+      console.warn('[discord] require/start failed', e);
+    }
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) {
@@ -3539,6 +3546,7 @@ ipcMain.handle('dream:reset', async () => {
       console.warn("[voice] shutdownVoiceStack error:", e);
     }
     console.log("[voice] Voice stack shut down.");
+    try { discordBot.stop().catch(() => {}); } catch {}
   });
 
   app.on("window-all-closed", () => {
@@ -3547,9 +3555,6 @@ ipcMain.handle('dream:reset', async () => {
     }
   });
 }
-
-
-
 
 
 

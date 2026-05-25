@@ -17399,8 +17399,8 @@ setupAccountSecurityPanels();
       "transition:opacity .25s ease;",
       "}",
       "#" + CHAT_ID + "{",
-      "width:min(30rem,calc(100vw - 1rem));max-height:min(26rem,50vh);",
-      "display:flex;flex-direction:column;gap:0.25rem;padding:0.7rem;border-radius:22px;",
+      "width:min(36rem,calc(100vw - 1rem));max-height:min(34rem,65vh);",
+      "display:flex;flex-direction:column;gap:0.25rem;padding:0.85rem;border-radius:22px;",
       "isolation:isolate;overflow:hidden;",
       "border:1px solid color-mix(in srgb,#fff 40%,#94a3b8 10%);",
       "background:linear-gradient(165deg,color-mix(in srgb,#f8fafc 58%,transparent) 0%,",
@@ -17433,13 +17433,13 @@ setupAccountSecurityPanels();
       "0 0 64px -14px color-mix(in srgb,#6366f1 16%,transparent);",
       "}",
       ".rme-voice-text-chat-messages{",
-      "flex:1 1 auto;min-height:8rem;max-height:min(20rem,44vh);overflow-y:auto;",
-      "padding:0.85rem 1rem 0.6rem;display:flex;flex-direction:column;gap:0.9rem;",
+      "flex:1 1 auto;min-height:12rem;max-height:min(26rem,55vh);overflow-y:auto;",
+      "padding:0.5rem 0.6rem 0.4rem;display:flex;flex-direction:column;gap:0.55rem;",
       "scrollbar-width:thin;",
       "}",
       ".rme-voice-text-chat-bubble{",
-      "max-width:88%;padding:0.4rem 0.6rem;border-radius:14px;",
-      "font-size:0.88rem;line-height:1.45;word-break:break-word;",
+      "max-width:82%;padding:0.3rem 0.5rem;border-radius:12px;",
+      "font-size:0.78rem;line-height:1.35;word-break:break-word;",
       "}",
       ".rme-voice-text-chat-bubble[data-role='user']{",
       "align-self:flex-end;margin-left:auto;",
@@ -17462,7 +17462,7 @@ setupAccountSecurityPanels();
       "border-color:color-mix(in srgb,#94a3b8 30%,transparent);",
       "}",
       ".rme-voice-text-chat-form{",
-      "display:flex;align-items:flex-end;gap:0.4rem;padding:0.45rem 0.5rem 0.5rem;",
+      "display:flex;align-items:flex-end;gap:0.35rem;padding:0.35rem 0 0;",
       "border-top:1px solid color-mix(in srgb,#fff 18%,#64748b 20%);",
       "background:color-mix(in srgb,#0f172a 8%,transparent);",
       "}",
@@ -17849,6 +17849,8 @@ setupAccountSecurityPanels();
           maxTokens: 1024,
           system: undefined,
         });
+        await voiceScheduleChain.catch(() => {});
+        await new Promise(r => setTimeout(r, 0));
         unsubTts();
         unsubDelta();
 
@@ -17904,9 +17906,6 @@ setupAccountSecurityPanels();
         return;
       }
       setOrbState("busy");
-      if (typeof window.rmeDevConsoleShow === "function") {
-        window.rmeDevConsoleShow();
-      }
       try {
         const stt = await api.transcribe(blob);
         if (!stt?.ok || !String(stt.text || "").trim()) {
