@@ -3259,6 +3259,16 @@ ipcMain.handle('dream:reset', async () => {
           return { ok: false, error: { code: "INVALID_TOOL_CALL", message: "No tool name", cid } };
         }
 
+        /* --- Discord tools --- */
+        if (typeof tName === 'string' && tName.startsWith('discord_')) {
+          const discordTools = require('./lib/discord/ai-tools');
+          if (discordTools && typeof discordTools.callTool === 'function') {
+            console.log('[ai-chat] dispatching discord tool:', tName);
+            return await discordTools.callTool(global.__discord_client || null, tName, tInput);
+          }
+          return { ok: false, error: { code: 'DISCORD_NOT_FOUND', message: 'Discord tools module not loaded.' } };
+        }
+
         /* --- Memory tools handled locally --- */
         if (tName === "memory_store_fact") {
           const key = typeof tInput.key === "string" ? tInput.key.trim() : "";
