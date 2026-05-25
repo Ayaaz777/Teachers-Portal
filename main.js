@@ -158,11 +158,12 @@ const DEV_LOG_MAX = 500;
 const _origConsoleLog = console.log;
 const _origConsoleWarn = console.warn;
 const _origConsoleError = console.error;
+const { sanitizeArgs } = require('./lib/log/sanitize');
 let _lastKnownSpeaker = null;
 let _voiceAgent = null;
 
 console.log = (...args) => {
-  const text = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
+  const text = sanitizeArgs(args);
   devLogBuffer.push({ level: 'log', text, ts: Date.now() });
   if (devLogBuffer.length > DEV_LOG_MAX) devLogBuffer.shift();
   const w = getMainBrowserWindow();
@@ -173,7 +174,7 @@ console.log = (...args) => {
 };
 
 console.warn = (...args) => {
-  const text = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
+  const text = sanitizeArgs(args);
   devLogBuffer.push({ level: 'warn', text, ts: Date.now() });
   if (devLogBuffer.length > DEV_LOG_MAX) devLogBuffer.shift();
   const w = getMainBrowserWindow();
@@ -184,7 +185,7 @@ console.warn = (...args) => {
 };
 
 console.error = (...args) => {
-  const text = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
+  const text = sanitizeArgs(args);
   devLogBuffer.push({ level: 'error', text, ts: Date.now() });
   if (devLogBuffer.length > DEV_LOG_MAX) devLogBuffer.shift();
   const w = getMainBrowserWindow();
@@ -3555,7 +3556,6 @@ ipcMain.handle('dream:reset', async () => {
     }
   });
 }
-
 
 
 
