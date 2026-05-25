@@ -17639,39 +17639,76 @@ setupAccountSecurityPanels();
           } else if (typeof window.ReactMarkdownRenderer === 'function') {
             // If an app-specific renderer is wired, use it
             wrapper.innerHTML = window.ReactMarkdownRenderer(text);
-          } else {
-            // As a conservative default, escape HTML and render simple markdown using a minimal approach
-            const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-            // Convert basic markdown constructs: bold, italic, inline code, links, lists, headings, code blocks
-            let html = esc(text)
-              .replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
-              .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-              .replace(/__(.*?)__/g, '<strong>$1</strong>')
-              .replace(/\*(.*?)\*/g, '<em>$1</em>')
-              .replace(/_(.*?)_/g, '<em>$1</em>')
-              .replace(/`([^`]+)`/g, '<code>$1</code>')
-              .replace(/(^|\n)\s*#{1,6}\s*(.+)/g, '$1<h3>$2</h3>')
-              .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer noopener">$1</a>')
-              .replace(/(^|\n)\s*[-*+]\s+(.*)/g, '$1<li>$2</li>')
-              .replace(/(^|\n)\s*\d+\.\s+(.*)/g, '$1<li>$2</li>');
-            // Wrap stray <li> in <ul>
-            if (html.includes('<li>')) html = '<ul>' + html.replace(/(^|\n)\s*<li>/g, '<li>').replace(/\n/g, '') + '</ul>';
-            wrapper.innerHTML = html;
-          }
-          bubble.appendChild(wrapper);
-        } else {
-          bubble.textContent = text;
-        }
-      } catch (e) {
-        bubble.textContent = text;
-      }
-    } else {
-      bubble.textContent = text;
-    }
-    chatMessagesEl.appendChild(bubble);
-    scrollChatMessages();
-    return bubble;
-  }
+			} else {
+				// As a conservative default, escape HTML and render simple markdown using a minimal approach
+				const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+				let html = esc(text)
+					.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
+					.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+					.replace(/__(.*?)__/g, '<strong>$1</strong>')
+					.replace(/\*(.*?)\*/g, '<em>$1</em>')
+					.replace(/_(.*?)_/g, '<em>$1</em>')
+					.replace(/`([^`]+)`/g, '<code>$1</code>')
+					.replace(/(^|\n)\s*#{1,6}\s*(.+)/g, '$1<h3>$2</h3>')
+					.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer noopener">$1</a>')
+					.replace(/(^|\n)\s*[-*+]\s+(.*)/g, '$1<li>$2</li>')
+					.replace(/(^|\n)\s*\d+\.\s+(.*)/g, '$1<li>$2</li>');
+				if (html.includes('<li>')) html = '<ul>' + html.replace(/(^|\n)\s*<li>/g, '<li>').replace(/\n/g, '') + '</ul>';
+				wrapper.innerHTML = html;
+			}
+			bubble.appendChild(wrapper);
+		} else {
+			bubble.textContent = text;
+		}
+	} catch (e) {
+		bubble.textContent = text;
+	}
+} else {
+	bubble.textContent = text;
+}
+chatMessagesEl.appendChild(bubble);
+scrollChatMessages();
+return bubble;
+}
+
+/**
+ * Render a markdown string to safe HTML using the same logic as appendChatBubble.
+ * @param {string} text
+ * @returns {string}
+ */
+function renderMarkdownHtml(text) {
+	const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+	let html = esc(text)
+		.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
+		.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+		.replace(/__(.*?)__/g, '<strong>$1</strong>')
+		.replace(/\*(.*?)\*/g, '<em>$1</em>')
+		.replace(/_(.*?)_/g, '<em>$1</em>')
+		.replace(/`([^`]+)`/g, '<code>$1</code>')
+		.replace(/(^|\n)\s*#{1,6}\s*(.+)/g, '$1<h3>$2</h3>')
+		.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer noopener">$1</a>')
+		.replace(/(^|\n)\s*[-*+]\s+(.*)/g, '$1<li>$2</li>')
+		.replace(/(^|\n)\s*\d+\.\s+(.*)/g, '$1<li>$2</li>');
+	if (html.includes('<li>')) html = '<ul>' + html.replace(/(^|\n)\s*<li>/g, '<li>').replace(/\n/g, '') + '</ul>';
+	return html;
+}
+
+/**
+ * Update an existing assistant bubble's content with the full accumulated text,
+ * preserving the markdown wrapper so streaming chunks APPEND, not replace.
+ * @param {HTMLElement} bubble
+ * @param {string} text
+ */
+function setAssistantBubbleText(bubble, text) {
+	let wrapper = bubble.querySelector('.assistant-message');
+	if (!wrapper) {
+		wrapper = document.createElement('div');
+		wrapper.className = 'assistant-message';
+		bubble.textContent = '';
+		bubble.appendChild(wrapper);
+	}
+	wrapper.innerHTML = renderMarkdownHtml(text);
+}
 
   function wireTextChat() {
     if (st.textChatWired) return;
@@ -17935,7 +17972,7 @@ setupAccountSecurityPanels();
                   assistantBubble = appendChatBubble("assistant", "");
                 }
                 streamBuf += chunk;
-                assistantBubble.textContent = streamBuf;
+                setAssistantBubbleText(assistantBubble, streamBuf);
                 scrollChatMessages();
               })
             : () => {};
@@ -17967,7 +18004,7 @@ setupAccountSecurityPanels();
           if (!assistantBubble) {
             appendChatBubble("assistant", fullText);
           } else {
-            assistantBubble.textContent = fullText;
+            setAssistantBubbleText(assistantBubble, fullText);
             scrollChatMessages();
           }
         }
