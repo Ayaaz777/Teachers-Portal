@@ -3276,7 +3276,8 @@ ipcMain.handle('dream:reset', async () => {
           const discordTools = require('./lib/discord/ai-tools');
           if (discordTools && typeof discordTools.callTool === 'function') {
             console.log('[ai-chat] dispatching discord tool:', tName);
-            return await discordTools.callTool(global.__discord_client || null, tName, tInput);
+            const turnId = crypto.randomUUID();
+            return await discordTools.callTool(global.__discord_client || null, tName, tInput, 'main', turnId);
           }
           return { ok: false, error: { code: 'DISCORD_NOT_FOUND', message: 'Discord tools module not loaded.' } };
         }
