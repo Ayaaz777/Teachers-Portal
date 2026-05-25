@@ -949,6 +949,59 @@
     document.head.appendChild(style);
   }
 
+  // Inject minimal CSS for assistant markdown bubbles if not present
+  (function injectAssistantMarkdownCSS() {
+    try {
+      const css = `
+.assistant-message strong, .assistant-message b { font-weight: 600; }
+.assistant-message em, .assistant-message i { font-style: italic; }
+.assistant-message ul, .assistant-message ol { margin: 4px 0 4px 18px; padding: 0; }
+.assistant-message li { margin: 2px 0; }
+.assistant-message p { margin: 4px 0; }
+.assistant-message h1, .assistant-message h2, .assistant-message h3,
+.assistant-message h4, .assistant-message h5, .assistant-message h6 {
+    margin: 6px 0 2px 0;
+    font-weight: 600;
+    line-height: 1.3;
+}
+.assistant-message h1 { font-size: 1.15em; }
+.assistant-message h2 { font-size: 1.10em; }
+.assistant-message h3 { font-size: 1.05em; }
+.assistant-message code {
+    background: rgba(255, 255, 255, 0.08);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.9em;
+}
+.assistant-message pre {
+    background: rgba(0, 0, 0, 0.3);
+    padding: 8px 10px;
+    border-radius: 6px;
+    overflow-x: auto;
+    margin: 4px 0;
+}
+.assistant-message pre code {
+    background: transparent;
+    padding: 0;
+    font-size: 0.85em;
+}
+.assistant-message blockquote {
+    border-left: 3px solid rgba(255, 255, 255, 0.2);
+    padding-left: 10px;
+    margin: 4px 0;
+    color: rgba(255, 255, 255, 0.85);
+}
+.assistant-message a { color: #6db3ff; text-decoration: underline; }
+.assistant-message hr { border: 0; border-top: 1px solid rgba(255,255,255,0.1); margin: 8px 0; }
+`;
+      const el = document.createElement('style');
+      el.setAttribute('data-rme-assistant-markdown', '1');
+      el.textContent = css;
+      document.head.appendChild(el);
+    } catch (e) {}
+  })();
+
   function activeTeacherRows(rows) {
     const list = Array.isArray(rows) ? rows : [];
     return list.filter((row) => {
@@ -17571,7 +17624,50 @@ setupAccountSecurityPanels();
     const bubble = document.createElement("div");
     bubble.className = "rme-voice-text-chat-bubble";
     bubble.dataset.role = role;
-    bubble.textContent = text;
+    // Render assistant messages as sanitized markdown; user messages remain plain text
+    if (role === 'assistant') {
+      try {
+        // Lazy-load ReactMarkdown if available in the build; fallback to plain text
+        if (typeof React !== 'undefined' && typeof window.ReactMarkdown !== 'undefined') {
+          const wrapper = document.createElement('div');
+          wrapper.className = 'assistant-message';
+          // Use global ReactMarkdown if the bundle exposes it
+          // The renderer environment may not support JSX — create a simple safe rendering path
+          // If window.mdRender exists (markdown-it), prefer it
+          if (typeof window.mdRender === 'function') {
+            wrapper.innerHTML = window.mdRender(text);
+          } else if (typeof window.ReactMarkdownRenderer === 'function') {
+            // If an app-specific renderer is wired, use it
+            wrapper.innerHTML = window.ReactMarkdownRenderer(text);
+          } else {
+            // As a conservative default, escape HTML and render simple markdown using a minimal approach
+            const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            // Convert basic markdown constructs: bold, italic, inline code, links, lists, headings, code blocks
+            let html = esc(text)
+              .replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
+              .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+              .replace(/__(.*?)__/g, '<strong>$1</strong>')
+              .replace(/\*(.*?)\*/g, '<em>$1</em>')
+              .replace(/_(.*?)_/g, '<em>$1</em>')
+              .replace(/`([^`]+)`/g, '<code>$1</code>')
+              .replace(/(^|\n)\s*#{1,6}\s*(.+)/g, '$1<h3>$2</h3>')
+              .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer noopener">$1</a>')
+              .replace(/(^|\n)\s*[-*+]\s+(.*)/g, '$1<li>$2</li>')
+              .replace(/(^|\n)\s*\d+\.\s+(.*)/g, '$1<li>$2</li>');
+            // Wrap stray <li> in <ul>
+            if (html.includes('<li>')) html = '<ul>' + html.replace(/(^|\n)\s*<li>/g, '<li>').replace(/\n/g, '') + '</ul>';
+            wrapper.innerHTML = html;
+          }
+          bubble.appendChild(wrapper);
+        } else {
+          bubble.textContent = text;
+        }
+      } catch (e) {
+        bubble.textContent = text;
+      }
+    } else {
+      bubble.textContent = text;
+    }
     chatMessagesEl.appendChild(bubble);
     scrollChatMessages();
     return bubble;
