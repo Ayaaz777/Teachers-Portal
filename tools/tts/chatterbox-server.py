@@ -1,4 +1,4 @@
-"""Chatterbox-Turbo TTS server — OpenAI-compatible /v1/audio/speech endpoint.
+"""Chatterbox TTS server — OpenAI-compatible /v1/audio/speech and /v1/audio/speech/stream endpoints.
 
 Usage:
     pip install -r tools/tts/requirements.txt
@@ -23,9 +23,10 @@ _COND_CACHE = {}
 parser = argparse.ArgumentParser(description="Chatterbox TTS server")
 parser.add_argument("--port", type=int, default=8123, help="Port to listen on")
 parser.add_argument("--device", default="auto", help="Device: cuda, cpu, auto")
-parser.add_argument("--model", default=os.environ.get("RME_CHATTERBOX_MODEL", "original"), choices=["turbo", "original", "multilingual"])
+parser.add_argument("--model", default=os.environ.get("RME_CHATTERBOX_MODEL", "original"), choices=["original"])
 parser.add_argument("--voice-ref", default=None, help="Path to voice reference WAV (default: tools/tts/voices/aaron.wav)")
 parser.add_argument("--default-exaggeration", type=float, default=float(os.environ.get("RME_CHATTERBOX_EXAGGERATION", os.environ.get("CHATTERBOX_EXAGGERATION", "0.7"))), help="Default exaggeration for cached conditionals")
+parser.add_argument("--compile", default=os.environ.get("RME_CHATTERBOX_COMPILE", "false"), choices=["true", "false"], help="Enable torch.compile on t3+s3gen")
 args = parser.parse_args()
 
 # Resolve device
@@ -49,23 +50,16 @@ t0 = time.time()
 model = None
 sample_rate = 24000
 
-# Prefer full Chatterbox model for expressive/emotional range
+# Load Chatterbox model (streaming variant includes generate_stream)
 try:
     from chatterbox.tts import ChatterboxTTS
     model = ChatterboxTTS.from_pretrained(device=device)
     sample_rate = getattr(model, "sr", getattr(model, "sample_rate", 24000))
-    log.info("Chatterbox (full) loaded in %.1fs, sr=%d", time.time() - t0, sample_rate)
-except Exception:
-    # Fallback: try turbo variant if available
-    try:
-        from chatterbox.tts_turbo import ChatterboxTurboTTS
-        model = ChatterboxTurboTTS.from_pretrained(device=device)
-        sample_rate = getattr(model, "sr", 24000)
-        log.info("Chatterbox-Turbo loaded in %.1fs, sr=%d", time.time() - t0, sample_rate)
-    except Exception as e:
-        log.error("Could not load any Chatterbox TTS implementation: %s", str(e))
-        log.error("Run: pip install -r tools/tts/requirements.txt")
-        sys.exit(1)
+    log.info("Chatterbox loaded in %.1fs, sr=%d", time.time() - t0, sample_rate)
+except Exception as e:
+    log.error("Could not load Chatterbox TTS: %s", str(e))
+    log.error("Run: pip install -r tools/tts/requirements.txt")
+    sys.exit(1)
 
 model_sample_rate = getattr(model, "sr", getattr(model, "sample_rate", 24000))
 log.info("Model sample rate: %d", model_sample_rate)
@@ -73,6 +67,36 @@ log.info("Model sample rate: %d", model_sample_rate)
 # Patch norm_loudness to preserve float32 (pyloudnorm internally converts to float64)
 import numpy as _np
 model.norm_loudness = lambda wav, sr: wav.astype(_np.float32) if hasattr(wav, 'astype') else wav.float()
+
+# torch.compile — env-gated, warms up at boot
+_COMPILE_ACTIVE = False
+if args.compile == "true":
+    try:
+        import torch
+        log.info("Applying torch.compile to t3...")
+        model.t3 = torch.compile(model.t3, fullgraph=False)
+        log.info("Applying torch.compile to s3gen...")
+        model.s3gen = torch.compile(model.s3gen, fullgraph=False)
+        _COMPILE_ACTIVE = True
+        log.info("torch.compile active on t3+s3gen")
+    except Exception as e:
+        log.warning("torch.compile failed, falling back to uncompiled: %s", str(e))
+        _COMPILE_ACTIVE = False
+
+# Warm-up inference — pays the one-time compile cost at boot
+if _COMPILE_ACTIVE:
+    try:
+        log.info("Running warm-up inference...")
+        t_warm = time.time()
+        warm_input = "Hello, this is a warm up of the model."
+        warm_kwargs = dict(exaggeration=0.35, cfg_weight=0.55)
+        wav = model.generate(warm_input, **warm_kwargs)
+        if isinstance(wav, tuple):
+            wav = wav[0]
+        _ = wav.cpu().numpy() if hasattr(wav, "cpu") else wav
+        log.info("Warm-up inference done in %.1fs", time.time() - t_warm)
+    except Exception as e:
+        log.warning("Warm-up inference failed: %s", str(e))
 
 # Cache voice conditionals at startup so prepare_conditionals runs exactly once
 DEFAULT_VOICE_REF = args.voice_ref or os.path.join(
@@ -90,6 +114,7 @@ else:
 
 # FastAPI server
 from fastapi import FastAPI, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import uvicorn
 
@@ -122,7 +147,7 @@ async def speech(req: TTSRequest):
         cfg_weight=req.cfg_weight,
     )
     ref_path = VOICE_MAP.get(req.voice) or DEFAULT_VOICE_REF
-    log.info("synth start chars=%d used_cached_conds=%s", len(req.input), ref_path in _COND_CACHE)
+    log.info("synth start chars=%d used_cached_conds=%s compile=%s", len(req.input), ref_path in _COND_CACHE, _COMPILE_ACTIVE)
     if not (ref_path and os.path.isfile(ref_path)):
         if req.voice and os.path.isfile(req.voice):
             ref_path = req.voice
@@ -146,6 +171,33 @@ async def speech(req: TTSRequest):
     buf = io.BytesIO()
     sf.write(buf, arr, OUTPUT_SR, format="WAV", subtype="PCM_16")
     return Response(content=buf.getvalue(), media_type="audio/wav")
+
+
+@app.post("/v1/audio/speech/stream")
+async def speech_stream(req: TTSRequest):
+    kwargs = dict(
+        exaggeration=req.exaggeration,
+        cfg_weight=req.cfg_weight,
+    )
+    ref_path = VOICE_MAP.get(req.voice) or DEFAULT_VOICE_REF
+    log.info("stream start chars=%d cached_conds=%s compile=%s", len(req.input), ref_path in _COND_CACHE, _COMPILE_ACTIVE)
+    if ref_path and os.path.isfile(ref_path):
+        if ref_path not in _COND_CACHE:
+            log.info("Preparing conditionals for voice from %s", ref_path)
+            model.prepare_conditionals(ref_path, exaggeration=req.exaggeration)
+            _COND_CACHE[ref_path] = model.conds
+        else:
+            model.conds = _COND_CACHE[ref_path]
+
+    def generate():
+        for audio_chunk, metrics in model.generate_stream(req.input, **kwargs):
+            arr = audio_chunk.cpu().numpy() if hasattr(audio_chunk, "cpu") else audio_chunk
+            if arr.ndim > 1:
+                arr = arr.squeeze()
+            pcm_bytes = (arr * 32767).astype(_np.int16).tobytes()
+            yield pcm_bytes
+
+    return StreamingResponse(generate(), media_type="audio/L16;rate=24000;channels=1")
 
 
 @app.get("/health")
