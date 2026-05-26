@@ -21,6 +21,8 @@ parser = argparse.ArgumentParser(description="Chatterbox TTS server")
 parser.add_argument("--port", type=int, default=8123, help="Port to listen on")
 parser.add_argument("--device", default="auto", help="Device: cuda, cpu, auto")
 parser.add_argument("--model", default=os.environ.get("RME_CHATTERBOX_MODEL", "original"), choices=["turbo", "original", "multilingual"])
+parser.add_argument("--voice-ref", default=None, help="Path to voice reference WAV (default: tools/tts/voices/aaron.wav)")
+parser.add_argument("--default-exaggeration", type=float, default=float(os.environ.get("CHATTERBOX_EXAGGERATION", "0.5")), help="Default exaggeration for cached conditionals")
 args = parser.parse_args()
 
 # Resolve device
@@ -69,6 +71,20 @@ log.info("Model sample rate: %d", model_sample_rate)
 import numpy as _np
 model.norm_loudness = lambda wav, sr: wav.astype(_np.float32) if hasattr(wav, 'astype') else wav.float()
 
+# Cache voice conditionals at startup so prepare_conditionals runs exactly once
+DEFAULT_VOICE_REF = args.voice_ref or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "voices", "aaron.wav"
+)
+DEFAULT_EXAGGERATION = args.default_exaggeration
+if os.path.isfile(DEFAULT_VOICE_REF):
+    t_cond = time.time()
+    model.prepare_conditionals(DEFAULT_VOICE_REF, exaggeration=DEFAULT_EXAGGERATION)
+    _COND_CACHE[DEFAULT_VOICE_REF] = model.conds
+    log.info("conditionals cached for %s, default exaggeration=%s (%.1fs)",
+             DEFAULT_VOICE_REF, DEFAULT_EXAGGERATION, time.time() - t_cond)
+else:
+    log.warning("voice ref not found, conditionals not cached: %s", DEFAULT_VOICE_REF)
+
 # FastAPI server
 from fastapi import FastAPI, Response
 from pydantic import BaseModel
@@ -106,6 +122,7 @@ async def speech(req: TTSRequest):
         cfg_weight=req.cfg_weight,
     )
     ref_path = VOICE_MAP.get(req.voice)
+    log.info("synth start chars=%d used_cached_conds=%s", len(req.input), ref_path in _COND_CACHE)
     if not (ref_path and os.path.isfile(ref_path)):
         if req.voice and os.path.isfile(req.voice):
             ref_path = req.voice
