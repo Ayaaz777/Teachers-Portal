@@ -25,6 +25,31 @@ Notes:
 Action items (follow-up):
 - Re-enable/validate Perth watermarker in a controlled environment and test for compatibility with fp16/amp paths.
 - Add NaN/Inf guards and additional tensor-move logging if the issue reappears.
+ 
+## Why the earlier 5-phrase suite produced corrupted audio
+
+Forensics summary:
+
+- Commit `6715fc0` (which forces T3+S3Gen to fp32) timestamp: 2026-05-26 21:40:22 +0200
+- File mtimes for the previously-reported corrupted WAVs:
+	- `tools/tts/test_outputs/test_011.wav` mtime: Tue May 26 21:37:38 2026
+	- `tools/tts/test_outputs/test_013.wav` mtime: Tue May 26 21:34:29 2026
+	- `tools/tts/test_outputs/test_014.wav` mtime: Tue May 26 21:38:55 2026
+	- `tools/tts/test_outputs/test_015.wav` mtime: Tue May 26 21:39:00 2026
+	- `tools/tts/test_outputs/test_016.wav` mtime: Tue May 26 21:39:16 2026
+
+- Server stdout log containing fp16 tensor evidence: `tools/tts/server_stdout_long.log` (mtime Tue May 26 21:01:28 2026). This log includes `COND DEBUG` / `COND POST-CAST` entries showing many condition tensors as `torch.float16` on CUDA for that session.
+
+Conclusion:
+
+- The corrupted WAVs were written before commit `6715fc0` was created (their mtimes precede the commit timestamp). The server log produced earlier in that session shows `torch.float16` entries, indicating the running process was using fp16 tensors in-memory at that time.
+- Therefore the most likely explanation is that those WAVs were produced by a server instance that was running before the fp32-forcing commit (or that had lingering fp16 in-memory state). The committed code enforces `.float()` but existing process memory and previously-run sessions can still have fp16 tensors.
+
+Recommendation to avoid repeat:
+
+- Restart the server process after applying device-map or dtype changes to ensure no stale fp16 state remains in memory.
+- Add an explicit startup log that prints the dtype of `next(model.t3.parameters())` and a monotonic startup timestamp to tie logs to file-generation mtimes.
+
 # Findings: Streaming vs Non-stream regression (long phrase)
 
 -Observation: The long phrase streaming run produced different audio content and a longer rendered output (stream **78.60 s** audio, non-stream **40.16 s** audio). The earlier numeric "2.5× regression" framing assumed both outputs were the same audio and is incorrect.

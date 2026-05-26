@@ -97,8 +97,8 @@ except Exception as e:
 # If the user requested CUDA and it is available, move parts to GPU in a hybrid map
 if target_device == "cuda" and torch.cuda.is_available():
     try:
-        # Move the autoregressive T3 to GPU in fp16 and keep the vocoder on CPU
-        # Put T3 on CUDA fp16 and S3Gen on CUDA float32 (keep both on GPU)
+        # Move the autoregressive T3 to GPU in fp32 and keep the vocoder on CPU
+        # Put T3 on CUDA (fp32) and S3Gen on CUDA float32 (keep both on GPU)
         model.t3 = model.t3.to("cuda").float()
         # S3Gen uses ops that do not support fp16 (e.g. reflection_pad1d),
         # so keep S3Gen weights in float32 on CUDA and ensure its internal
@@ -137,7 +137,7 @@ if target_device == "cuda" and torch.cuda.is_available():
 
         model.device = "cuda"
         device = "cuda"
-        log.info("Device map applied: T3 -> CUDA (fp16), S3Gen -> CUDA (float32)")
+        log.info("Device map applied: T3 -> CUDA (fp32), S3Gen -> CUDA (float32)")
         # Add a debug wrapper to cond_enc.forward to inspect cond object at call-time
         try:
             import types
