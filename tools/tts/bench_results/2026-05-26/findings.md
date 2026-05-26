@@ -77,3 +77,10 @@ Recommended investigation order:
 - Install `psutil` into Python 3.11 interpreter (noisy logs).
 - Address FastAPI `on_event` deprecation (lifespan handlers).
 - Implement real watermarker (Perth DummyWatermarker placeholder present).
+
+## App-side root cause confirmed (2026-05-26 ~22:45)
+The Teachers Portal app was hitting the broken streaming endpoint via `voice-agent.js`,
+which produced the "1-2 words then scrunching" symptom the user heard during real
+conversation, even though the server-side non-stream endpoint produces clean audio.
+Fix: `voice-agent.js` now defaults to non-stream. Streaming requires explicit
+`RME_CHATTERBOX_STREAMING=1` override and emits a warning when enabled.
