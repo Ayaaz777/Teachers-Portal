@@ -5,6 +5,13 @@ const { execFile } = require("child_process");
 const { promisify } = require("util");
 const crypto = require("crypto");
 
+process.on("unhandledRejection", (reason, _promise) => {
+	console.error("[main] unhandled rejection:", reason);
+});
+process.on("uncaughtException", (err) => {
+	console.error("[main] uncaught exception:", err && err.stack || err);
+});
+
 const execFileAsync = promisify(execFile);
 const {
   createPlannerFileStore,
