@@ -17984,11 +17984,16 @@ function setAssistantBubbleText(bubble, text) {
         });
         await voiceScheduleChain.catch(() => {});
         voiceAllChunksQueued = true;
-        if (voiceChunksPending > 0) {
-          voicePlaybackDone = new Promise(r => { voicePlaybackDoneResolve = r; });
-          await voicePlaybackDone;
+        /* Poll for actual playback completion — handles any IPC/timing edge cases */
+        for (;;) {
+          if (!(voiceChunksPending > 0 || voicePlaying || voicePlayQueue.length > 0)) break;
+          await new Promise(r => setTimeout(r, 100));
         }
-        await new Promise(r => setTimeout(r, 0));
+        /* Grace period + re-check for late-arriving IPC chunk */
+        await new Promise(r => setTimeout(r, 300));
+        while (voiceChunksPending > 0 || voicePlaying || voicePlayQueue.length > 0) {
+          await new Promise(r => setTimeout(r, 100));
+        }
         unsubTts();
         unsubDelta();
 
@@ -18108,8 +18113,6 @@ function setAssistantBubbleText(bubble, text) {
     let voicePlaying = false;
     let voiceChunksPending = 0;
     let voiceAllChunksQueued = false;
-    let voicePlaybackDoneResolve = null;
-    let voicePlaybackDone = Promise.resolve();
     /** @type {Set<AudioBufferSourceNode>} */
     const activeVoiceSources = new Set();
     /** @type {AnalyserNode | null} */
@@ -18132,22 +18135,9 @@ function setAssistantBubbleText(bubble, text) {
       return voiceAudioCtx;
     }
 
-    function resolveVoicePlaybackDone() {
-      if (voicePlaybackDoneResolve) {
-        voicePlaybackDoneResolve();
-        voicePlaybackDoneResolve = null;
-      }
-      voicePlaybackDone = Promise.resolve();
-    }
-
     function processVoicePlayQueue() {
       if (voicePlaying) return;
-      if (voicePlayQueue.length === 0) {
-        if (voiceChunksPending <= 0 && voiceAllChunksQueued) {
-          resolveVoicePlaybackDone();
-        }
-        return;
-      }
+      if (voicePlayQueue.length === 0) return;
       voicePlaying = true;
       const { source, ctx } = voicePlayQueue.shift();
       const startAt = ctx.currentTime + 0.005;
@@ -18165,7 +18155,6 @@ function setAssistantBubbleText(bubble, text) {
       voiceScheduleChain = Promise.resolve();
       voiceChunksPending = 0;
       voiceAllChunksQueued = false;
-      resolveVoicePlaybackDone();
     }
 
     function startVoiceGlow() {
@@ -18231,7 +18220,6 @@ function setAssistantBubbleText(bubble, text) {
       voicePlayQueue.length = 0;
       voicePlaying = false;
       voiceChunksPending = 0;
-      resolveVoicePlaybackDone();
     }
 
     window.__rmeVoiceStopPlayback = stopVoicePlayback;
