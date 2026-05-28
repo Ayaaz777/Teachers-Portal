@@ -17956,11 +17956,10 @@ function setAssistantBubbleText(bubble, text) {
 
       try {
         const history = window.__voiceHistory || [];
-        let voiceDoneProm;
         const unsubTts =
           playTts && typeof api.onTtsChunk === "function"
             ? api.onTtsChunk((detail) => {
-                if (detail.done) { voiceDoneProm = voiceQueueDone; return; }
+                if (detail.done) return;
                 if (detail.audio) scheduleVoiceTtsAudio(detail);
               })
             : () => {};
@@ -17984,7 +17983,7 @@ function setAssistantBubbleText(bubble, text) {
           system: undefined,
         });
         await voiceScheduleChain.catch(() => {});
-        if (voiceDoneProm) await voiceDoneProm;
+        await voiceQueueDone;
         await new Promise(r => setTimeout(r, 0));
         unsubTts();
         unsubDelta();
@@ -18262,6 +18261,7 @@ function setAssistantBubbleText(bubble, text) {
           }
           const source = ctx.createBufferSource();
           source.buffer = buffer;
+          source.playbackRate.value = 0.95;
           const voiceGain = ctx.createGain();
           voiceGain.gain.value = 1.0;
           source.connect(voiceGain);
