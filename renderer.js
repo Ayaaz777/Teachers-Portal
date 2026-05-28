@@ -17956,10 +17956,11 @@ function setAssistantBubbleText(bubble, text) {
 
       try {
         const history = window.__voiceHistory || [];
+        let voiceDoneProm;
         const unsubTts =
           playTts && typeof api.onTtsChunk === "function"
             ? api.onTtsChunk((detail) => {
-                if (detail.done) return;
+                if (detail.done) { voiceDoneProm = voiceQueueDone; return; }
                 if (detail.audio) scheduleVoiceTtsAudio(detail);
               })
             : () => {};
@@ -17983,6 +17984,7 @@ function setAssistantBubbleText(bubble, text) {
           system: undefined,
         });
         await voiceScheduleChain.catch(() => {});
+        if (voiceDoneProm) await voiceDoneProm;
         await new Promise(r => setTimeout(r, 0));
         unsubTts();
         unsubDelta();
@@ -18093,12 +18095,16 @@ function setAssistantBubbleText(bubble, text) {
 
     /**
      * Shared Web Audio context + queue used for gapless back-to-back streaming TTS chunks.
-     * Each WAV chunk is decoded into an AudioBuffer and scheduled at `voiceNextStartTime` so
-     * the next chunk begins the instant the previous one ends — no Audio-element gap.
+     * Each WAV chunk is decoded and pushed to `voicePlayQueue`; playback is event-driven
+     * via `onended` so the next chunk begins the instant the previous one ends.
      */
     let voiceAudioCtx = null;
-    let voiceNextStartTime = 0;
     let voiceScheduleChain = Promise.resolve();
+    /** @type {Array<{source: AudioBufferSourceNode, ctx: AudioContext}>} */
+    const voicePlayQueue = [];
+    let voicePlaying = false;
+    let voiceQueueDoneResolve = null;
+    let voiceQueueDone = Promise.resolve();
     /** @type {Set<AudioBufferSourceNode>} */
     const activeVoiceSources = new Set();
     /** @type {AnalyserNode | null} */
@@ -18121,8 +18127,28 @@ function setAssistantBubbleText(bubble, text) {
       return voiceAudioCtx;
     }
 
+    function processVoicePlayQueue() {
+      if (voicePlaying) return;
+      if (voicePlayQueue.length === 0) {
+        if (voiceQueueDoneResolve) {
+          voiceQueueDoneResolve();
+          voiceQueueDoneResolve = null;
+        }
+        return;
+      }
+      voicePlaying = true;
+      const { source, ctx } = voicePlayQueue.shift();
+      const startAt = ctx.currentTime + 0.005;
+      source.start(startAt);
+      activeVoiceSources.add(source);
+      source.onended = () => {
+        activeVoiceSources.delete(source);
+        voicePlaying = false;
+        processVoicePlayQueue();
+      };
+    }
+
     function resetVoicePlaybackSchedule() {
-      voiceNextStartTime = 0;
       voiceScheduleChain = Promise.resolve();
     }
 
@@ -18186,7 +18212,13 @@ function setAssistantBubbleText(bubble, text) {
         }
       }
       activeVoiceSources.clear();
-      voiceNextStartTime = 0;
+      voicePlayQueue.length = 0;
+      voicePlaying = false;
+      if (voiceQueueDoneResolve) {
+        voiceQueueDoneResolve();
+        voiceQueueDoneResolve = null;
+      }
+      voiceQueueDone = Promise.resolve();
     }
 
     window.__rmeVoiceStopPlayback = stopVoicePlayback;
@@ -18234,14 +18266,11 @@ function setAssistantBubbleText(bubble, text) {
           voiceGain.gain.value = 1.0;
           source.connect(voiceGain);
           voiceGain.connect(ctx.destination);
-          const now = ctx.currentTime;
-          const startAt = Math.max(now + 0.005, voiceNextStartTime);
-          source.start(startAt);
-          voiceNextStartTime = startAt + buffer.duration + 0.2;
-          activeVoiceSources.add(source);
-          source.onended = () => {
-            activeVoiceSources.delete(source);
-          };
+          voicePlayQueue.push({ source, ctx });
+          if (!voiceQueueDoneResolve) {
+            voiceQueueDone = new Promise(r => { voiceQueueDoneResolve = r; });
+          }
+          processVoicePlayQueue();
         });
       return voiceScheduleChain;
     }
