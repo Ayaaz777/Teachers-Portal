@@ -18231,7 +18231,7 @@ function setAssistantBubbleText(bubble, text) {
           const source = ctx.createBufferSource();
           source.buffer = buffer;
           const voiceGain = ctx.createGain();
-          voiceGain.gain.value = 0.5;
+          voiceGain.gain.value = 1.0;
           source.connect(voiceGain);
           voiceGain.connect(ctx.destination);
           const now = ctx.currentTime;
@@ -18269,7 +18269,7 @@ function setAssistantBubbleText(bubble, text) {
       const url = URL.createObjectURL(blob);
       return new Promise((resolve, reject) => {
         const audio = new Audio(url);
-        audio.volume = 0.5;
+        audio.volume = 1.0;
         const cleanup = () => URL.revokeObjectURL(url);
         audio.onended = () => {
           cleanup();
