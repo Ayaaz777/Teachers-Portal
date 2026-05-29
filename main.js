@@ -15,7 +15,6 @@ process.on("uncaughtException", (err) => {
 const execFileAsync = promisify(execFile);
 const {
   createPlannerFileStore,
-  migratePlannerStore,
   sanitizePlannerScopeId,
   PLANNER_FILE_KEYS,
 } = require("./planner-file-store");
@@ -153,6 +152,9 @@ const searchTools = require("./lib/search");
 const { embed } = require("./lib/embeddings");
 const { extractAndStore: extractFacts } = require("./lib/voice-agent/fact-extractor");
 const discordBot = require("./lib/discord/index");
+
+const plannerVoiceTools = require("./lib/planner-voice-tools");
+const plannerSearch = require("./lib/planner-search");
 
 let mainWindow = null;
 /** @type {NotionApi | null} */
@@ -2703,148 +2705,190 @@ if (!gotTheLock) {
       }
     });
 
-    /** Planner — per signed-in user under userData/planner/<auth-user-id>/ */
+    /** Planner — cloud-backed via Supabase; local files retained as migration source only. */
     const plannerUserDataPath = app.getPath("userData");
-    const legacyPlannerStore = createPlannerFileStore(plannerUserDataPath);
-    /** @type {Map<string, ReturnType<typeof createPlannerFileStore>>} */
-    const plannerStoresByScope = new Map();
+    const plannerSupabase = require("./lib/planner-store-supabase");
     let activePlannerScope = "";
+    let activePlannerEmail = "";
+    let activePlannerFirstName = "";
+
+    /** @type {Record<string, string>} cached content for renderer reads (JSON strings). */
+    const plannerCache = {};
+    let plannerInitialized = false;
+
+    function plannerScoped() {
+      return plannerSupabase.isValidScope(activePlannerScope);
+    }
 
     const plannerFileKeySet = new Set(PLANNER_FILE_KEYS);
 
-    function getActivePlannerStore() {
-      if (activePlannerScope) {
-        let scoped = plannerStoresByScope.get(activePlannerScope);
-        if (!scoped) {
-          scoped = createPlannerFileStore(
-            plannerUserDataPath,
-            activePlannerScope,
-          );
-          plannerStoresByScope.set(activePlannerScope, scoped);
-        }
-        return scoped;
-      }
-      return legacyPlannerStore;
-    }
-
     const keywordIndex = createKeywordIndexService({
-      readSettings: () => getActivePlannerStore().read("settings"),
-      writeSettings: (json) => getActivePlannerStore().write("settings", json),
+      readSettings: () => {
+        if (!plannerScoped()) return null;
+        return null;
+      },
+      writeSettings: (json) => {
+        if (!plannerScoped()) return;
+        plannerSupabase.saveKv(activePlannerScope, "settings", typeof json === "string" ? JSON.parse(json) : json, activePlannerEmail).catch(e => console.warn("[planner] embed hook failed:", e instanceof Error ? e.message : String(e)));
+      },
     });
 
     ipcMain.handle("planner:set-scope", (_evt, payload) => {
       try {
-        const p =
-          payload && typeof payload === "object" && !Array.isArray(payload)
-            ? payload
-            : {};
+        const p = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
         const userId = sanitizePlannerScopeId(p.userId);
         const email = String(p.email ?? "").trim().toLowerCase();
         const firstName = String(p.firstName ?? "").trim();
-        const lastName = String(p.lastName ?? "").trim();
 
         activePlannerScope = userId;
+        activePlannerEmail = email;
+        activePlannerFirstName = firstName;
+        plannerInitialized = false;
+        for (const k of Object.keys(plannerCache)) delete plannerCache[k];
 
+        /* Auto-backfill embeddings on first scope set */
         if (userId) {
-          let scoped = plannerStoresByScope.get(userId);
-          if (!scoped) {
-            scoped = createPlannerFileStore(plannerUserDataPath, userId);
-            plannerStoresByScope.set(userId, scoped);
-          }
-          const profileMeta = {
-            teacherId: userId,
-            email,
-            firstName,
-            lastName,
-          };
-          if (
-            hasAdmin(email) &&
-            !scoped.isInitialized() &&
-            legacyPlannerStore.isInitialized()
-          ) {
-            migratePlannerStore(legacyPlannerStore, scoped, {
-              ...profileMeta,
-              role: "admin",
-            });
-          }
-          // Do not markInitialized here for empty teacher scopes — renderer migrates
-          // localStorage into the file store on first planner load.
+          plannerSearch.backfillAll(userId, email).then(r => {
+            if (r.ok) console.log("[planner] Embedding backfill done:", r.results);
+            else console.warn("[planner] Embedding backfill failed:", r.error);
+          }).catch(e => console.warn("[planner] embed hook failed:", e instanceof Error ? e.message : String(e)));
         }
 
         keywordIndex.reloadSettings();
-        const store = getActivePlannerStore();
-        return {
-          ok: true,
-          scope: userId,
-          dir: store.dir,
-        };
+        return { ok: true, scope: userId, dir: "" };
       } catch (e) {
-        return {
-          ok: false,
-          message: e instanceof Error ? e.message : String(e),
-        };
+        return { ok: false, message: e instanceof Error ? e.message : String(e) };
       }
     });
 
-    ipcMain.handle("planner:is-initialized", () => {
+    ipcMain.handle("planner:migrate-to-supabase", async () => {
       try {
-        const store = getActivePlannerStore();
-        return { ok: true, initialized: store.isInitialized(), scope: activePlannerScope };
+        if (!plannerScoped()) return { ok: false, message: "Planner scope not set (sign in first)." };
+        const migrate = require("./lib/planner-migrate-to-supabase");
+        const result = await migrate.migratePlannerToSupabase(plannerUserDataPath, activePlannerScope, activePlannerEmail, activePlannerFirstName);
+        if (result.ok) plannerInitialized = true;
+        return result;
       } catch (e) {
-        return {
-          ok: false,
-          initialized: false,
-          message: e instanceof Error ? e.message : String(e),
-        };
+        return { ok: false, message: e instanceof Error ? e.message : String(e) };
       }
     });
 
-    ipcMain.handle("planner:read", (_evt, rawKey) => {
+    ipcMain.handle("planner:is-initialized", async () => {
+      try {
+        if (!plannerScoped()) return { ok: false, initialized: false, message: "Planner scope not set (sign in first)." };
+        if (plannerInitialized) return { ok: true, initialized: true, scope: activePlannerScope };
+        const r = await plannerSupabase.fetchKv(activePlannerScope, "meta");
+        plannerInitialized = r?.data != null;
+        return { ok: true, initialized: plannerInitialized, scope: activePlannerScope };
+      } catch (e) {
+        return { ok: false, initialized: false, message: e instanceof Error ? e.message : String(e) };
+      }
+    });
+
+    ipcMain.handle("planner:read", async (_evt, rawKey) => {
       try {
         const key = String(rawKey ?? "").trim();
         if (!plannerFileKeySet.has(key)) {
           return { ok: false, content: null, message: "Unknown planner store key." };
         }
-        if (!activePlannerScope) {
-          return {
-            ok: false,
-            content: null,
-            message: "Planner scope not set (sign in first).",
-          };
+        if (!plannerScoped()) {
+          return { ok: false, content: null, message: "Planner scope not set (sign in first)." };
         }
-        return { ok: true, content: getActivePlannerStore().read(key) };
+        const db = require("./lib/supabase/admin-client").getAdminClient();
+        if (!db) return { ok: false, content: null, message: "Supabase not configured." };
+
+        if (key === "events") {
+          const r = await plannerSupabase.fetchEvents(activePlannerScope);
+          return { ok: true, content: r?.data ? JSON.stringify(r.data) : "[]" };
+        }
+        if (key === "day-pages") {
+          const r = await plannerSupabase.fetchDayPages(activePlannerScope);
+          if (r?.data && Array.isArray(r.data) && r.data.length) {
+            const obj = {};
+            for (const row of r.data) {
+              obj[row.id] = { title: row.title, notes: row.notes, todos: row.todos || [] };
+            }
+            return { ok: true, content: JSON.stringify(obj) };
+          }
+          return { ok: true, content: "{}" };
+        }
+        if (key === "obsidian-notes") {
+          const r = await plannerSupabase.fetchObsidianNotes(activePlannerScope);
+          if (r?.data && Array.isArray(r.data) && r.data.length) {
+            return { ok: true, content: JSON.stringify({ notes: r.data.map(n => ({ id: n.id, title: n.title, content: n.content, createdAt: n.created_at, updatedAt: n.updated_at })), updatedAt: new Date().toISOString() }) };
+          }
+          return { ok: true, content: '{"notes":[],"updatedAt":null}' };
+        }
+        /* KV keys: settings, trash, deferrals, meta */
+        const kr = await plannerSupabase.fetchKv(activePlannerScope, key);
+        return { ok: true, content: kr?.data?.json ? JSON.stringify(kr.data.json) : null };
       } catch (e) {
-        return {
-          ok: false,
-          content: null,
-          message: e instanceof Error ? e.message : String(e),
-        };
+        return { ok: false, content: null, message: e instanceof Error ? e.message : String(e) };
       }
     });
 
-    ipcMain.handle("planner:write", (_evt, payload) => {
+    ipcMain.handle("planner:write", async (_evt, payload) => {
       try {
         const key = String(payload?.key ?? "").trim();
         const content = typeof payload?.content === "string" ? payload.content : null;
         if (!plannerFileKeySet.has(key)) {
           return { ok: false, message: "Unknown planner store key." };
         }
-        if (!activePlannerScope) {
+        if (!plannerScoped()) {
           return { ok: false, message: "Planner scope not set (sign in first)." };
         }
         if (content == null) {
           return { ok: false, message: "Missing content." };
         }
-        getActivePlannerStore().write(key, content);
+
+        if (key === "events") {
+          const arr = JSON.parse(content);
+          const existing = await plannerSupabase.fetchEvents(activePlannerScope);
+          const existingIds = new Set((existing?.data || []).map(r => r.id));
+          const rows = Array.isArray(arr) ? arr.filter(e => e && typeof e.id === "string" && typeof e.title === "string") : [];
+          const incomingIds = new Set(rows.map(r => String(r.id)));
+          const toDelete = [...existingIds].filter(id => !incomingIds.has(id));
+          await plannerSupabase.deleteEventsById(activePlannerScope, toDelete);
+          if (rows.length) await plannerSupabase.saveEvents(activePlannerScope, rows, activePlannerEmail);
+        } else if (key === "day-pages") {
+          const obj = JSON.parse(content);
+          if (obj && typeof obj === "object" && !Array.isArray(obj)) {
+            const existing = await plannerSupabase.fetchDayPages(activePlannerScope);
+            const existingIds = new Set((existing?.data || []).map(r => r.id));
+            const incomingIds = new Set(Object.keys(obj));
+            const toDelete = [...existingIds].filter(id => !incomingIds.has(id));
+            await plannerSupabase.deleteDayPagesById(activePlannerScope, toDelete);
+            const rows = Object.entries(obj)
+              .filter(([id]) => /^\d{4}-\d{2}-\d{2}$/.test(id))
+              .map(([id, v]) => {
+                const p = /** @type {{ title?: string; notes?: string; todos?: object[] }} */ (v);
+                return { id, title: p.title || null, notes: p.notes || null, todos: Array.isArray(p.todos) ? p.todos : [] };
+              });
+            if (rows.length) await plannerSupabase.saveDayPages(activePlannerScope, rows, activePlannerEmail);
+          }
+        } else if (key === "obsidian-notes") {
+          const obj = JSON.parse(content);
+          if (obj && Array.isArray(obj.notes)) {
+            const existing = await plannerSupabase.fetchObsidianNotes(activePlannerScope);
+            const existingIds = new Set((existing?.data || []).map(r => r.id));
+            const notes = obj.notes.filter(n => n && typeof n.id === "string");
+            const incomingIds = new Set(notes.map(n => n.id));
+            const toDelete = [...existingIds].filter(id => !incomingIds.has(id));
+            await plannerSupabase.deleteObsidianNotesById(activePlannerScope, toDelete);
+            if (notes.length) await plannerSupabase.saveObsidianNotes(activePlannerScope, notes, activePlannerEmail);
+          }
+        } else {
+          /* KV keys: settings, trash, deferrals, meta */
+          const json = JSON.parse(content);
+          await plannerSupabase.saveKv(activePlannerScope, key, json || {}, activePlannerEmail);
+          if (key === "meta") plannerInitialized = true;
+        }
         if (key === "events" || key === "day-pages" || key === "settings") {
           keywordIndex.reloadSettings();
         }
         return { ok: true };
       } catch (e) {
-        return {
-          ok: false,
-          message: e instanceof Error ? e.message : String(e),
-        };
+        return { ok: false, message: e instanceof Error ? e.message : String(e) };
       }
     });
 
@@ -2865,32 +2909,48 @@ if (!gotTheLock) {
       keywordIndex.promoteEdgesToggle(payload?.enabled),
     );
 
-    ipcMain.handle("planner:mark-initialized", (_evt, meta) => {
+    ipcMain.handle("planner:mark-initialized", async (_evt, meta) => {
       try {
-        if (!activePlannerScope) {
+        if (!plannerScoped()) {
           return { ok: false, message: "Planner scope not set (sign in first)." };
         }
-        const detail =
-          meta && typeof meta === "object" && !Array.isArray(meta) ? meta : {};
-        getActivePlannerStore().markInitialized(detail);
+        const detail = meta && typeof meta === "object" && !Array.isArray(meta) ? meta : {};
+        await plannerSupabase.saveKv(activePlannerScope, "meta", detail, activePlannerEmail);
+        plannerInitialized = true;
         return { ok: true };
       } catch (e) {
-        return {
-          ok: false,
-          message: e instanceof Error ? e.message : String(e),
-        };
+        return { ok: false, message: e instanceof Error ? e.message : String(e) };
       }
     });
 
-    ipcMain.handle("planner:storage-info", () => {
+    ipcMain.handle("planner:storage-info", async () => {
       try {
-        const info = getActivePlannerStore().storageInfo();
-        return { ok: true, scope: activePlannerScope, ...info };
+        if (!plannerScoped()) return { ok: true, scope: activePlannerScope, dir: "", totalBytes: 0, files: {} };
+        return { ok: true, scope: activePlannerScope, dir: "supabase", totalBytes: 0, files: {} };
       } catch (e) {
-        return {
-          ok: false,
-          message: e instanceof Error ? e.message : String(e),
-        };
+        return { ok: false, message: e instanceof Error ? e.message : String(e) };
+      }
+    });
+
+    ipcMain.handle("planner:search-semantic", async (_evt, payload) => {
+      try {
+        if (!plannerScoped()) return { ok: false, message: "Planner scope not set (sign in first)." };
+        const query = String(payload?.query || "").trim();
+        const limit = Number(payload?.limit) || 10;
+        const threshold = typeof payload?.threshold === "number" ? payload.threshold : 0.35;
+        if (!query) return { ok: false, message: "query required" };
+        return plannerSearch.semanticSearch(activePlannerScope, query, limit, threshold);
+      } catch (e) {
+        return { ok: false, message: e instanceof Error ? e.message : String(e) };
+      }
+    });
+
+    ipcMain.handle("planner:backfill-embeddings", async () => {
+      try {
+        if (!plannerScoped()) return { ok: false, message: "Planner scope not set (sign in first)." };
+        return plannerSearch.backfillAll(activePlannerScope, activePlannerEmail, true);
+      } catch (e) {
+        return { ok: false, message: e instanceof Error ? e.message : String(e) };
       }
     });
 
@@ -3340,6 +3400,69 @@ ipcMain.handle('dream:reset', async () => {
         for (const t of searchDefs) tools.push(t);
       }
 
+      /* --- Planner voice tools (reminders, to-dos, day notes) --- */
+      const pvtDefs = plannerVoiceTools.buildToolDefs();
+      for (const t of pvtDefs) tools.push(t);
+
+      /* --- Time tool --- */
+      tools.push({
+        name: "get_current_time",
+        description: "Get the current date and time in the user's timezone (Africa/Johannesburg, UTC+2, South Africa). Use this whenever the user asks what time it is, what day it is, or mentions any time-related query.",
+        input_schema: { type: "object", properties: {} },
+      });
+
+      /* --- Semantic search tool --- */
+      tools.push({
+        name: "planner_search",
+        description: "Search ALL planner data (obsidian notes, reminders, day notes) by MEANING, not keywords. Use this for open-ended queries like 'find notes about cats', 'what reminders do I have about money', or anything where the user wants to find content by topic or concept. Returns ranked results with source type, title, and a content preview.",
+        input_schema: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "What to search for — a phrase, concept, or question" },
+          },
+          required: ["query"],
+        },
+      });
+
+      /* --- Obsidian planner tools --- */
+      tools.push(
+        {
+          name: "obsidian_list",
+          description: "List all Obsidian notes in the planner — returns titles only, not full content. Use this to see what notes exist before reading a specific one.",
+          input_schema: { type: "object", properties: {} },
+        },
+        {
+          name: "obsidian_read",
+          description: "Read a specific Obsidian note by title. Returns the note's full content and metadata. If multiple notes match the title, returns all matches.",
+          input_schema: { type: "object", properties: { title: { type: "string", description: "The note title to read (fuzzy match)" } }, required: ["title"] },
+        },
+        {
+          name: "obsidian_search",
+          description: "Search Obsidian notes for a phrase or keyword. Returns matching notes with content previews showing where the match was found.",
+          input_schema: { type: "object", properties: { query: { type: "string", description: "The word or phrase to search for in note titles and content" } }, required: ["query"] },
+        },
+        {
+          name: "obsidian_create",
+          description: "Create a new Obsidian note with a title and content. The note is saved to the planner and will appear in the Obsidian section UI.",
+          input_schema: { type: "object", properties: { title: { type: "string", description: "A unique, descriptive title" }, content: { type: "string", description: "The note content in Markdown" } }, required: ["title", "content"] },
+        },
+        {
+          name: "obsidian_append",
+          description: "Append content to the end of an existing Obsidian note. Find the note by title. Non-destructive — the existing content is preserved.",
+          input_schema: { type: "object", properties: { title: { type: "string", description: "Title of the note to append to" }, content: { type: "string", description: "Content to append" } }, required: ["title", "content"] },
+        },
+        {
+          name: "obsidian_edit",
+          description: "Replace the entire content of an existing Obsidian note. Find the note by title. DESTRUCTIVE — overwrites all existing content. If multiple notes match, edits the first match.",
+          input_schema: { type: "object", properties: { title: { type: "string", description: "Title of the note to edit" }, content: { type: "string", description: "New content to replace the old" } }, required: ["title", "content"] },
+        },
+        {
+          name: "obsidian_delete",
+          description: "Delete an Obsidian note by title. DESTRUCTIVE — cannot be undone. If multiple notes match, deletes the first match.",
+          input_schema: { type: "object", properties: { title: { type: "string", description: "Title of the note to delete" } }, required: ["title"] },
+        },
+      );
+
       /* Discord tools — always register definitions; handler routes via onToolCall */
       try {
         const discordTools = require('./lib/discord/ai-tools');
@@ -3354,6 +3477,112 @@ ipcMain.handle('dream:reset', async () => {
 
       if (tools.length > 0) {
         log.info("memory", { toolsCount: tools.length, toolNames: tools.map(t => t.name).join(","), cid });
+      }
+
+      /* --- Obsidian planner helper (Supabase-backed) --- */
+      async function loadObsidianNotes() {
+        try {
+          if (!plannerScoped()) return [];
+          const r = await plannerSupabase.fetchObsidianNotes(activePlannerScope);
+          if (!r?.data || !Array.isArray(r.data)) return [];
+          return r.data.map(n => ({ id: n.id, title: n.title, content: n.content, createdAt: n.created_at, updatedAt: n.updated_at }));
+        } catch {
+          return [];
+        }
+      }
+      async function saveObsidianNotes(notes) {
+        if (!plannerScoped()) throw new Error("Planner scope not set");
+        await plannerSupabase.saveObsidianNotes(activePlannerScope, notes, activePlannerEmail);
+      }
+      function normalizeObsidianTitle(raw) {
+        return String(raw || "").toLowerCase().replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim();
+      }
+      async function findObsidianNotes(title) {
+        const norm = normalizeObsidianTitle(title);
+        if (!norm) return [];
+        const all = await loadObsidianNotes();
+        return all.filter(n => normalizeObsidianTitle(n.title) === norm || normalizeObsidianTitle(n.title).includes(norm) || norm.includes(normalizeObsidianTitle(n.title)));
+      }
+      async function handleObsidianTool(tName, tInput) {
+        try {
+          if (tName === "obsidian_list") {
+            const notes = await loadObsidianNotes();
+            const list = notes.map(n => ({ id: n.id, title: n.title, createdAt: n.createdAt, updatedAt: n.updatedAt }));
+            return { ok: true, data: list };
+          }
+          if (tName === "obsidian_read") {
+            const title = String(tInput.title || "").trim();
+            if (!title) return { ok: false, error: { code: "BAD_INPUT", message: "title required" } };
+            const matches = await findObsidianNotes(title);
+            if (!matches.length) return { ok: true, data: [] };
+            return { ok: true, data: matches };
+          }
+          if (tName === "obsidian_search") {
+            const query = String(tInput.query || "").toLowerCase().trim();
+            if (!query) return { ok: false, error: { code: "BAD_INPUT", message: "query required" } };
+            const all = await loadObsidianNotes();
+            const hits = all.filter(n => {
+              const hay = `${n.title} ${n.content}`.toLowerCase();
+              return hay.includes(query);
+            }).map(n => ({ id: n.id, title: n.title, preview: n.content.slice(0, 300) }));
+            return { ok: true, data: hits };
+          }
+          if (tName === "obsidian_create") {
+            const title = String(tInput.title || "").trim();
+            const content = String(tInput.content || "").trim();
+            if (!title || !content) return { ok: false, error: { code: "BAD_INPUT", message: "title and content required" } };
+            const all = await loadObsidianNotes();
+            const now = new Date().toISOString();
+            const note = { id: crypto.randomUUID(), title, content, createdAt: now, updatedAt: now };
+            all.push(note);
+            await saveObsidianNotes(all);
+            plannerSearch.embedAndUpsert(activePlannerScope, activePlannerEmail, "obsidian", note.id, note.title + "\n" + note.content).catch(e => console.warn("[planner] embed hook failed:", e instanceof Error ? e.message : String(e)));
+            return { ok: true, data: { id: note.id, title: note.title } };
+          }
+          if (tName === "obsidian_append") {
+            const title = String(tInput.title || "").trim();
+            const content = String(tInput.content || "").trim();
+            if (!title || !content) return { ok: false, error: { code: "BAD_INPUT", message: "title and content required" } };
+            const all = await loadObsidianNotes();
+            const norm = normalizeObsidianTitle(title);
+            const note = all.find(n => normalizeObsidianTitle(n.title) === norm || normalizeObsidianTitle(n.title).includes(norm));
+            if (!note) return { ok: false, error: { code: "NOT_FOUND", message: `No note matching "${title}"` } };
+            note.content += "\n\n" + content;
+            note.updatedAt = new Date().toISOString();
+            await saveObsidianNotes(all);
+            plannerSearch.embedAndUpsert(activePlannerScope, activePlannerEmail, "obsidian", note.id, note.title + "\n" + note.content).catch(e => console.warn("[planner] embed hook failed:", e instanceof Error ? e.message : String(e)));
+            return { ok: true, data: { id: note.id, title: note.title } };
+          }
+          if (tName === "obsidian_edit") {
+            const title = String(tInput.title || "").trim();
+            const content = String(tInput.content || "").trim();
+            if (!title || !content) return { ok: false, error: { code: "BAD_INPUT", message: "title and content required" } };
+            const all = await loadObsidianNotes();
+            const norm = normalizeObsidianTitle(title);
+            const note = all.find(n => normalizeObsidianTitle(n.title) === norm || normalizeObsidianTitle(n.title).includes(norm));
+            if (!note) return { ok: false, error: { code: "NOT_FOUND", message: `No note matching "${title}"` } };
+            note.content = content;
+            note.updatedAt = new Date().toISOString();
+            await saveObsidianNotes(all);
+            plannerSearch.embedAndUpsert(activePlannerScope, activePlannerEmail, "obsidian", note.id, note.title + "\n" + note.content).catch(e => console.warn("[planner] embed hook failed:", e instanceof Error ? e.message : String(e)));
+            return { ok: true, data: { id: note.id, title: note.title } };
+          }
+          if (tName === "obsidian_delete") {
+            const title = String(tInput.title || "").trim();
+            if (!title) return { ok: false, error: { code: "BAD_INPUT", message: "title required" } };
+            const all = await loadObsidianNotes();
+            const norm = normalizeObsidianTitle(title);
+            const idx = all.findIndex(n => normalizeObsidianTitle(n.title) === norm || normalizeObsidianTitle(n.title).includes(norm));
+            if (idx === -1) return { ok: false, error: { code: "NOT_FOUND", message: `No note matching "${title}"` } };
+            const removed = all.splice(idx, 1)[0];
+            await saveObsidianNotes(all);
+            plannerSearch.removeEmbeddings(activePlannerScope, "obsidian", removed.id).catch(e => console.warn("[planner] embed hook failed:", e instanceof Error ? e.message : String(e)));
+            return { ok: true, data: { deleted: removed.title, id: removed.id } };
+          }
+          return { ok: false, error: { code: "UNKNOWN_TOOL", message: `Unknown obsidian tool: ${tName}` } };
+        } catch (e) {
+          return { ok: false, error: { code: "INTERNAL", message: e instanceof Error ? e.message : String(e) } };
+        }
       }
 
       const onToolCall = async (toolCall) => {
@@ -3432,6 +3661,40 @@ ipcMain.handle('dream:reset', async () => {
           return { ok: result.ok, data: result.data, error: result.ok ? null : { message: typeof result.data === "string" ? result.data : "Search tool failed" } };
         }
 
+        /* --- Time tool --- */
+        if (tName === "get_current_time") {
+          const now = new Date();
+          const formatted = now.toLocaleString("en-ZA", {
+            timeZone: "Africa/Johannesburg",
+            weekday: "long",
+            year: "numeric",
+            month: "long",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+            hour12: false,
+          });
+          return { ok: true, data: { iso: now.toISOString(), formatted, timezone: "Africa/Johannesburg (UTC+2)" } };
+        }
+
+        /* --- Semantic search --- */
+        if (tName === "planner_search") {
+          const query = String(tInput.query || "").trim();
+          if (!query) return { ok: false, error: { code: "BAD_INPUT", message: "query required" } };
+          return plannerSearch.semanticSearch(activePlannerScope, query, 10, 0.35);
+        }
+
+        /* --- Planner voice tools (reminders, to-dos, day notes) --- */
+        if (tName.startsWith("reminder_") || tName.startsWith("todo_") || tName.startsWith("daynote_")) {
+          return plannerVoiceTools.callTool(tName, tInput, activePlannerScope, activePlannerEmail);
+        }
+
+        /* --- Obsidian planner tools --- */
+        if (tName.startsWith("obsidian_")) {
+          return handleObsidianTool(tName, tInput);
+        }
+
         /* --- Notion tools via REST API --- */
         log.info("notion", { tool: tName, cid });
         const controller = new AbortController();
@@ -3448,7 +3711,7 @@ ipcMain.handle('dream:reset', async () => {
                 const teacherName = body.title || "";
                 if (teacherName) {
                   const dbId = tName === "notion_create_page" ? String(tInput.database_id || "").trim() : "";
-                  pageMemory.storePageRef({ userEmail: ALLOWED_ADMIN_EMAIL, pageId, pageName: teacherName, databaseId: dbId, sourceCid: cid }).catch(() => {});
+                  pageMemory.storePageRef({ userEmail: ALLOWED_ADMIN_EMAIL, pageId, pageName: teacherName, databaseId: dbId, sourceCid: cid }).catch(e => console.warn("[planner] embed hook failed:", e instanceof Error ? e.message : String(e)));
                   log.info("memory", { storedPageRef: pageId, teacherName, cid });
                 }
               }
@@ -3494,13 +3757,13 @@ ipcMain.handle('dream:reset', async () => {
 
       /* --- Fire-and-forget: store conversation turns --- */
       if (lastUserMsg) {
-        voiceMemory.storeTurn({ userEmail: ALLOWED_ADMIN_EMAIL, role: "user", content: lastUserMsg, cid, userName: detectedSpeaker }).catch(() => {});
+        voiceMemory.storeTurn({ userEmail: ALLOWED_ADMIN_EMAIL, role: "user", content: lastUserMsg, cid, userName: detectedSpeaker }).catch(e => console.warn("[planner] embed hook failed:", e instanceof Error ? e.message : String(e)));
       }
       if (turnResult && turnResult.ok && turnResult.text) {
-        voiceMemory.storeTurn({ userEmail: ALLOWED_ADMIN_EMAIL, role: "assistant", content: turnResult.text, cid, userName: detectedSpeaker }).catch(() => {});
+        voiceMemory.storeTurn({ userEmail: ALLOWED_ADMIN_EMAIL, role: "assistant", content: turnResult.text, cid, userName: detectedSpeaker }).catch(e => console.warn("[planner] embed hook failed:", e instanceof Error ? e.message : String(e)));
         /* Phase 2 stub: fact extraction runs after turn, doesn't block */
-        extractFacts({ userMessage: lastUserMsg, assistantReply: turnResult.text, userEmail: ALLOWED_ADMIN_EMAIL, cid }).catch(() => {});
-        distillation.maybeDistill({ userEmail: ALLOWED_ADMIN_EMAIL, interval: 50 }).catch(() => {});
+        extractFacts({ userMessage: lastUserMsg, assistantReply: turnResult.text, userEmail: ALLOWED_ADMIN_EMAIL, cid }).catch(e => console.warn("[planner] embed hook failed:", e instanceof Error ? e.message : String(e)));
+        distillation.maybeDistill({ userEmail: ALLOWED_ADMIN_EMAIL, interval: 50 }).catch(e => console.warn("[planner] embed hook failed:", e instanceof Error ? e.message : String(e)));
       }
 
       return turnResult;
@@ -3668,7 +3931,7 @@ ipcMain.handle('dream:reset', async () => {
       try { _vadProc.kill(); } catch {}
       _vadProc = null;
     }
-    try { discordBot.stop().catch(() => {}); } catch {}
+    try { discordBot.stop().catch(e => console.warn("[planner] embed hook failed:", e instanceof Error ? e.message : String(e))); } catch {}
   });
 
   app.on("window-all-closed", () => {

@@ -67,8 +67,12 @@ This is an Electron desktop app for Recruit My English, a 2-person commission-on
 
 - Silero VAD runs as a Python sidecar on `ws://127.0.0.1:8125`. Spawned from `main.js` `spawnVadSidecar()`.
 - Renderer connects via WebSocket, sends 16kHz PCM, receives speech probability in real time.
-- Wake-word: "hey Retron" detected via Claude in the renderer after VAD captures a possible utterance. Stop command: "go to sleep" / "stop listening".
+- Wake-word: "ready for launch" (also accepts "ready to launch") detected via Claude in the renderer after VAD captures a possible utterance. Stop/sleep command: "mission complete" (also accepts "mission completed").
 - VAD endpointing: speech threshold 0.5, min speech 250ms, min silence 700ms, pad 300ms, max utterance 45s.
+- Wake-word VAD endpointing: uses a longer silence threshold (1000ms vs 700ms) to avoid cutting off multi-word phrases like "hey wake up" during natural micro-pauses. The VAD captures the full utterance as raw PCM, then sends the complete WAV to the wake-word STT for phrase matching. The chunk-based `processWakeChunk` path defers while VAD endpointing is active.
+- **Barge-in (open interrupt):** while the assistant is speaking (TTS playback), the mic+VAD stay active. If the user speaks (sustained speech ≥350ms above threshold 0.7, with a 250ms grace period after audio starts), playback stops immediately and the agent listens. No wake word required. The "stop talking now" / "stop talking" phrase also triggers an immediate interrupt regardless of guards.
+- **Echo cancellation:** `getUserMedia` sets `echoCancellation: true, noiseSuppression: true, autoGainControl: true` so the assistant's own speaker output doesn't self-trigger barge-in.
+- **Obsidian voice tools:** the voice agent has full read/write access to the planner's Obsidian notes via `obsidian_list/read/search/create/append/edit/delete` tools. Notes are stored in `planner/.../obsidian-notes.json` alongside `events.json` and `day-pages.json`. The Obsidian view UI reads the same store — agent-created notes appear in the Notes/ folder, and UI-created notes are searchable by voice.
 - CSP: `ws://127.0.0.1:8125` is in `connect-src` in index.html.
 
 ## Hard rules

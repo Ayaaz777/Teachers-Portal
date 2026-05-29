@@ -48,7 +48,8 @@
   let dayPagesRaw = {};
   /** @type {Record<string, unknown>[]} */
   let eventsRaw = [];
-  /** @type {string | null} */
+  /** @type {{ id: string; title: string; content: string; createdAt: string; updatedAt: string }[]} */
+  let obsidianNotesRaw = [];
   let activeId = null;
   let editorMode = "preview";
   let leftMode = "files";
@@ -541,7 +542,7 @@
         "- **Gray links (Unlinked)** — words or phrases in notes and to-dos that match another note’s title (no `[[link]]` needed)",
         "- Graph: filter by folder, tag, path, link type · **Depth** for local graph · **Freeze** to pin layout",
         "",
-        "Folders: **Days/** · **Reminders/** · **Tags/**",
+        "Folders: **Days/** · **Reminders/** · **Notes/** · **Tags/**",
       ].join("\n"),
       links: [],
       tags: [],
@@ -592,6 +593,25 @@
           edges.push({ source: dayId, target: id, type: "structural" });
         }
       }
+    }
+
+    for (const n of obsidianNotesRaw) {
+      if (!n?.id) continue;
+      const title = String(n.title || "").trim();
+      if (!title) continue;
+      const id = `obsidian:${n.id}`;
+      const content = n.content || "";
+      notes.set(id, {
+        id,
+        path: `Notes/${slugify(title) || n.id}.md`,
+        title,
+        folder: "Notes",
+        kind: "obsidian",
+        content,
+        links: [],
+        tags: extractTags(content),
+        meta: { createdAt: n.createdAt, updatedAt: n.updatedAt },
+      });
     }
 
     const L = LINK();
@@ -856,7 +876,7 @@
       folders[f].push(n);
     }
 
-    for (const folder of ["Days", "Reminders", "Tags"]) {
+    for (const folder of ["Days", "Reminders", "Notes", "Tags"]) {
       const items = folders[folder];
       if (!items?.length) continue;
       items.sort((a, b) => a.path.localeCompare(b.path));
@@ -1994,8 +2014,10 @@
     if (!bridge) return;
     eventsRaw = bridge.getEvents();
     dayPagesRaw = bridge.getDayPages();
+    obsidianNotesRaw = typeof bridge.getObsidianNotes === "function" ? bridge.getObsidianNotes() || [] : [];
     if (!Array.isArray(eventsRaw)) eventsRaw = [];
     if (!dayPagesRaw || typeof dayPagesRaw !== "object") dayPagesRaw = {};
+    if (!Array.isArray(obsidianNotesRaw)) obsidianNotesRaw = [];
     buildVault();
   }
 

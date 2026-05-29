@@ -12,6 +12,7 @@ const FILE_NAMES = {
   trash: "trash.json",
   deferrals: "deferrals.json",
   settings: "settings.json",
+  "obsidian-notes": "obsidian-notes.json",
   meta: "meta.json",
 };
 

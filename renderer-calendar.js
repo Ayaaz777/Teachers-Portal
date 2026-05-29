@@ -10,6 +10,7 @@
   const STORAGE_DAY_PAGES = "recruit-rme-calendar-day-pages-v1";
   const STORAGE_TRASH = "recruit-rme-calendar-trash-v1";
   const STORAGE_DEFERRALS = "recruit-rme-calendar-reminder-deferrals-v1";
+  const STORAGE_OBSIDIAN_NOTES = "recruit-obsidian-notes-v1";
   /** @type {Record<string, string>} localStorage key → planner file key */
   const PLANNER_FILE_KEY = {
     [STORAGE_EVENTS]: "events",
@@ -17,6 +18,7 @@
     [STORAGE_TRASH]: "trash",
     [STORAGE_DEFERRALS]: "deferrals",
     [STORAGE_SETTINGS]: "settings",
+    [STORAGE_OBSIDIAN_NOTES]: "obsidian-notes",
   };
   const PLANNER_LS_KEYS = Object.keys(PLANNER_FILE_KEY);
 
@@ -189,6 +191,9 @@
   let libraryRemindersCacheKey = "";
   /** Bumps when day notes / to-dos change (render fingerprint). */
   let dayPagesRev = 0;
+  /** @type {{ notes: { id: string; title: string; content: string; createdAt: string; updatedAt: string }[] }} */
+  let obsidianNotes = { notes: [] };
+  let obsidianNotesSnapshot = null;
   let lastRenderFingerprint = "";
   let renderRaf = 0;
   let renderForceNext = false;
@@ -4927,6 +4932,7 @@
       const obsBridge = {
         getEvents: () => events,
         getDayPages: () => dayPages,
+        getObsidianNotes: () => obsidianNotes.notes,
         saveEvents: () => {
           saveEvents();
           eventsRev++;
