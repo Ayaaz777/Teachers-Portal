@@ -1,0 +1,135 @@
+﻿diff --git a/lib/voice-agent.js b/lib/voice-agent.js
+index 3087d1e..fbe2af2 100644
+--- a/lib/voice-agent.js
++++ b/lib/voice-agent.js
+@@ -29,6 +29,7 @@ const {
+ const { warmVoiceEngines } = require("./voice-agent/warm");
+ const {
+   flushRemainder,
++  pullSpeakableUnits,
+ } = require("./voice/sentence-buffer");
+ const { applyGuardrails } = require("./guardrails");
+ 
+@@ -1308,6 +1309,8 @@ function createVoiceAgentService(config = {}) {
+     const onToolCall = typeof opts.onToolCall === "function" ? opts.onToolCall : null;
+ 
+ 	let streamBuffer = "";
++  let flushedChars = 0;
++  let emittedTextThisTurn = "";
+ 	let sentenceIndex = 0;
+ 	const ttsStartedAt = Date.now();
+ 	let firstTtsMs = 0;
+@@ -1347,8 +1350,13 @@ function createVoiceAgentService(config = {}) {
+ 	  const idx = sentenceIndex++;
+ 	  const isFirst = firstChunkOfTurn;
+ 	  firstChunkOfTurn = false;
+-	  console.log('[voice] chunk', idx, 'first=', isFirst, 'chars=', combined.length, 'queueDepth=', ttsPlaybackQueue.length);
+-	  console.log('[voice] chunk', idx, 'flush-decision: chars=', combined.length, 'chunksFlushed=', chunksFlushedThisTurn);
++    console.log('[voice] chunk', idx, 'first=', isFirst, 'chars=', combined.length, 'queueDepth=', ttsPlaybackQueue.length);
++    console.log('[voice] chunk', idx, 'flush-decision: chars=', combined.length, 'chunksFlushed=', chunksFlushedThisTurn);
++    // Track how many chars from streamBuffer have been emitted so end-of-turn
++    // flush knows to only send the unflushed tail. Also accumulate the
++    // emitted text so we can do robust string-based dedupe at end-of-turn.
++    try { flushedChars += combined.length; } catch (_) {}
++    try { emittedTextThisTurn += String(combined || ""); } catch (_) {}
+ 	  chunksFlushedThisTurn++;
+ 	  const synthPromise = speakSentenceParallel(combined);
+ 	  ttsPlaybackQueue.push({ promise: synthPromise, idx, text: combined });
+@@ -1528,13 +1536,29 @@ function createVoiceAgentService(config = {}) {
+         maxTokens: opts.maxTokens ?? maxTokens,
+         model,
+         tools,
+-		onDelta: (chunk) => {
+-		  streamBuffer += chunk;
+-		  if (typeof opts.onClaudeDelta === "function") {
+-		    opts.onClaudeDelta(chunk);
+-		  }
+-		  /* Accumulate all text for a single synthesis after Claude finishes */
+-		},
++        onDelta: (chunk) => {
++          streamBuffer += chunk;
++          if (typeof opts.onClaudeDelta === "function") {
++            opts.onClaudeDelta(chunk);
++          }
++          /* Pull speakable units (sentences or early clause) and schedule them for TTS */
++          try {
++            const pulled = pullSpeakableUnits(streamBuffer, { allowEarlyClause: !!firstChunkOfTurn });
++            if (pulled && Array.isArray(pulled.units) && pulled.units.length) {
++              for (const u of pulled.units) {
++                try { scheduleSentenceTts(u); } catch (e) { /* ignore */ }
++              }
++            }
++            // Replace streamBuffer with remainder and reset flushedChars since
++            // remainder is now the authoritative unflushed buffer for the turn.
++            streamBuffer = pulled ? (pulled.remainder || "") : streamBuffer;
++            flushedChars = 0;
++            emittedTextThisTurn = "";
++          } catch (e) {
++            /* non-fatal parsing error; continue accumulating */
++          }
++          /* Accumulate remaining text for final synthesis after Claude finishes */
++        },
+       });
+       } catch (askErr) {
+         const msg = askErr instanceof Error ? askErr.message : String(askErr);
+@@ -1564,6 +1588,8 @@ function createVoiceAgentService(config = {}) {
+ 
+         const intermediateText = flushRemainder(streamBuffer).join(' ').trim();
+         streamBuffer = "";
++        flushedChars = 0;
++        emittedTextThisTurn = "";
+         if (intermediateText) {
+           speakSentence(intermediateText, opts.onTtsChunk).then(ttsResult => {
+             if (ttsResult.ok && ttsResult.data?.audio && typeof opts.onTtsChunk === "function") {
+@@ -1648,19 +1674,38 @@ function createVoiceAgentService(config = {}) {
+ 	  finalText = "I am having trouble pinning that down. Want to ask differently?";
+ 	}
+ 
+-	const fullText = finalText || flushRemainder(streamBuffer).join(' ').trim();
+-	if (fullText) {
+-	  const ttsResult = await speakSentence(fullText, opts.onTtsChunk);
+-	  if (ttsResult.ok && ttsResult.data?.audio && typeof opts.onTtsChunk === "function") {
+-	    opts.onTtsChunk({
+-	      index: 0,
+-	      text: fullText,
+-	      audio: ttsResult.data.audio,
+-	      mimeType: ttsResult.data.mimeType || "audio/wav",
+-	      durationMs: Math.round(ttsResult.data.durationMs || 0),
+-	    });
+-	  }
+-	}
++    const finalStr = String(finalText || "").trim();
++    const emittedStr = emittedTextThisTurn.trim();
++    const norm = (s) => s.replace(/\s+/g, " ").trim();
++    const finalNorm = norm(finalStr);
++    const emittedNorm = norm(emittedStr);
++
++    let tail = "";
++    if (finalNorm && !emittedNorm) {
++      tail = finalStr;
++    } else if (finalNorm && emittedNorm && finalNorm.length > emittedNorm.length + 4) {
++      tail = finalStr.slice(emittedStr.length).trim();
++      if (tail.length > finalNorm.length * 0.9) tail = "";
++    }
++
++    console.log("[voice] end-of-turn emitted=" + emittedStr.length +
++                " final=" + finalStr.length + " tail=" + tail.length);
++
++    if (tail) {
++      const ttsResult = await speakSentence(tail, opts.onTtsChunk);
++      if (ttsResult.ok && ttsResult.data?.audio && typeof opts.onTtsChunk === "function") {
++        opts.onTtsChunk({
++          index: 0,
++          text: tail,
++          audio: ttsResult.data.audio,
++          mimeType: ttsResult.data.mimeType || "audio/wav",
++          durationMs: Math.round(ttsResult.data.durationMs || 0)
++        });
++      }
++    }
++
++    flushedChars = 0;
++    emittedTextThisTurn = "";
+     _ttsQueueDone = true;
+     if (typeof opts.onTtsChunk === "function") {
+       opts.onTtsChunk({ done: true, sentenceCount: 1 });

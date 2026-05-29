@@ -117,6 +117,7 @@ contextBridge.exposeInMainWorld("adminCredsApi", {
 contextBridge.exposeInMainWorld("voiceApi", {
   getStatus: () => ipcRenderer.invoke("voice:status"),
   getSystemPrompt: () => ipcRenderer.invoke("voice:system-prompt"),
+  getVadPort: () => ipcRenderer.invoke("voice:vad-port"),
   /**
    * @param {Blob} blob
    * @returns {Promise<{ ok: boolean; text?: string; error?: string }>}
@@ -133,6 +134,22 @@ contextBridge.exposeInMainWorld("voiceApi", {
    */
   askClaude: (payload) => ipcRenderer.invoke("voice:ask-claude", payload ?? {}),
   warmTts: () => ipcRenderer.invoke("voice:warm-tts"),
+  startWakeWordListening: () => ipcRenderer.invoke("voice:start-wake-word-listening"),
+  stopWakeWordListening: () => ipcRenderer.invoke("voice:stop-wake-word-listening"),
+  /**
+   * @param {Blob} blob
+   * @returns {Promise<{ ok: boolean; wakeWordDetected?: boolean; error?: string }>}
+   */
+  detectWakeWordInAudio: async (blob) => {
+    const audio =
+      blob instanceof Blob ? await blob.arrayBuffer() : /** @type {ArrayBuffer} */ (blob);
+    const mimeType =
+      blob instanceof Blob && blob.type ? blob.type : "audio/webm";
+    return ipcRenderer.invoke("voice:detect-wake-word", { audio, mimeType });
+  },
+  /** @param {string} text */
+  detectStopCommand: (text) =>
+    ipcRenderer.invoke("voice:detect-stop-command", { text: String(text ?? "") }),
   /**
    * Claude + sentence-streaming Cartesia TTS in one turn (main synthesizes per sentence).
    * @param {{ messages: { role: string; content: string }[]; system?: string; maxTokens?: number }} payload

@@ -1,7 +1,7 @@
 const { app, BrowserWindow, ipcMain, shell, dialog, Notification, nativeImage } = require("electron");
 const path = require("path");
 const fs = require("fs");
-const { execFile } = require("child_process");
+const { execFile, spawn } = require("child_process");
 const { promisify } = require("util");
 const crypto = require("crypto");
 
@@ -137,7 +137,7 @@ const {
 const { initAutoUpdate, registerAutoUpdateIpc } = require("./auto-update");
 const { createVoiceAgentService, VOICE_SYSTEM_PROMPT, detectSpeaker } = require("./lib/voice-agent");
 const { NotionApi } = require("./lib/notion-api");
-const { ensureWhisperServer } = require("./lib/voice-agent/whisper-server");
+const { ensureSttServer } = require("./lib/voice-agent/stt-router");
 const { cudaRuntimeLikelyAvailable } = require("./lib/voice/cuda-check");
 const { log } = require("./lib/log");
 const {
@@ -168,6 +168,8 @@ const _origConsoleError = console.error;
 const { sanitizeArgs } = require('./lib/log/sanitize');
 let _lastKnownSpeaker = null;
 let _voiceAgent = null;
+let _vadProc = null;
+let _vadPort = 8125;
 
 console.log = (...args) => {
   const text = sanitizeArgs(args);
@@ -2062,17 +2064,52 @@ if (!gotTheLock) {
     focusMainWindow();
   });
 
+  function spawnVadSidecar() {
+    try {
+      _vadPort = Number(process.env.RME_VAD_PORT || "8125") || 8125;
+      const scriptPath = path.join(__dirname, "tools", "vad", "vad-server.py");
+      if (!fs.existsSync(scriptPath)) {
+        console.warn("[vad] Server script not found at", scriptPath);
+        return;
+      }
+      const pythonCmd = process.env.RME_PYTHON_EXE || (process.platform === "win32" ? "py" : "python3");
+      console.log(`[vad] Starting Silero VAD server: ${pythonCmd} ${scriptPath} --port ${_vadPort}`);
+      _vadProc = spawn(pythonCmd, [scriptPath, "--port", String(_vadPort)], {
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      });
+      _vadProc.on("error", (err) => {
+        console.warn("[vad] Spawn error:", err.message);
+        _vadProc = null;
+      });
+      _vadProc.stdout.on("data", (d) => {
+        const text = d.toString().trim();
+        if (text) console.log("[vad-server]", text);
+      });
+      _vadProc.stderr.on("data", (d) => {
+        const text = d.toString().trim();
+        if (text) console.log("[vad-server]", text);
+      });
+      _vadProc.on("exit", (code) => {
+        console.log(`[vad] VAD server exited code=${code}`);
+        _vadProc = null;
+      });
+    } catch (e) {
+      console.warn("[vad] Failed to start VAD sidecar:", e instanceof Error ? e.message : String(e));
+    }
+  }
+
   app.whenReady().then(async () => {
     loadDotenv();
     applyVoiceEnvPaths(__dirname);
     if (!cudaRuntimeLikelyAvailable()) {
       console.warn(
-        "[voice] CUDA 12.x toolkit not detected. Whisper may use DirectML or CPU.",
+        "[voice] CUDA 12.x toolkit not detected. STT will use CPU (Whisper fallback).",
       );
     }
-    void ensureWhisperServer().catch((e) => {
+    void ensureSttServer().catch((e) => {
       console.warn(
-        `[voice] whisper-server did not start: ${e instanceof Error ? e.message : String(e)}`,
+        `[voice] STT server did not start: ${e instanceof Error ? e.message : String(e)}`,
       );
     });
     const userDataPath = app.getPath("userData");
@@ -2080,12 +2117,13 @@ if (!gotTheLock) {
     loadDotenv();
     applyVoiceEnvPaths(__dirname);
     void getVoiceAgent().warmVoiceStack().then(() => {
-      console.log("[voice] Voice stack fully warmed (TTS + Whisper).");
+      console.log("[voice] Voice stack fully warmed (TTS + STT).");
     }).catch((e) => {
       console.warn(
         `[voice] background warm failed: ${e instanceof Error ? e.message : String(e)}`,
       );
     });
+    void spawnVadSidecar();
     warmReminderNotificationAssets();
 
     notionApi = new NotionApi();
@@ -2860,17 +2898,47 @@ if (!gotTheLock) {
 
     ipcMain.handle("voice:status", () => getVoiceAgent().getStatus());
     ipcMain.handle("voice:system-prompt", () => VOICE_SYSTEM_PROMPT);
-    ipcMain.handle("voice:warm-tts", async () => {
-      try {
-        await getVoiceAgent().warmVoiceStack();
-        return { ok: true };
-      } catch (e) {
-        return {
-          ok: false,
-          error: e instanceof Error ? e.message : String(e),
-        };
-      }
-    });
+    ipcMain.handle("voice:vad-port", () => ({ url: `ws://127.0.0.1:${_vadPort}`, port: _vadPort }));
+     ipcMain.handle("voice:warm-tts", async () => {
+       const voiceAgent = getVoiceAgent();
+       if (typeof voiceAgent.warmVoiceStack !== "function") {
+         return { ok: false, error: "Voice warm not available." };
+       }
+       const results = await voiceAgent.warmVoiceStack();
+       const ttsOk = results[0]?.status === "fulfilled";
+       const whisperOk = results[1]?.status === "fulfilled";
+       return { ok: ttsOk, whisperOk };
+     });
+     
+     ipcMain.handle("voice:start-wake-word-listening", async () => {
+       const voiceAgent = getVoiceAgent();
+       return voiceAgent.startWakeWordListening();
+     });
+     
+     ipcMain.handle("voice:stop-wake-word-listening", async () => {
+       const voiceAgent = getVoiceAgent();
+       return voiceAgent.stopWakeWordListening();
+     });
+     
+     ipcMain.handle("voice:detect-wake-word", async (_evt, payload) => {
+       const buf = voicePayloadToBuffer(payload);
+       if (!buf || !buf.length) {
+         return { ok: false, wakeWordDetected: false, error: "No audio data received." };
+       }
+       const mimeType =
+         payload && typeof payload === "object" && typeof payload.mimeType === "string"
+           ? payload.mimeType
+           : "audio/webm";
+       return getVoiceAgent().detectWakeWordInAudio(buf, mimeType);
+     });
+
+     ipcMain.handle("voice:detect-stop-command", async (_evt, payload) => {
+       const text =
+         payload && typeof payload === "object" && typeof payload.text === "string"
+           ? payload.text
+           : "";
+       return { ok: true, stop: getVoiceAgent().detectStopCommand(text) };
+     });
     // Dream cycle runtime state
 let _lastDreamCycleFiredAt = 0;
 const DREAM_DEBOUNCE_MS = 90000; // 90s
@@ -3021,6 +3089,17 @@ ipcMain.handle("voice:transcribe", async (_evt, payload) => {
 					}
 				}
 			}
+			
+			// detect stop commands to end listening session
+			const voiceAgent = getVoiceAgent();
+			if (voiceAgent && typeof voiceAgent.detectStopCommand === "function" && voiceAgent.detectStopCommand(t)) {
+				console.log('[voice] Stop command detected:', t);
+				// Stop the wake word listening session
+				if (typeof voiceAgent.stopWakeWordListening === "function") {
+					const stopResult = voiceAgent.stopWakeWordListening();
+					console.log('[voice] Wake word listening stopped:', stopResult);
+				}
+			}
 		}
 	} catch (e) {
 		console.error('[dream] detection error', e);
@@ -3106,7 +3185,7 @@ ipcMain.handle('dream:reset', async () => {
       if (lastUserMsg) {
         const retrievalResult = await Promise.race([
           retrievalPipeline.retrieve({ userEmail: ALLOWED_ADMIN_EMAIL, query: lastUserMsg, k: 10, confidenceThreshold: 0.4, staleDays: 90 }),
-          new Promise(resolve => setTimeout(() => resolve({ facts: [], pageRefs: [], memories: [], staleFacts: [], writeStaleFacts: [], temporalSummary: null, temporalConversations: [] }), 1500)),
+          new Promise(resolve => setTimeout(() => resolve({ facts: [], pageRefs: [], memories: [], staleFacts: [], writeStaleFacts: [], temporalSummary: null, temporalConversations: [] }), 700)),
         ]);
 
         if (Array.isArray(retrievalResult.memories) && retrievalResult.memories.length > 0) {
@@ -3578,6 +3657,11 @@ ipcMain.handle('dream:reset', async () => {
       console.warn("[voice] shutdownVoiceStack error:", e);
     }
     console.log("[voice] Voice stack shut down.");
+    if (_vadProc) {
+      console.log("[vad] Killing VAD server...");
+      try { _vadProc.kill(); } catch {}
+      _vadProc = null;
+    }
     try { discordBot.stop().catch(() => {}); } catch {}
   });
 

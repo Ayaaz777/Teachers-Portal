@@ -17581,21 +17581,66 @@ setupAccountSecurityPanels();
     document.head.appendChild(style);
   }
 
-  /** @type {{ busy: boolean; recording: boolean; warmed: boolean; mediaRecorder: MediaRecorder | null; chunks: Blob[]; stream: MediaStream | null; orbBtn: HTMLButtonElement | null; textChatWired: boolean; orbWired: boolean }} */
+  /** @type {{ busy: boolean; recording: boolean; warmed: boolean; voicePhase: string; wakeSessionActive: boolean; wakeWordMode: boolean; wakeListening: boolean; wakeCheckBusy: boolean; lastWakeCheckAt: number; wakeMime: string; wakeRingChunks: Blob[]; mediaRecorder: MediaRecorder | null; chunks: Blob[]; stream: MediaStream | null; vadSocket: WebSocket | null; vadConnected: boolean; vadSpeechProb: number; vadProcessor: ScriptProcessorNode | null; vadAudioCtx: AudioContext | null; vadMicSourceNode: MediaStreamAudioSourceNode | null; vadSpeechActive: boolean; vadSpeechMs: number; vadSilenceMs: number; vadPcmBuffer: Int16Array | null; vadPcmBufferMs: number; vadUtteranceActive: boolean; vadUtteranceRecorder: MediaRecorder | null; vadUtteranceMime: string; utteranceChunks: Blob[]; orbBtn: HTMLButtonElement | null; textChatWired: boolean; orbWired: boolean }} */
   const st = {
     busy: false,
     recording: false,
     warmed: false,
+    voicePhase: "off",
+    wakeSessionActive: false,
+    wakeWordMode: false,
+    wakeListening: false,
+    wakeCheckBusy: false,
+    lastWakeCheckAt: 0,
+    wakeMime: "",
+    wakeRingChunks: [],
     mediaRecorder: null,
     chunks: [],
     stream: null,
+    vadSocket: null,
+    vadConnected: false,
+    vadSpeechProb: 0,
+    vadProcessor: null,
+    vadAudioCtx: null,
+    vadMicSourceNode: null,
+    vadSpeechActive: false,
+    vadSpeechMs: 0,
+    vadSilenceMs: 0,
+    vadPcmBuffer: null,
+    vadPcmBufferMs: 0,
+    vadUtteranceActive: false,
+    vadUtteranceRecorder: null,
+    vadUtteranceMime: "",
+    utteranceChunks: [],
+    vadPrerollBuf: null,
+    vadPrerollWritePos: 0,
+    vadPrerollFilled: false,
+    vadUtterancePcmChunks: null,
+    vadTrailingPadRemaining: 0,
     orbBtn: null,
     textChatWired: false,
     orbWired: false,
   };
+  const WAKE_TIMESLICE_MS = 500;
+  const WAKE_RING_MAX_CHUNKS = 16;
+  const WAKE_TAIL_CHUNKS = 10;
+  const WAKE_MIN_CHUNKS = 4;
+  const WAKE_MIN_BYTES = 14000;
+  const WAKE_CHECK_DEBOUNCE_MS = 3000;
+  const VAD_SPEECH_THRESHOLD = 0.5;
+  const VAD_MIN_SPEECH_MS = Number(process.env.VAD_MIN_SPEECH_MS) || 250;
+  const VAD_MIN_SILENCE_MS = Number(process.env.VAD_MIN_SILENCE_MS) || 700;
+  const VAD_SPEECH_PAD_MS = Number(process.env.VAD_SPEECH_PAD_MS) || 300;
+  const VAD_MAX_UTTERANCE_MS = 45000;
+  const VAD_SAMPLE_RATE = 16000;
+  const VAD_BUFFER_SIZE = 512;
+  const VAD_SPEECH_PAD_SAMPLES = Math.round(VAD_SPEECH_PAD_MS / 1000 * VAD_SAMPLE_RATE);
 
   /** @type {((userText: string, opts?: { playTts?: boolean; streamToChat?: boolean }) => Promise<void>) | null} */
   let runAssistantUserTurnRef = null;
+  let warmInFlight = false;
+  let warmAttempts = 0;
+  const WARM_MAX_ATTEMPTS = 2;
 
   function setChatBusy(busy) {
     const chat = document.getElementById(CHAT_ID);
@@ -17790,30 +17835,42 @@ function setAssistantBubbleText(bubble, text) {
     }, 8000);
   }
 
-  /** @param {"off" | "on" | "busy" | "warming"} state */
-  function setOrbState(state) {
-    const btn = st.orbBtn;
-    if (!(btn instanceof HTMLButtonElement)) return;
-    btn.dataset.state = state;
-    btn.setAttribute("aria-pressed", state === "on" ? "true" : "false");
-    btn.disabled = state === "busy" || state === "warming";
-    const labels = {
-      off: "Voice assistant off — click to talk",
-      on: "Listening — click to stop and send",
-      busy: "Processing voice reply",
-      warming: "Starting voice services...",
-    };
-    btn.setAttribute("aria-label", labels[state] || labels.off);
-  }
+   /** @param {"off" | "on" | "busy" | "warming" | "listening-for-wake-word" | "dormant"} state */
+   function setOrbState(state) {
+     const btn = st.orbBtn;
+     if (!(btn instanceof HTMLButtonElement)) return;
+     btn.dataset.state = state;
+     btn.setAttribute(
+       "aria-pressed",
+       state === "on" || state === "listening-for-wake-word" || state === "dormant"
+         ? "true"
+         : "false",
+     );
+     btn.disabled = state === "busy" || state === "warming";
+     const labels = {
+       off: "Voice assistant off — click to open session",
+       on: "Session open — speak naturally",
+       busy: "Processing voice reply",
+       warming: "Starting voice services...",
+       "listening-for-wake-word": "Say hey Retron…",
+       dormant: "Sleeping — say hey Retron to wake",
+     };
+     btn.setAttribute("aria-label", labels[state] || labels.off);
+   }
 
   async function warmVoiceInBackground() {
-    if (st.warmed) return;
+    if (st.warmed || warmInFlight || warmAttempts >= WARM_MAX_ATTEMPTS) return;
+    warmAttempts += 1;
     const api = window.voiceApi;
     if (!api || typeof api.warmTts !== "function") return;
+    warmInFlight = true;
     setOrbState("warming");
-    st.warmed = true;
     try {
-      await api.warmTts();
+      const warmResult = await api.warmTts();
+      if (warmResult && warmResult.ok === false) {
+        throw new Error(warmResult.error || "Voice warm failed");
+      }
+      st.warmed = true;
       // Fetch voice system prompt
       if (typeof api.getSystemPrompt === "function") {
         try { _voiceSystemPrompt = await api.getSystemPrompt(); } catch {}
@@ -17831,101 +17888,533 @@ function setAssistantBubbleText(bubble, text) {
       }
       setOrbState("off");
     } catch (e) {
-      st.warmed = false;
       const m = e instanceof Error ? e.message : String(e);
       console.warn("[voice] background warm failed:", m);
       pushError("Warm: " + m, "warn");
       setOrbState("off");
+    } finally {
+      warmInFlight = false;
     }
   }
 
-  /** @param {HTMLButtonElement} orbBtn */
-  function wireOrb(orbBtn) {
-    st.orbBtn = orbBtn;
-    if (st.orbWired) return;
-    st.orbWired = true;
-    setOrbState("warming");
+   /** @param {HTMLButtonElement} orbBtn */
+   function wireOrb(orbBtn) {
+     st.orbBtn = orbBtn;
+     if (st.orbWired) return;
+     st.orbWired = true;
+     setOrbState("warming");
 
-    async function stopRecording() {
-      if (!st.mediaRecorder || st.mediaRecorder.state === "inactive") {
-        return null;
-      }
-      return new Promise((resolve) => {
-        const mr = st.mediaRecorder;
-        if (!mr) {
-          resolve(null);
-          return;
+     async function stopRecording() {
+       const blob = await stopRecordingKeepStream();
+       try {
+         st.stream?.getTracks().forEach((t) => t.stop());
+       } catch {
+         /* ignore */
+       }
+       st.stream = null;
+       return blob;
+     }
+
+     async function stopRecordingKeepStream() {
+       if (!st.mediaRecorder || st.mediaRecorder.state === "inactive") {
+         return null;
+       }
+       return new Promise((resolve) => {
+         const mr = st.mediaRecorder;
+         if (!mr) {
+           resolve(null);
+           return;
+         }
+         mr.addEventListener(
+           "stop",
+           () => {
+             const mime =
+               (st.chunks[0] && st.chunks[0].type) || st.wakeMime || "audio/webm";
+             const blob = st.chunks.length
+               ? new Blob(st.chunks, { type: mime })
+               : null;
+             st.chunks = [];
+             st.recording = false;
+             st.mediaRecorder = null;
+             resolve(blob);
+           },
+           { once: true },
+         );
+         try {
+           mr.stop();
+         } catch {
+           resolve(null);
+         }
+       });
+     }
+
+     function pickMicMimeType() {
+       const mimeCandidates = [
+         "audio/webm;codecs=opus",
+         "audio/webm",
+         "audio/ogg;codecs=opus",
+       ];
+       for (const m of mimeCandidates) {
+         if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(m)) {
+           return m;
+         }
+       }
+       return "";
+     }
+
+     async function connectVadServer() {
+       if (st.vadConnected && st.vadSocket && st.vadSocket.readyState === WebSocket.OPEN) return;
+       const api = window.voiceApi;
+       if (!api || typeof api.getVadPort !== "function") {
+         console.warn("[voice] VAD API unavailable");
+         return;
+       }
+       try {
+         const info = await api.getVadPort();
+         if (!info || !info.url) {
+           console.warn("[voice] VAD port not available");
+           return;
+         }
+         console.log("[voice] Connecting VAD to", info.url);
+         st.vadSocket = new WebSocket(info.url);
+         st.vadSocket.binaryType = "arraybuffer";
+         st.vadSocket.onopen = () => {
+           st.vadConnected = true;
+           console.log("[voice] VAD WebSocket connected");
+         };
+         st.vadSocket.onmessage = (ev) => {
+           try {
+             const data = JSON.parse(typeof ev.data === "string" ? ev.data : new TextDecoder().decode(ev.data));
+             if (typeof data.speech_prob === "number") {
+               st.vadSpeechProb = data.speech_prob;
+             }
+           } catch {}
+         };
+         st.vadSocket.onclose = () => {
+           st.vadConnected = false;
+           st.vadSocket = null;
+         };
+         st.vadSocket.onerror = () => {
+           st.vadConnected = false;
+         };
+       } catch (e) {
+         console.warn("[voice] VAD connect failed:", e);
+       }
+     }
+
+     function disconnectVadServer() {
+       if (st.vadSocket) {
+         try { st.vadSocket.close(); } catch {}
+         st.vadSocket = null;
+       }
+       st.vadConnected = false;
+       st.vadSpeechProb = 0;
+     }
+
+     function stopVadLoop() {
+       disconnectVadServer();
+       if (st.vadProcessor) {
+         try { st.vadProcessor.disconnect(); } catch {}
+         st.vadProcessor = null;
+       }
+       if (st.vadMicSourceNode) {
+         try { st.vadMicSourceNode.disconnect(); } catch {}
+         st.vadMicSourceNode = null;
+       }
+       if (st.vadAudioCtx) {
+         try { st.vadAudioCtx.close(); } catch {}
+         st.vadAudioCtx = null;
+       }
+       st.vadSpeechActive = false;
+       st.vadSpeechMs = 0;
+       st.vadSilenceMs = 0;
+       st.vadPcmBuffer = null;
+       st.vadPcmBufferMs = 0;
+       st.vadTrailingPadRemaining = 0;
+     }
+
+     async function beginUtteranceCapture() {
+       if (st.vadUtteranceActive || st.busy || !st.stream || st.voicePhase !== "conversing") {
+         return;
+       }
+       st.vadUtteranceActive = true;
+       st.vadPcmBufferMs = 0;
+       st.utteranceChunks = [];
+       st.vadUtterancePcmChunks = [];
+       st.vadTrailingPadRemaining = 0;
+       if (st.vadPrerollBuf && st.vadPrerollFilled) {
+         const pad = new Float32Array(VAD_SPEECH_PAD_SAMPLES);
+         for (let i = 0; i < VAD_SPEECH_PAD_SAMPLES; i++) {
+           pad[i] = st.vadPrerollBuf[(st.vadPrerollWritePos + i) % VAD_SPEECH_PAD_SAMPLES];
+         }
+         st.vadUtterancePcmChunks.push(pad);
+       }
+       st.vadUtteranceMime = "audio/wav";
+     }
+
+     async function endUtteranceCapture() {
+       if (!st.vadUtteranceActive) return;
+       const pcmChunks = st.vadUtterancePcmChunks;
+       st.vadUtteranceActive = false;
+       st.vadUtterancePcmChunks = null;
+       st.utteranceChunks = [];
+       if (!pcmChunks || !pcmChunks.length) return;
+       let totalSamples = 0;
+       for (const c of pcmChunks) totalSamples += c.length;
+       if (totalSamples < 1200) return;
+       const allPcm = new Float32Array(totalSamples);
+       let offset = 0;
+       for (const c of pcmChunks) {
+         allPcm.set(c, offset);
+         offset += c.length;
+       }
+       const int16 = new Int16Array(allPcm.length);
+       for (let i = 0; i < allPcm.length; i++) {
+         const s = Math.max(-1, Math.min(1, allPcm[i]));
+         int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+       }
+       const dataSize = int16.length * 2;
+       const header = new ArrayBuffer(44);
+       const dv = new DataView(header);
+       dv.setUint32(0, 0x52494646, false);
+       dv.setUint32(4, 36 + dataSize, true);
+       dv.setUint32(8, 0x57415645, false);
+       dv.setUint32(12, 0x666D7420, false);
+       dv.setUint32(16, 16, true);
+       dv.setUint16(20, 1, true);
+       dv.setUint16(22, 1, true);
+       dv.setUint32(24, VAD_SAMPLE_RATE, true);
+       dv.setUint32(28, VAD_SAMPLE_RATE * 2, true);
+       dv.setUint16(32, 2, true);
+       dv.setUint16(34, 16, true);
+       dv.setUint32(36, 0x64617461, false);
+       dv.setUint32(40, dataSize, true);
+       const wavBuf = new Uint8Array(44 + dataSize);
+       wavBuf.set(new Uint8Array(header), 0);
+       wavBuf.set(new Uint8Array(int16.buffer), 44);
+       const blob = new Blob([wavBuf], { type: "audio/wav" });
+       stopVadLoop();
+       await runPipeline(blob);
+     }
+
+     function handleVadDecision() {
+       if (st.busy || st.voicePhase !== "conversing") return;
+       if (
+         st.vadUtteranceActive &&
+         st.vadPcmBufferMs > VAD_MAX_UTTERANCE_MS
+       ) {
+         st.vadSpeechActive = false;
+         st.vadSpeechMs = 0;
+         st.vadSilenceMs = 0;
+         st.vadTrailingPadRemaining = 0;
+         void endUtteranceCapture();
+         return;
+       }
+       if (st.vadTrailingPadRemaining > 0) {
+         st.vadTrailingPadRemaining -= VAD_BUFFER_SIZE / VAD_SAMPLE_RATE * 1000;
+         if (st.vadTrailingPadRemaining <= 0) {
+           st.vadTrailingPadRemaining = 0;
+           st.vadSpeechMs = 0;
+           st.vadSilenceMs = 0;
+           void endUtteranceCapture();
+         }
+         return;
+       }
+       const speaking = st.vadSpeechProb > VAD_SPEECH_THRESHOLD;
+       if (speaking) {
+         st.vadSilenceMs = 0;
+         st.vadSpeechMs += VAD_BUFFER_SIZE / VAD_SAMPLE_RATE * 1000;
+         if (!st.vadSpeechActive && st.vadSpeechMs >= VAD_MIN_SPEECH_MS) {
+           st.vadSpeechActive = true;
+           void beginUtteranceCapture();
+         }
+       } else if (st.vadSpeechActive) {
+         st.vadSilenceMs += VAD_BUFFER_SIZE / VAD_SAMPLE_RATE * 1000;
+         if (st.vadSilenceMs >= VAD_MIN_SILENCE_MS) {
+           st.vadSpeechActive = false;
+           st.vadTrailingPadRemaining = VAD_SPEECH_PAD_MS;
+         }
+       } else {
+         st.vadSpeechMs = 0;
+       }
+     }
+
+      async function ensureVadNodeRunning() {
+        if (!st.stream) return;
+        if (!st.vadAudioCtx || st.vadAudioCtx.state === "closed") {
+          const Ctor = window.AudioContext || window.webkitAudioContext;
+          if (!Ctor) return;
+          st.vadAudioCtx = new Ctor({ sampleRate: VAD_SAMPLE_RATE });
         }
-        mr.addEventListener(
-          "stop",
-          () => {
-            const mime =
-              (st.chunks[0] && st.chunks[0].type) || "audio/webm";
-            const blob = st.chunks.length
-              ? new Blob(st.chunks, { type: mime })
-              : null;
-            st.chunks = [];
-            st.recording = false;
-            try {
-              st.stream?.getTracks().forEach((t) => t.stop());
-            } catch {
-              /* ignore */
+        if (st.vadAudioCtx.state === "suspended") {
+          await st.vadAudioCtx.resume();
+        }
+        await connectVadServer();
+        if (!st.vadMicSourceNode) {
+          st.vadMicSourceNode = st.vadAudioCtx.createMediaStreamSource(st.stream);
+        }
+        if (!st.vadProcessor) {
+          st.vadProcessor = st.vadAudioCtx.createScriptProcessor(VAD_BUFFER_SIZE, 1, 1);
+          st.vadProcessor.onaudioprocess = (ev) => {
+            if (!st.vadConnected || !st.vadSocket || st.vadSocket.readyState !== WebSocket.OPEN) return;
+            const input = ev.inputBuffer.getChannelData(0);
+            if (!input || input.length === 0) return;
+            const int16 = new Int16Array(input.length);
+            for (let i = 0; i < input.length; i++) {
+              const s = Math.max(-1, Math.min(1, input[i]));
+              int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
             }
-            st.stream = null;
-            st.mediaRecorder = null;
-            resolve(blob);
-          },
-          { once: true },
-        );
-        try {
-          mr.stop();
-        } catch {
-          resolve(null);
+            st.vadSocket.send(int16.buffer);
+            if (!st.vadPrerollBuf) {
+              st.vadPrerollBuf = new Float32Array(VAD_SPEECH_PAD_SAMPLES);
+              st.vadPrerollWritePos = 0;
+              st.vadPrerollFilled = false;
+            }
+            for (let i = 0; i < input.length; i++) {
+              st.vadPrerollBuf[st.vadPrerollWritePos] = input[i];
+              st.vadPrerollWritePos++;
+              if (st.vadPrerollWritePos >= VAD_SPEECH_PAD_SAMPLES) {
+                st.vadPrerollWritePos = 0;
+                st.vadPrerollFilled = true;
+              }
+            }
+            if ((st.vadSpeechActive || st.vadTrailingPadRemaining > 0) && st.vadUtterancePcmChunks) {
+              st.vadUtterancePcmChunks.push(new Float32Array(input));
+            }
+            if (st.vadSpeechActive || st.vadTrailingPadRemaining > 0) {
+              st.vadPcmBufferMs += (VAD_BUFFER_SIZE / VAD_SAMPLE_RATE) * 1000;
+            }
+            if (st.voicePhase === "conversing") {
+              handleVadDecision();
+            }
+          };
         }
-      });
-    }
+        st.vadMicSourceNode.connect(st.vadProcessor);
+        st.vadProcessor.connect(st.vadAudioCtx.destination);
+        st.vadSpeechActive = false;
+        st.vadSpeechMs = 0;
+        st.vadSilenceMs = 0;
+        st.vadPcmBufferMs = 0;
+      }
 
-    async function startRecording() {
-      if (st.busy || st.recording) return;
-      const api = window.voiceApi;
-      if (!api || typeof api.transcribe !== "function") {
-        console.warn("[voice] Voice API unavailable.");
-        pushError("Voice API unavailable", "warn");
-        return;
+      async function startConversationVad() {
+        if (st.voicePhase !== "conversing" || !st.stream) return;
+        stopVadLoop();
+        await ensureVadNodeRunning();
+        setOrbState("on");
+        console.log("[voice] Conversation mode — Silero VAD via WebSocket");
       }
-      stopVoicePlayback();
-      try {
-        st.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      } catch (e) {
-        const m = e instanceof Error ? e.message : String(e);
-        console.warn("[voice] microphone:", m);
-        pushError("Mic: " + m, "warn");
-        setOrbState("off");
-        return;
-      }
-      st.chunks = [];
-      const mimeCandidates = [
-        "audio/webm;codecs=opus",
-        "audio/webm",
-        "audio/ogg;codecs=opus",
-      ];
-      let mime = "";
-      for (const m of mimeCandidates) {
-        if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(m)) {
-          mime = m;
-          break;
+
+     function buildWakeProbeBlob() {
+       const chunks = st.wakeRingChunks;
+       if (!chunks.length) return null;
+       const mime = st.wakeMime || "audio/webm";
+       const head = chunks[0];
+       const tailLen = Math.min(WAKE_TAIL_CHUNKS, Math.max(0, chunks.length - 1));
+       const tail = chunks.slice(chunks.length - tailLen);
+       if (!tail.length) return new Blob([head], { type: mime });
+       return new Blob([head, ...tail], { type: mime });
+     }
+
+      async function processWakeChunk(chunk) {
+        if (!st.wakeWordMode || st.wakeCheckBusy || st.busy) return;
+        if (!chunk || (chunk.size != null && chunk.size === 0)) return;
+        const api = window.voiceApi;
+        if (!api || typeof api.detectWakeWordInAudio !== "function") return;
+
+        const mime = st.wakeMime || "audio/webm";
+        st.wakeRingChunks.push(chunk instanceof Blob ? chunk : new Blob([chunk], { type: mime }));
+        while (st.wakeRingChunks.length > WAKE_RING_MAX_CHUNKS) {
+          if (st.wakeRingChunks.length > 1) {
+            st.wakeRingChunks.splice(1, 1);
+          } else {
+            break;
+          }
         }
-      }
-      st.mediaRecorder = mime
-        ? new MediaRecorder(st.stream, { mimeType: mime })
-        : new MediaRecorder(st.stream);
-      st.mediaRecorder.addEventListener("dataavailable", (ev) => {
-        if (ev.data && ev.data.size > 0) st.chunks.push(ev.data);
-      });
-      st.mediaRecorder.start();
-      st.recording = true;
-      setOrbState("on");
-    }
+
+        if (st.wakeRingChunks.length < WAKE_MIN_CHUNKS) return;
+
+        if (st.vadConnected && st.vadSpeechProb < VAD_SPEECH_THRESHOLD) return;
+
+        const blob = buildWakeProbeBlob();
+        if (!blob || blob.size < WAKE_MIN_BYTES) return;
+
+        const now = Date.now();
+       if (now - st.lastWakeCheckAt < WAKE_CHECK_DEBOUNCE_MS) return;
+       st.lastWakeCheckAt = now;
+       st.wakeCheckBusy = true;
+       try {
+         const result = await api.detectWakeWordInAudio(blob);
+         if (result && result.stopCommandDetected) {
+           console.log("[voice] Stop command — going dormant");
+           await enterDormantMode();
+           return;
+         }
+         if (result && result.ok && result.wakeWordDetected) {
+           console.log("[voice] Hey Retron detected — starting conversation");
+           const wakeBlob = buildWakeProbeBlob();
+           st.wakeWordMode = false;
+           st.wakeListening = false;
+           const recBlob = await stopRecordingKeepStream();
+           const useBlob =
+             recBlob && recBlob.size > 5000 ? recBlob : wakeBlob;
+           st.wakeRingChunks = [];
+           st.voicePhase = "conversing";
+           stopVadLoop();
+           if (useBlob && useBlob.size > 0) {
+             await runPipeline(useBlob);
+           } else {
+             await startConversationVad();
+           }
+         }
+       } catch (err) {
+         console.warn("[voice] Wake word detection error:", err);
+       } finally {
+         st.wakeCheckBusy = false;
+       }
+     }
+
+     async function enterDormantMode() {
+       stopVadLoop();
+       st.vadUtterancePcmChunks = null;
+       st.vadUtteranceActive = false;
+       st.vadTrailingPadRemaining = 0;
+       st.voicePhase = "dormant";
+        st.wakeSessionActive = true;
+        st.wakeWordMode = true;
+        st.wakeListening = true;
+        st.wakeRingChunks = [];
+        st.lastWakeCheckAt = 0;
+        setOrbState("dormant");
+        if (st.stream && (!st.mediaRecorder || st.mediaRecorder.state === "inactive")) {
+          const mime = pickMicMimeType();
+          st.wakeMime = mime;
+          st.chunks = [];
+          try {
+            st.mediaRecorder = mime
+              ? new MediaRecorder(st.stream, { mimeType: mime })
+              : new MediaRecorder(st.stream);
+            st.mediaRecorder.addEventListener("dataavailable", (ev) => {
+              if (ev.data && ev.data.size > 0) {
+                void processWakeChunk(ev.data);
+              }
+            });
+            st.mediaRecorder.start(WAKE_TIMESLICE_MS);
+            st.recording = true;
+          } catch (e) {
+            console.warn("[voice] dormant wake recorder:", e);
+          }
+        }
+        void ensureVadNodeRunning();
+        const api = window.voiceApi;
+        if (api && typeof api.startWakeWordListening === "function") {
+          try {
+            await api.startWakeWordListening();
+          } catch {
+            /* ignore */
+          }
+        }
+       console.log("[voice] Dormant — say hey Retron to wake");
+     }
+
+     async function endVoiceSession() {
+       st.voicePhase = "off";
+       stopVadLoop();
+       st.vadUtterancePcmChunks = null;
+       st.vadUtteranceActive = false;
+       st.vadTrailingPadRemaining = 0;
+        const api = window.voiceApi;
+       if (api && typeof api.stopWakeWordListening === "function") {
+         try {
+           await api.stopWakeWordListening();
+         } catch {
+           /* ignore */
+         }
+       }
+       st.wakeSessionActive = false;
+       st.wakeWordMode = false;
+       st.wakeListening = false;
+       st.wakeCheckBusy = false;
+       st.wakeRingChunks = [];
+       if (st.recording) {
+         await stopRecording();
+       } else if (st.stream) {
+         try {
+           st.stream.getTracks().forEach((t) => t.stop());
+         } catch {
+           /* ignore */
+         }
+         st.stream = null;
+       }
+       setOrbState("off");
+       console.log("[voice] Voice session ended");
+     }
+
+     async function startVoiceSession() {
+       if (st.busy || st.voicePhase !== "off") return;
+       st.voicePhase = "awaiting_wake";
+       await startWakeWordListening();
+     }
+
+     async function startWakeWordListening() {
+       if (st.busy) return;
+       if (st.wakeListening && st.wakeWordMode) return;
+       if (st.recording) {
+         await stopRecordingKeepStream();
+       }
+       const api = window.voiceApi;
+       if (!api || typeof api.startWakeWordListening !== "function") {
+         console.warn("[voice] Wake word API unavailable.");
+         pushError("Wake word API unavailable", "warn");
+         return;
+       }
+       stopVoicePlayback();
+       try {
+         const result = await api.startWakeWordListening();
+         if (!result.ok) {
+           console.warn("[voice] Failed to start wake word listening:", result.error);
+           pushError("Wake word: " + result.error, "warn");
+           setOrbState("off");
+           return;
+         }
+         st.voicePhase = "awaiting_wake";
+         st.wakeSessionActive = true;
+         st.wakeWordMode = true;
+         st.wakeListening = true;
+         st.lastWakeCheckAt = 0;
+         st.wakeRingChunks = [];
+         try {
+           st.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+         } catch (e) {
+           const m = e instanceof Error ? e.message : String(e);
+           console.warn("[voice] microphone:", m);
+           pushError("Mic: " + m, "warn");
+           await endVoiceSession();
+           return;
+         }
+         st.chunks = [];
+         const mime = pickMicMimeType();
+         st.wakeMime = mime;
+         st.mediaRecorder = mime
+           ? new MediaRecorder(st.stream, { mimeType: mime })
+           : new MediaRecorder(st.stream);
+         st.mediaRecorder.addEventListener("dataavailable", (ev) => {
+           if (ev.data && ev.data.size > 0) {
+             void processWakeChunk(ev.data);
+           }
+         });
+          st.mediaRecorder.start(WAKE_TIMESLICE_MS);
+          st.recording = true;
+          void ensureVadNodeRunning();
+          setOrbState("listening-for-wake-word");
+          console.log("[voice] Listening for hey Retron");
+       } catch (e) {
+         const m = e instanceof Error ? e.message : String(e);
+         console.warn("[voice] Wake word start error:", m);
+         pushError("Wake word start: " + m, "warn");
+         await endVoiceSession();
+       }
+     }
 
     /**
      * @param {string} userText
@@ -18031,40 +18520,74 @@ function setAssistantBubbleText(bubble, text) {
       } finally {
         st.busy = false;
         setChatBusy(false);
-        if (playTts && voiceGlowAnimId == null) {
-          setOrbState("off");
-        } else if (!playTts) {
-          setOrbState("off");
+        if (st.voicePhase === "conversing") {
+          setOrbState("on");
+        } else if (!st.wakeSessionActive) {
+          if (playTts && voiceGlowAnimId == null) {
+            setOrbState("off");
+          } else if (!playTts) {
+            setOrbState("off");
+          }
         }
       }
     }
 
     runAssistantUserTurnRef = runAssistantUserTurn;
 
-    async function runPipeline(blob) {
-      const api = window.voiceApi;
-      if (!api || !blob || !blob.size) {
-        return;
-      }
-      setOrbState("busy");
-      try {
-        const stt = await api.transcribe(blob);
-        if (!stt?.ok || !String(stt.text || "").trim()) {
-          const m = stt?.error || "empty";
-          console.warn("[voice] transcribe:", m);
-          pushError("STT: " + m, "warn");
-          return;
-        }
-        const userText = String(stt.text).trim();
-        console.log("[voice] you:", userText);
-        appendChatBubble("user", userText);
-        await runAssistantUserTurn(userText, { playTts: true, streamToChat: true });
-      } catch (e) {
-        const m = e instanceof Error ? e.message : String(e);
-        console.warn("[voice] pipeline:", m);
-        pushError("Pipeline: " + m, "error");
-      }
-    }
+     async function runPipeline(blob) {
+       const api = window.voiceApi;
+       if (!api || !blob || !blob.size) {
+         if (st.voicePhase === "conversing") await startConversationVad();
+         return;
+       }
+       stopVadLoop();
+       setOrbState("busy");
+       let endSession = false;
+       try {
+         const stt = await api.transcribe(blob);
+         if (!stt?.ok || !String(stt.text || "").trim()) {
+           const m = stt?.error || "empty";
+           console.warn("[voice] transcribe:", m);
+           pushError("STT: " + m, "warn");
+           return;
+         }
+         const userText = String(stt.text).trim();
+         console.log("[voice] you:", userText);
+         appendChatBubble("user", userText);
+
+         if (typeof api.detectStopCommand === "function") {
+           try {
+             const stopCheck = await api.detectStopCommand(userText);
+          if (stopCheck && stopCheck.stop) {
+            console.log("[voice] Stop command detected:", userText);
+            endSession = true;
+            st.voicePhase = "dormant";
+            try { await enterDormantMode(); } catch (e) {
+              console.warn("[voice] enterDormantMode error:", e);
+            }
+               return;
+             }
+           } catch {
+             /* ignore */
+           }
+         }
+
+         await runAssistantUserTurn(userText, { playTts: true, streamToChat: true });
+       } catch (e) {
+         const m = e instanceof Error ? e.message : String(e);
+         console.warn("[voice] pipeline:", m);
+         pushError("Pipeline: " + m, "error");
+       } finally {
+         if (endSession || st.voicePhase === "off" || st.voicePhase === "dormant") {
+           return;
+         }
+         if (st.voicePhase === "conversing") {
+           await startConversationVad();
+         } else if (st.voicePhase === "dormant" || st.voicePhase === "awaiting_wake") {
+           setOrbState(st.voicePhase === "dormant" ? "dormant" : "listening-for-wake-word");
+         }
+       }
+     }
 
     /**
      * @param {unknown} raw
@@ -18226,7 +18749,15 @@ function setAssistantBubbleText(bubble, text) {
       btn.style.boxShadow = "";
       btn.style.transform = "";
       btn.style.borderColor = "";
-      setOrbState("off");
+      if (st.voicePhase === "conversing") {
+        setOrbState("on");
+      } else if (st.voicePhase === "dormant") {
+        setOrbState("dormant");
+      } else if (st.voicePhase === "awaiting_wake") {
+        setOrbState("listening-for-wake-word");
+      } else if (!st.busy && !st.recording) {
+        setOrbState("off");
+      }
     }
 
     function stopVoicePlayback() {
@@ -18344,16 +18875,11 @@ function setAssistantBubbleText(bubble, text) {
       });
     }
 
-    async function onOrbClick() {
-      if (st.busy) return;
-      if (st.recording) {
-        setOrbState("busy");
-        const blob = await stopRecording();
-        await runPipeline(blob);
-        return;
-      }
-      void startRecording();
-    }
+     async function onOrbClick() {
+       if (st.busy && st.voicePhase === "off") return;
+       if (st.voicePhase !== "off") return;
+       await startVoiceSession();
+     }
 
     orbBtn.addEventListener("click", (ev) => {
       ev.preventDefault();
