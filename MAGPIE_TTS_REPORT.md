@@ -90,9 +90,40 @@ The TTS router pattern is fully implemented, mirroring the STT router:
 8. **If happy**: app auto-uses Magpie as default (RME_TTS_ENGINE=auto)
 9. **If not happy**: set RME_TTS_ENGINE=chatterbox to keep current
 
+## Docker reproducible image (2026-05-29)
+
+Built a reproducible Docker image that bakes in the exact Magpie TTS environment:
+
+### Dockerfile: `tools/tts/Dockerfile`
+- Base: `nvcr.io/nvidia/nemo:25.04` (has all NeMo deps: pynini, nv_one_logger, etc.)
+- Torch swap: `torch 2.6.0+cu118` replaces bundled torch that dropped Pascal sm_61
+- ffmpeg installed for audio I/O
+
+### Build
+```
+docker build -t nemo-magpie-1070 tools/tts
+```
+
+### Verified
+| Check | Command | Result |
+|-------|---------|--------|
+| GPU ops | `docker run --rm --gpus all nemo-magpie-1070 python -c "import torch; x=torch.randn(8,8,device='cuda'); print('GPU OK', (x@x).sum().item())"` | GPU OK |
+| MagpieTTS_Model import | `docker run --rm --gpus all nemo-magpie-1070 python -c "from nemo.collections.tts.models import MagpieTTS_Model; print('Magpie import OK')"` | Magpie import OK |
+
+### Daily run command
+```
+docker run --gpus all -it \
+  -v "<repo>/tools/tts:/workspace/tts" -p 8126:8126 nemo-magpie-1070:latest
+```
+
+### Notes
+- NeMo container startup prints "GPU not supported" warnings for GTX 1070 but does NOT block execution — CUDA ops work fine with the cu118 torch
+- The correct NeMo TTS class is `MagpieTTS_Model` (underscore), not `MagpieTTSModel`
+
 ## Files changed
 - `lib/voice-agent/tts-router.js` — new
 - `lib/voice-agent/magpie-server.js` — new
 - `tools/tts/magpie-server.py` — new
 - `tools/tts/requirements-magpie.txt` — new
+- `tools/tts/Dockerfile` — new (reproducible Docker image)
 - `.env.example` — added Magpie env vars
