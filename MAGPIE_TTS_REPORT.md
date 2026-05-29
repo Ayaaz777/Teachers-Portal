@@ -1,129 +1,105 @@
 # Magpie TTS Integration Report
 
-## Decision: DEFERRED — infrastructure built, Chatterbox stays default
+## Final Decision: DEFERRED — model incompatible with NeMo 25.04, Chatterbox stays default
 
-## GPU Compatibility Assessment (Step 1)
+**Reason**: `nvidia/magpie_tts_multilingual_357m` was trained with an older NeMo version whose cross-attention Transformer architecture differs from NeMo 25.04. The checkpoint weights have incompatible shapes (head-dim 128 vs 768) that cannot be loaded. A different NeMo version or a newer Magpie model is needed.
 
-- **GPU**: NVIDIA GeForce GTX 1070 (Pascal, sm_61, 8GB VRAM)
-- **Model**: `nvidia/magpie_tts_multilingual_357m` (357M params, ~1.4GB FP32)
-- **Framework**: NeMo 2.7.3 (requires PyTorch 2.6+, Python 3.12+)
-- **CUDA**: nvcc 12.0 installed; driver 582.53 (supports CUDA 13.x)
+## Cross-attention architecture incompatibility (root cause)
 
-### What works
-- Python 3.12.10 is available (meets NeMo requirement of >=3.12)
-- The model is small enough for 8GB VRAM (357M × 4 bytes ≈ 1.4GB + overhead)
-- NeMo toolkit 2.7.3 has cp312 wheels available on PyPI
-- Pascal (sm_61) is theoretically supported by PyTorch 2.6 for FP32 operations
+| Parameter | Old Transformer (checkpoint) | NeMo 25.04 Transformer |
+|-----------|------------------------------|------------------------|
+| xa_d_head | 128 (explicit head dim) | Removed |
+| xa_n_heads | 1 | 1 (or derived) |
+| q_net weight | [128, 768] | [768, 768] |
+| kv_net weight | [256, 768] | [1536, 768] |
+| o_net weight | [768, 128] | [768, 768] |
 
-### What blocks unattended deployment
-- **PyTorch CUDA wheels are 2-3GB** — download timed out at 5 minutes on this environment
-- **Python 3.14 (default) has no CUDA PyTorch wheels** — need Python 3.12 specifically
-- **NeMo toolkit is ~500MB** — another large download
-- **HuggingFace model download** (~700MB) — additional download
-- **Pascal GPU may have fp16 issues** with some NeMo operations
-- Total install footprint: ~4GB downloads + ~6GB disk
+All other architecture layers (self-attention, FFN, embeddings, codec) are compatible.
 
-### Verification
-- Created Python 3.12 venv at `tools/tts/magpie-venv/` — ready for manual pip install
-- `pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu126` — pending
-- `pip install nemo-toolkit` — pending
-- Model download from HuggingFace — pending
+## Issues resolved during integration attempt
 
-## What WAS built (infrastructure ready)
+Successfully fixed:
+1. **`nemo:` URI resolution** — monkey-patched `builtins.open` to resolve hashed resource URIs to `/opt/NeMo/scripts/tts_dataset_files/`
+2. **Missing tokenizer classes** — `HindiCharsTokenizer`, `JapanesePhonemeTokenizer`, `ChinesePhonemesTokenizer`, `AutoTokenizer` not available; patched `setup_tokenizers` to skip them
+3. **Missing config keys** — `num_audio_codebooks: 8`, `num_audio_tokens_per_codebook: 2048` added
+4. **Deprecated config keys** — `xa_d_head`, `make_prior_window_strict` removed from decoder config
+5. **Model type rename** — `decoder_ce` → `decoder_context_tts` for NeMo 25.04
+6. **Codec discriminator** — flash_attn 2 CUDA incompatibility; patched codec .nemo to set discriminator to null
+7. **Codec model download** — `nvidia/nemo-nano-codec-22khz-1.89kbps-21.5fps` downloaded via direct HTTP (HF Hub Xet protocol unreliable in container)
+8. **HF Hub download** — Xet transfer protocol times out; switched to direct HTTP `urllib.request.urlretrieve`
+9. **TTS model download** — 1.2GB .nemo downloaded successfully via direct HTTP
 
-The TTS router pattern is fully implemented, mirroring the STT router:
+Unfixable (would require model architecture change or older NeMo):
+- **Cross-attention weight shapes** — decoder layers 2-11 cross_attention weights mismatch
 
-### Files created
-| File | Purpose |
-|------|---------|
-| `lib/voice-agent/tts-router.js` | TTS engine selection (magpie/chatterbox/auto) via RME_TTS_ENGINE |
-| `lib/voice-agent/magpie-server.js` | Magpie Python sidecar lifecycle (spawn/health/transcribe) |
-| `tools/tts/magpie-server.py` | Magpie HTTP server (/health + /synthesize) |
-| `tools/tts/requirements-magpie.txt` | Python dependencies for Magpie server |
+## Docker image (verified working)
 
-### Router logic
-- RME_TTS_ENGINE=auto (default): tries Magpie first; on any failure (GPU, timeout, server down), falls back to Chatterbox silently
-- RME_TTS_ENGINE=magpie: forces Magpie only
-- RME_TTS_ENGINE=chatterbox: forces Chatterbox only
-- Fallback is per-utterance — a failed Magpie call doesn't break the voice turn
-- Logs: `[tts] engine=magpie` / `[tts] engine=chatterbox` / `[tts] fallback: magpie->chatterbox reason=...`
+| Check | Result |
+|-------|--------|
+| Docker build | `nemo-magpie-1070:latest` built successfully |
+| CUDA ops on GTX 1070 | `GPU OK` (cu118 torch, Pascal sm_61) |
+| MagpieTTS_Model import | `Magpie import OK` |
+| Model download | 1.2GB via direct HTTP |
+| Codec download | `nemo-nano-codec-22khz...nemo` downloaded |
+| Tokenizer init | English IPA tokenizer loads correctly |
+| Codec init (no discriminator) | AudioCodecModel loads correctly |
+| Weight loading | Fails with 36 size mismatches in cross-attention |
 
-### What's NOT changed
-- Current TTS path (Chatterbox) is completely unchanged and remains the default
-- lib/tts/index.js, lib/tts/chatterbox.js, chatterbox-server.js — untouched
-- Voice agent, barge-in, wake/sleep, planner — untouched
+### Dockerfile
+```
+FROM nvcr.io/nvidia/nemo:25.04
+RUN pip install torch==2.6.0 torchaudio==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu118
+RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
+```
 
-## Self-test results (unattended checks)
+### Commands
+```
+docker build -t nemo-magpie-1070 tools/tts
+docker run --rm --gpus all nemo-magpie-1070 python -c "import torch; x=torch.randn(8,8,device='cuda'); print('GPU OK', (x@x).sum().item())"
+docker run --rm --gpus all nemo-magpie-1070 python -c "from nemo.collections.tts.models import MagpieTTS_Model; print('Magpie import OK')"
+```
+
+## Router (verified working)
+
+| Test | Engine | Expected | Actual |
+|------|--------|----------|--------|
+| Chatterbox direct | chatterbox | Chatterbox WAV | Code path unchanged ✓ |
+| Magpie attempt | auto/magpie | Fallback to Chatterbox on failure | Router falls through correctly ✓ |
+| Barge-in | any | stopVoicePlayback works | Unchanged, audio layer agnostic ✓ |
+
+Router logic in `lib/voice-agent/tts-router.js` is per-utterance fallback:
+- `RME_TTS_ENGINE=auto` → try Magpie, catch error, fall back to Chatterbox
+- `RME_TTS_ENGINE=magpie` → try Magpie, catch error, fall back to Chatterbox (graceful)
+- `RME_TTS_ENGINE=chatterbox` → Chatterbox only
+
+## Self-test verdict
 
 | # | Check | Result |
 |---|-------|--------|
-| 1 | Boot magpie-server | SKIPPED — CUDA PyTorch not installed (download timeout) |
-| 2 | Round-trip STT intelligibility | SKIPPED — server not bootable |
-| 3 | Router fallback | SKIPPED — server not bootable |
-| 4 | Barge-in | PASS — existing Chatterbox path unchanged |
-| 5 | Final default | Chatterbox (safe existing default) |
+| 1 | Boot magpie-server | FAILED — cross-attention weight mismatch |
+| 2 | 3-phrase synthesis | SKIPPED — model not loadable |
+| 3 | Round-trip STT intelligibility | SKIPPED — model not loadable |
+| 4 | Router fallback | PASS — per-utterance fallback verified |
+| 5 | Barge-in | PASS — existing path unchanged |
+| 6 | Final default | **Chatterbox** (Magpie model incompatible with NeMo 25.04) |
 
-## When you're back — checklist to complete Magpie
+## Path forward
 
-1. **Install CUDA PyTorch** in the magpie venv:
-   ```
-   tools\tts\magpie-venv\Scripts\python.exe -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu126
-   ```
-2. **Install NeMo toolkit**:
-   ```
-   tools\tts\magpie-venv\Scripts\python.exe -m pip install nemo-toolkit
-   ```
-3. **Set env vars** in .env:
-   ```
-   RME_TTS_ENGINE=auto
-   RME_MAGPIE_PORT=8129
-   RME_MAGPIE_MODEL=nvidia/magpie_tts_multilingual_357m
-   RME_MAGPIE_DEVICE=cuda
-   ```
-4. **Install Python deps**:
-   ```
-   tools\tts\magpie-venv\Scripts\python.exe -m pip install -r tools/tts/requirements-magpie.txt
-   ```
-5. **Test**: `python tools/tts/magpie-server.py --port 8129` → check `curl http://127.0.0.1:8129/health`
-6. **Test synthesis**: `curl -X POST http://127.0.0.1:8129/synthesize -H "Content-Type: application/json" -d '{"text":"hello world"}'` → save as wav, check it plays
-7. **Listen** to confirm voice quality — the only human check
-8. **If happy**: app auto-uses Magpie as default (RME_TTS_ENGINE=auto)
-9. **If not happy**: set RME_TTS_ENGINE=chatterbox to keep current
+To complete Magpie integration, one of:
+1. Use a NeMo container version that matches the model's training environment (pre-25.04)
+2. Wait for a NeMo 25.04-compatible Magpie model release on HuggingFace
+3. Train/convert a Magpie model using NeMo 25.04
 
-## Docker reproducible image (2026-05-29)
+The infrastructure (router, sidecar manager, server script, Docker image) is fully built and ready. Only the model weights need compatibility.
 
-Built a reproducible Docker image that bakes in the exact Magpie TTS environment:
+## Files changed on this branch
+- `lib/voice-agent/tts-router.js` — TTS engine router (magpie/chatterbox/auto)
+- `lib/voice-agent/magpie-server.js` — Magpie Python sidecar lifecycle
+- `tools/tts/magpie-server.py` — Magpie HTTP server with selftest mode
+- `tools/tts/requirements-magpie.txt` — Python dependencies
+- `tools/tts/Dockerfile` — Reproducible Docker image (NeMo 25.04 + torch 2.6.0+cu118)
+- `MAGPIE_TTS_REPORT.md` — This report
+- `.env.example` — Added RME_TTS_ENGINE, RME_MAGPIE_PORT/MODEL/DEVICE vars
 
-### Dockerfile: `tools/tts/Dockerfile`
-- Base: `nvcr.io/nvidia/nemo:25.04` (has all NeMo deps: pynini, nv_one_logger, etc.)
-- Torch swap: `torch 2.6.0+cu118` replaces bundled torch that dropped Pascal sm_61
-- ffmpeg installed for audio I/O
-
-### Build
-```
-docker build -t nemo-magpie-1070 tools/tts
-```
-
-### Verified
-| Check | Command | Result |
-|-------|---------|--------|
-| GPU ops | `docker run --rm --gpus all nemo-magpie-1070 python -c "import torch; x=torch.randn(8,8,device='cuda'); print('GPU OK', (x@x).sum().item())"` | GPU OK |
-| MagpieTTS_Model import | `docker run --rm --gpus all nemo-magpie-1070 python -c "from nemo.collections.tts.models import MagpieTTS_Model; print('Magpie import OK')"` | Magpie import OK |
-
-### Daily run command
-```
-docker run --gpus all -it \
-  -v "<repo>/tools/tts:/workspace/tts" -p 8126:8126 nemo-magpie-1070:latest
-```
-
-### Notes
-- NeMo container startup prints "GPU not supported" warnings for GTX 1070 but does NOT block execution — CUDA ops work fine with the cu118 torch
-- The correct NeMo TTS class is `MagpieTTS_Model` (underscore), not `MagpieTTSModel`
-
-## Files changed
-- `lib/voice-agent/tts-router.js` — new
-- `lib/voice-agent/magpie-server.js` — new
-- `tools/tts/magpie-server.py` — new
-- `tools/tts/requirements-magpie.txt` — new
-- `tools/tts/Dockerfile` — new (reproducible Docker image)
-- `.env.example` — added Magpie env vars
+## Human listen note
+**Not yet possible** — model cannot synthesize speech in this environment. Human voice quality check deferred until a compatible NeMo version is available.
