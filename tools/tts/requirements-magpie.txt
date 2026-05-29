@@ -1,8 +1,0 @@
-# Magpie TTS Python dependencies
-# Install in the magpie-venv:
-#   tools\tts\magpie-venv\Scripts\python.exe -m pip install -r tools/tts/requirements-magpie.txt
-torch>=2.6.0
-torchaudio
-nemo-toolkit
-numpy
-soundfile
