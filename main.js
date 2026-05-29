@@ -208,8 +208,6 @@ console.error = (...args) => {
 
 function getVoiceAgent() {
 	if (!_voiceAgent) {
-		loadDotenv();
-		applyVoiceEnvPaths(__dirname);
 		const voicePaths = resolveVoiceEnvPaths(__dirname, {
 			whisperBin: process.env.RME_WHISPER_BIN,
 			whisperModel: process.env.RME_WHISPER_MODEL,
@@ -2102,8 +2100,10 @@ if (!gotTheLock) {
   }
 
   app.whenReady().then(async () => {
+    const tBoot = Date.now();
     loadDotenv();
     applyVoiceEnvPaths(__dirname);
+    console.log("[perf] boot:dotenv ready in", Date.now() - tBoot, "ms");
     if (!cudaRuntimeLikelyAvailable()) {
       console.warn(
         "[voice] CUDA 12.x toolkit not detected. STT will use CPU (Whisper fallback).",
@@ -2116,8 +2116,6 @@ if (!gotTheLock) {
     });
     const userDataPath = app.getPath("userData");
     seedPackagedEnvTemplate(userDataPath);
-    loadDotenv();
-    applyVoiceEnvPaths(__dirname);
     try {
       void getVoiceAgent().warmVoiceStack().then(() => {
         console.log("[voice] Voice stack fully warmed (TTS + STT).");
@@ -2132,7 +2130,7 @@ if (!gotTheLock) {
       );
     }
     void spawnVadSidecar();
-    warmReminderNotificationAssets();
+    setTimeout(() => warmReminderNotificationAssets(), 2000);
 
     notionApi = new NotionApi();
     /* AI Chat service (non-voice, reuses notionApi for REST tools) */
@@ -2162,14 +2160,18 @@ if (!gotTheLock) {
     log.info("notion", { tokenSet: !!process.env.NOTION_TOKEN, status: "ready" });
 
     /* Pre-warm embedding model in background so first voice turn isn't slowed */
-    embed("warm up").then(r => {
-      if (r.ok) log.info("memory", { embedWarm: "ok" });
-      else log.warn("memory", { embedWarm: "failed", error: r.error?.message });
-    });
+    setTimeout(() => {
+      embed("warm up").then(r => {
+        if (r.ok) log.info("memory", { embedWarm: "ok" });
+        else log.warn("memory", { embedWarm: "failed", error: r.error?.message });
+      });
+    }, 3000);
 
     /* Warm-load studio master so ffmpeg binary resolves at startup */
-    require("./lib/tts/studio-master");
-    console.log("[tts] Studio TTS chain ready");
+    setTimeout(() => {
+      require("./lib/tts/studio-master");
+      console.log("[tts] Studio TTS chain ready");
+    }, 1000);
 
     ipcMain.handle("calendar:notification-supported", () => Notification.isSupported());
     ipcMain.handle("calendar:flash-attention", () => flashMainWindowAttention());
@@ -2711,9 +2713,13 @@ if (!gotTheLock) {
     let activePlannerScope = "";
     let activePlannerEmail = "";
     let activePlannerFirstName = "";
+    /** @type {Set<string>} */
+    const backfilledScopes = new Set();
 
     /** @type {Record<string, string>} cached content for renderer reads (JSON strings). */
     const plannerCache = {};
+    /** @type {Record<string, string>} last-written content hash — skips duplicate Supabase writes */
+    const plannerWriteHashCache = {};
     let plannerInitialized = false;
 
     function plannerScoped() {
@@ -2745,13 +2751,15 @@ if (!gotTheLock) {
         activePlannerFirstName = firstName;
         plannerInitialized = false;
         for (const k of Object.keys(plannerCache)) delete plannerCache[k];
+        for (const k of Object.keys(plannerWriteHashCache)) delete plannerWriteHashCache[k];
 
-        /* Auto-backfill embeddings on first scope set */
-        if (userId) {
+        /* Auto-backfill embeddings on first scope set (once per account) */
+        if (userId && !backfilledScopes.has(userId)) {
+          backfilledScopes.add(userId);
           plannerSearch.backfillAll(userId, email).then(r => {
-            if (r.ok) console.log("[planner] Embedding backfill done:", r.results);
+            if (r.ok) console.log("[perf] Embedding backfill done:", r.results, "in", Date.now() - tBoot, "ms from boot");
             else console.warn("[planner] Embedding backfill failed:", r.error);
-          }).catch(e => console.warn("[planner] embed hook failed:", e instanceof Error ? e.message : String(e)));
+          }).catch(() => {});
         }
 
         keywordIndex.reloadSettings();
@@ -2840,6 +2848,12 @@ if (!gotTheLock) {
         if (content == null) {
           return { ok: false, message: "Missing content." };
         }
+
+        const contentHash = crypto.createHash("sha256").update(content).digest("base64");
+        if (plannerWriteHashCache[key] === contentHash) {
+          return { ok: true };
+        }
+        plannerWriteHashCache[key] = contentHash;
 
         if (key === "events") {
           const arr = JSON.parse(content);
@@ -3295,12 +3309,17 @@ ipcMain.handle('dream:reset', async () => {
         }
       }
 
-      /* Fallback: always include recent facts and page refs even without a user query */
-      const [factsFallback, refsFallback] = await Promise.all([
-        voiceMemory.listFacts({ userEmail: ALLOWED_ADMIN_EMAIL, userName: detectedSpeaker }),
-        pageMemory.listPageRefs({ userEmail: ALLOWED_ADMIN_EMAIL }),
-      ]);
-      let fallbackFacts = (factsFallback.ok ? factsFallback.data : []).slice(0, 30);
+      /* Inject facts and page refs from retrieval pipeline result (no duplicate queries) */
+      let fallbackFacts = Array.isArray(retrievalResult.facts) ? retrievalResult.facts.slice(0, 30) : [];
+      const fallbackRefs = Array.isArray(retrievalResult.pageRefs) ? retrievalResult.pageRefs.slice(0, 30) : [];
+
+      if (!retrievalResult.facts && !retrievalResult.pageRefs) {
+        const [ff, rf] = await Promise.all([
+          voiceMemory.listFacts({ userEmail: ALLOWED_ADMIN_EMAIL, userName: detectedSpeaker }),
+          pageMemory.listPageRefs({ userEmail: ALLOWED_ADMIN_EMAIL }),
+        ]);
+        fallbackFacts = (ff.ok ? ff.data : []).slice(0, 30);
+      }
       /* If a speaker was detected, exclude stored facts that conflict with the Current user profile */
       if (detectedSpeaker) {
         const CONFLICT_KEYS = /^(greeting|address(ing)?|speaker_identity|current_speaker|who_is_speaking)/i;
@@ -3310,7 +3329,6 @@ ipcMain.handle('dream:reset', async () => {
           log.info("memory", { filteredConflictingFacts: before - fallbackFacts.length, cid });
         }
       }
-      const fallbackRefs = (refsFallback.ok ? refsFallback.data : []).slice(0, 30);
 
       if (fallbackFacts.length > 0) {
         const factLines = fallbackFacts.map(f => `  - ${f.fact_key}: ${f.fact_value} (updated ${new Date(f.updated_at || f.created_at).toLocaleDateString()})`);
@@ -3723,37 +3741,44 @@ ipcMain.handle('dream:reset', async () => {
         }
       };
 
-      const turnResult = await getVoiceAgent().runAssistantTurn({
-        messages,
-        system: systemText,
-        speaker: detectedSpeaker || _lastKnownSpeaker || null,
-        maxTokens: typeof p.maxTokens === "number" ? p.maxTokens : undefined,
-        tools: tools.length > 0 ? tools : undefined,
-        onToolCall,
-        onClaudeDelta: (chunk) => {
-          try {
-            if (!sender.isDestroyed()) {
-              sender.send("voice:claude-delta", { text: chunk });
-            }
-          } catch {
-            /* ignore */
-          }
-        },
-        onTtsChunk: (detail) => {
-          try {
-            if (!sender.isDestroyed()) {
-              const payload = { ...detail };
-              if (!Buffer.isBuffer(payload.audio) && payload.audioBase64) {
-                payload.audio = Buffer.from(String(payload.audioBase64), "base64");
-                delete payload.audioBase64;
+      let turnResult;
+      try {
+        turnResult = await getVoiceAgent().runAssistantTurn({
+          messages,
+          system: systemText,
+          speaker: detectedSpeaker || _lastKnownSpeaker || null,
+          maxTokens: typeof p.maxTokens === "number" ? p.maxTokens : undefined,
+          tools: tools.length > 0 ? tools : undefined,
+          onToolCall,
+          onClaudeDelta: (chunk) => {
+            try {
+              if (!sender.isDestroyed()) {
+                sender.send("voice:claude-delta", { text: chunk });
               }
-              sender.send("voice:tts-chunk", payload);
+            } catch {
+              /* ignore */
             }
-          } catch {
-            /* ignore */
-          }
-        },
-      });
+          },
+          onTtsChunk: (detail) => {
+            try {
+              if (!sender.isDestroyed()) {
+                const payload = { ...detail };
+                if (!Buffer.isBuffer(payload.audio) && payload.audioBase64) {
+                  payload.audio = Buffer.from(String(payload.audioBase64), "base64");
+                  delete payload.audioBase64;
+                }
+                sender.send("voice:tts-chunk", payload);
+              }
+            } catch {
+              /* ignore */
+            }
+          },
+        });
+      } catch (e) {
+        console.error("[voice:assistant-turn] ERROR:", e && e.name, e && e.message);
+        if (e && e.stack) console.error("[voice:assistant-turn] STACK:", e.stack);
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
 
       /* --- Fire-and-forget: store conversation turns --- */
       if (lastUserMsg) {
@@ -3915,7 +3940,8 @@ ipcMain.handle('dream:reset', async () => {
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) {
-        createWindow();
+    createWindow();
+    console.log("[perf] boot:total", Date.now() - tBoot, "ms");
       }
     });
   });
