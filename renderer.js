@@ -18073,6 +18073,14 @@ function setAssistantBubbleText(bubble, text) {
 
       function handleBargeInCheck() {
         if (!st.bargeinEnabled || !st.busy || st.vadUtteranceActive) return;
+        // Gate: only check bargein while NO audio is actively playing.
+        // While audio plays, speaker-to-mic leakage can fake VAD speech above
+        // 0.7; waiting for a silent gap between chunks gives genuine user speech
+        // a chance to register without echo false-positives.
+        if (voicePlaying) {
+          st.bargeinSustainedMs = 0;
+          return;
+        }
         const frameMs = VAD_BUFFER_SIZE / VAD_SAMPLE_RATE * 1000;
         if (st.bargeinGraceRemaining > 0) {
           st.bargeinGraceRemaining -= frameMs;
@@ -18553,7 +18561,15 @@ function setAssistantBubbleText(bubble, text) {
      * @param {string} userText
      * @param {{ playTts?: boolean; streamToChat?: boolean }} [opts]
      */
+    let _turnRunning = false;
+
     async function runAssistantUserTurn(userText, opts) {
+      // Guard: prevent double-invocation from echo/VAD re-fire during an active turn
+      if (_turnRunning) {
+        console.warn("[voice] runAssistantUserTurn blocked — turn already in progress");
+        return;
+      }
+      _turnRunning = true;
       const api = window.voiceApi;
       const text = String(userText || "").trim();
       if (!api || !text || typeof api.assistantTurn !== "function") return;
@@ -18679,6 +18695,7 @@ function setAssistantBubbleText(bubble, text) {
           }
         }
         _bargeinUnsubTts = null;
+        _turnRunning = false;
       }
     }
 
