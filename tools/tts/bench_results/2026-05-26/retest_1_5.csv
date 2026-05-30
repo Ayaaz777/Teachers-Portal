@@ -1,3 +1,0 @@
-phrase_num,chars,audio_duration_s,synth_time_s,rtf,output_file
-1,6,1.000,0.841,0.841,tools/tts/test_outputs\test_011.wav
-2,440,23.520,14.134,0.601,tools/tts/test_outputs\test_012.wav

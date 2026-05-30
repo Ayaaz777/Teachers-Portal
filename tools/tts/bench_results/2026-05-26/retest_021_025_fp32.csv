@@ -1,6 +1,0 @@
-phrase_num,chars,audio_duration_s,synth_time_s,rtf,spectrogram
-1,6,0.960,0.899,0.937,tools/tts/test_outputs\test_021_spectrogram.png
-2,113,8.520,5.360,0.629,tools/tts/test_outputs\test_022_spectrogram.png
-3,198,12.120,6.557,0.541,tools/tts/test_outputs\test_023_spectrogram.png
-4,440,24.160,14.797,0.612,tools/tts/test_outputs\test_024_spectrogram.png
-5,425,24.760,12.517,0.506,tools/tts/test_outputs\test_025_spectrogram.png
