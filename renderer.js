@@ -17638,6 +17638,7 @@ setupAccountSecurityPanels();
   const WAKE_CHECK_DEBOUNCE_MS = 3000;
   let _vadDiagSilentOnce = false;
   let _vadFramesSent_ts = 0;
+  let _vadMicDiag_ts = 0;
   const VAD_SPEECH_THRESHOLD = 0.5;
   const VAD_MIN_SPEECH_MS = 250;
   const VAD_MIN_SILENCE_MS = 700;
@@ -18057,6 +18058,7 @@ function setAssistantBubbleText(bubble, text) {
         st.vadSpeechProb = 0;
         _vadFramesSent_ts = 0;
         _vadDiagSilentOnce = false;
+        _vadMicDiag_ts = 0;
       }
 
      function stopVadLoop() {
@@ -18304,6 +18306,7 @@ function setAssistantBubbleText(bubble, text) {
           const Ctor = window.AudioContext || window.webkitAudioContext;
           if (!Ctor) return;
           st.vadAudioCtx = new Ctor({ sampleRate: VAD_SAMPLE_RATE });
+          console.log("[voice] VAD AudioContext created: sampleRate=" + st.vadAudioCtx.sampleRate + " state=" + st.vadAudioCtx.state);
         }
         if (st.vadAudioCtx.state === "suspended") {
           await st.vadAudioCtx.resume();
@@ -18325,6 +18328,17 @@ function setAssistantBubbleText(bubble, text) {
             _vadDiagSilentOnce = false;
             const input = ev.inputBuffer.getChannelData(0);
             if (!input || input.length === 0) return;
+            // Compute RMS of the Float32 buffer before conversion
+            let sumSq = 0;
+            for (let i = 0; i < input.length; i++) sumSq += input[i] * input[i];
+            const rms = Math.sqrt(sumSq / input.length);
+            if (_vadMicDiag_ts === 0) {
+              _vadMicDiag_ts = Date.now();
+              console.log("[voice] VAD mic buffer: length=" + input.length + " sampleRate=" + st.vadAudioCtx.sampleRate + " rms=" + rms.toFixed(6));
+            } else if (Date.now() - _vadMicDiag_ts > 3000) {
+              _vadMicDiag_ts = Date.now();
+              console.log("[voice] VAD mic buffer: rms=" + rms.toFixed(6) + " phase=" + st.voicePhase);
+            }
             const int16 = new Int16Array(input.length);
             for (let i = 0; i < input.length; i++) {
               const s = Math.max(-1, Math.min(1, input[i]));
@@ -18563,8 +18577,16 @@ function setAssistantBubbleText(bubble, text) {
                 noiseSuppression: true,
                 autoGainControl: true,
               },
-            });
-         } catch (e) {
+             });
+             // Log the actual device and format being used
+             try {
+               const audioTrack = st.stream.getAudioTracks()[0];
+               if (audioTrack) {
+                 const settings = audioTrack.getSettings();
+                 console.log("[voice] mic device:", JSON.stringify({ label: audioTrack.label, deviceId: settings.deviceId, sampleRate: settings.sampleRate, channelCount: settings.channelCount, volume: settings.volume }));
+               }
+             } catch {}
+          } catch (e) {
            const m = e instanceof Error ? e.message : String(e);
            console.warn("[voice] microphone:", m);
            pushError("Mic: " + m, "warn");

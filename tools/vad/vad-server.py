@@ -82,11 +82,16 @@ async def handle_vad(websocket):
 				pcm_accum = pcm_accum[FRAME_BYTES:]
 				frame_count += 1
 				pcm = np.frombuffer(frame, dtype=np.int16).astype(np.float32) / 32768.0
+				# Amplitude diagnostics: log RMS/min/max of the raw int16 frame
+				pcm_int16 = np.frombuffer(frame, dtype=np.int16)
+				abs_max = int(np.max(np.abs(pcm_int16)))
+				rms_int = int(np.sqrt(np.mean(pcm_int16.astype(np.float64) ** 2)))
+				if _last_log_at and time.time() - _last_log_at >= 5.0:
+					log.info("VAD frame: count=%d int16_rms=%d int16_peak=%d float_rms=%.4f",
+						frame_count, rms_int, abs_max, float(np.sqrt(np.mean(pcm ** 2))))
+					_last_log_at = time.time()
 				tensor = torch.from_numpy(pcm).float().to(device)
 				prob = detect_speech(tensor)
-				if _last_log_at and time.time() - _last_log_at >= 5.0:
-					log.info("VAD frames: count=%d latest_prob=%.3f", frame_count, prob)
-					_last_log_at = time.time()
 				await websocket.send(json.dumps({"speech_prob": round(prob, 4)}))
 	except Exception:
 		pass
