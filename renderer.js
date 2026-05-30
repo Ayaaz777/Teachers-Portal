@@ -17637,8 +17637,10 @@ setupAccountSecurityPanels();
   const WAKE_MIN_BYTES = 14000;
   const WAKE_CHECK_DEBOUNCE_MS = 3000;
   let _vadDiagSilentOnce = false;
+  let _vadDiagBlocked_ts = 0;
   let _vadFramesSent_ts = 0;
   let _vadMicDiag_ts = 0;
+  let _bargeinDiag_ts = 0;
   const VAD_SPEECH_THRESHOLD = 0.5;
   const VAD_MIN_SPEECH_MS = 250;
   const VAD_MIN_SILENCE_MS = 700;
@@ -18058,7 +18060,9 @@ function setAssistantBubbleText(bubble, text) {
         st.vadSpeechProb = 0;
         _vadFramesSent_ts = 0;
         _vadDiagSilentOnce = false;
+        _vadDiagBlocked_ts = 0;
         _vadMicDiag_ts = 0;
+        _bargeinDiag_ts = 0;
       }
 
      function stopVadLoop() {
@@ -18106,15 +18110,10 @@ function setAssistantBubbleText(bubble, text) {
 
       function handleBargeInCheck() {
         if (!st.bargeinEnabled || !st.busy || st.vadUtteranceActive) return;
-        // Gate: only check bargein while NO audio is actively playing.
-        // While audio plays, speaker-to-mic leakage can fake VAD speech above
-        // 0.7; waiting for a silent gap between chunks gives genuine user speech
-        // a chance to register without echo false-positives.
-        if (voicePlaying) {
-          st.bargeinSustainedMs = 0;
-          return;
-        }
         const frameMs = VAD_BUFFER_SIZE / VAD_SAMPLE_RATE * 1000;
+        // Grace period: skip first N ms after each chunk starts to avoid
+        // the chunk onset transient from self-triggering barge-in. Browser
+        // AEC (echoCancellation:true on the mic) handles sustained echo.
         if (st.bargeinGraceRemaining > 0) {
           st.bargeinGraceRemaining -= frameMs;
           return;
@@ -18127,6 +18126,18 @@ function setAssistantBubbleText(bubble, text) {
           }
         } else {
           st.bargeinSustainedMs = Math.max(0, st.bargeinSustainedMs - frameMs);
+        }
+        // Diagnostic: log barge-in status every 2s during playback
+        if (voicePlaying && st.bargeinSustainedMs >= 0) {
+          const now = Date.now();
+          if (!_bargeinDiag_ts || now - _bargeinDiag_ts > 2000) {
+            _bargeinDiag_ts = now;
+            console.log("[voice] barge-in check: prob=" + st.vadSpeechProb.toFixed(3) +
+              " sustained=" + st.bargeinSustainedMs.toFixed(0) +
+              "ms threshold=" + BARGEIN_VAD_THRESHOLD +
+              " grace=" + st.bargeinGraceRemaining.toFixed(0) +
+              " voicePlaying=" + voicePlaying);
+          }
         }
       }
 
@@ -18319,9 +18330,11 @@ function setAssistantBubbleText(bubble, text) {
           st.vadProcessor = st.vadAudioCtx.createScriptProcessor(VAD_BUFFER_SIZE, 1, 1);
           st.vadProcessor.onaudioprocess = (ev) => {
             if (!st.vadConnected || !st.vadSocket || st.vadSocket.readyState !== WebSocket.OPEN) {
-              if (!_vadDiagSilentOnce) {
+              const now = Date.now();
+              if (!_vadDiagSilentOnce || now - (_vadDiagBlocked_ts || 0) > 3000) {
                 _vadDiagSilentOnce = true;
-                console.warn("[voice] VAD audio frames blocked — connected=" + st.vadConnected + " socketReady=" + (st.vadSocket ? st.vadSocket.readyState : "null"));
+                _vadDiagBlocked_ts = now;
+                console.warn("[voice] VAD audio frames blocked — connected=" + st.vadConnected + " socketReady=" + (st.vadSocket ? st.vadSocket.readyState : "null") + " voicePlaying=" + voicePlaying + " busy=" + st.busy);
               }
               return;
             }
@@ -18930,6 +18943,9 @@ function setAssistantBubbleText(bubble, text) {
       if (voicePlaying) return;
       if (voicePlayQueue.length === 0) return;
       voicePlaying = true;
+      // Reset barge-in grace period on each new chunk onset so the
+      // transient attack doesn't self-trigger barge-in via AEC bleed.
+      st.bargeinGraceRemaining = BARGEIN_GRACE_MS;
       const { source, ctx } = voicePlayQueue.shift();
       try {
         const startAt = ctx.currentTime + 0.005;
