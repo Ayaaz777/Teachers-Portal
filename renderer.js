@@ -6923,9 +6923,11 @@
   function bindRootEvents(root) {
     const search = root.querySelector("#rmeOpsSearch");
     if (search instanceof HTMLInputElement) {
+      let searchDebounce = 0;
       search.addEventListener("input", () => {
         state.query = search.value;
-        render();
+        clearTimeout(searchDebounce);
+        searchDebounce = setTimeout(render, 200);
       });
     }
     root.querySelectorAll("[data-filter]").forEach((btn) => {
@@ -18703,6 +18705,7 @@ function setAssistantBubbleText(bubble, text) {
           const userText = String(stt.text).trim();
           console.log("[voice] you:", userText);
           appendChatBubble("user", userText);
+          try { window.dispatchEvent(new CustomEvent("rme-voice-user-speech", { detail: { text: userText } })); } catch {}
 
           const n = userText.toLowerCase().replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim();
           const isStopTalking = n.includes("stop talking now") || n.includes("stop talking");
@@ -19143,6 +19146,24 @@ function setAssistantBubbleText(bubble, text) {
   }
   window.setInterval(tick, 1200);
   window.addEventListener("focus", tick);
+
+  window.__rmeVoiceOrbBridge = {
+    get state() { return st.orbBtn?.dataset.state || "off"; },
+    get bargeinEnabled() { return st.bargeinEnabled; },
+    set bargeinEnabled(v) { st.bargeinEnabled = !!v; },
+    get micMuted() { return !st.stream || !st.stream.active || st.stream.getTracks().every(t => !t.enabled); },
+    set micMuted(v) {
+      if (st.stream) { st.stream.getTracks().forEach((t) => { t.enabled = !v; }); }
+    },
+    get voiceSystemPrompt() { return _voiceSystemPrompt; },
+    runAssistantText: (text) => {
+      if (!runAssistantUserTurnRef) return Promise.resolve({ ok: false, error: "Voice API not ready" });
+      if (typeof window.__rmeVoiceStopPlayback === "function") {
+        window.__rmeVoiceStopPlayback();
+      }
+      return runAssistantUserTurnRef(text, { playTts: false, streamToChat: false });
+    },
+  };
 })();
 
 /** @returns {"light" | "dark"} */
@@ -19332,6 +19353,533 @@ function setAppTheme(theme) {
 	} else {
 		startObserving();
 	}
+})();
+
+(function rmeVoiceMissionControl() {
+  const PAGE_CLASS = "rme-voice-page";
+  const MOUNT_CLASS = "rme-vmc-mounted";
+  const POLL_MS = 5000;
+
+  let pollTimer = null;
+  let lastSnapshot = null;
+  let chatTurnInFlight = false;
+  let _assistantBuf = "";
+  let _assistantDom = null;
+
+  function getPageEl() {
+    const pane = document.getElementById("notionWsPaneVoice");
+    if (!(pane instanceof HTMLElement)) return null;
+    return pane.querySelector("." + PAGE_CLASS);
+  }
+
+  function isPageVisible() {
+    const pane = document.getElementById("notionWsPaneVoice");
+    return pane instanceof HTMLElement && pane.classList.contains("notion-ws-pane--visible");
+  }
+
+  function ensureMounted() {
+    const el = getPageEl();
+    if (!el || el.dataset.vmcMounted === "1") return;
+    el.dataset.vmcMounted = "1";
+    el.removeAttribute("aria-hidden");
+    el.classList.add(MOUNT_CLASS);
+    el.innerHTML = buildHtml();
+    moveOrbIntoHero();
+    wireControls();
+    wireTranscript();
+    wireChatInput();
+    startPolling();
+  }
+
+  function buildHtml() {
+    return [
+      '<div class="rme-vmc-bento">',
+        '<section class="rme-vmc-card rme-vmc-card--hero">',
+          '<div class="rme-vmc-master-badge" id="rmeVmcMasterBadge">Voice System: --</div>',
+          '<div class="rme-vmc-orb-area" id="rmeVmcOrbArea"></div>',
+          '<div class="rme-vmc-state-row">',
+            '<span class="rme-vmc-state-label" id="rmeVmcStateLabel">Asleep</span>',
+            '<span class="rme-vmc-state-hint" id="rmeVmcStateHint">Say "ready for launch"</span>',
+          '</div>',
+        '</section>',
+
+        '<section class="rme-vmc-card rme-vmc-card--dots">',
+          '<h3 class="rme-vmc-section-heading">Connection Status</h3>',
+          '<div class="rme-vmc-dots-grid" id="rmeVmcDotsGrid"></div>',
+          '<div class="rme-vmc-summary-lines" id="rmeVmcSummaryLines">',
+            '<span>Speaking with: --</span>',
+            '<span>Listening with: --</span>',
+          '</div>',
+        '</section>',
+
+        '<section class="rme-vmc-card rme-vmc-card--controls">',
+          '<h3 class="rme-vmc-section-heading">Controls</h3>',
+          '<div class="rme-vmc-controls-inner">',
+            '<button class="rme-vmc-btn rme-vmc-btn--toggle" id="rmeVmcWakeBtn">Wake</button>',
+            '<button class="rme-vmc-btn rme-vmc-btn--toggle" id="rmeVmcStopSpeakingBtn">Stop Speaking</button>',
+            '<button class="rme-vmc-btn rme-vmc-btn--toggle rme-vmc-btn--on" id="rmeVmcBargeinBtn">Barge-in: On</button>',
+            '<button class="rme-vmc-btn rme-vmc-btn--action" id="rmeVmcReconnectBtn">Reconnect</button>',
+            '<button class="rme-vmc-btn rme-vmc-btn--action" id="rmeVmcTestVoiceBtn">Test Voice</button>',
+            '<button class="rme-vmc-btn rme-vmc-btn--action" id="rmeVmcClearTranscriptBtn">Clear Transcript</button>',
+          '</div>',
+        '</section>',
+
+        '<section class="rme-vmc-card rme-vmc-card--transcript">',
+          '<h3 class="rme-vmc-section-heading">Live Transcript</h3>',
+          '<div class="rme-vmc-transcript-feed" id="rmeVmcTranscriptFeed">',
+            '<div class="rme-vmc-transcript-empty">Waiting for activity...</div>',
+          '</div>',
+          '<div class="rme-vmc-chat-input-row">',
+            '<textarea class="rme-vmc-chat-input" id="rmeVmcChatInput" placeholder="Type to Retron..." rows="1"></textarea>',
+            '<button class="rme-vmc-btn rme-vmc-btn--action" id="rmeVmcChatSend">Send</button>',
+          '</div>',
+        '</section>',
+
+        '<section class="rme-vmc-card rme-vmc-card--perf">',
+          '<h3 class="rme-vmc-section-heading">Performance</h3>',
+          '<div class="rme-vmc-perf-grid" id="rmeVmcPerfGrid">',
+            '<div class="rme-vmc-perf-cell"><span class="rme-vmc-perf-label">TTS Latency</span><span class="rme-vmc-perf-value" id="rmeVmcPerfTts">-- ms</span></div>',
+            '<div class="rme-vmc-perf-cell"><span class="rme-vmc-perf-label">STT Speed</span><span class="rme-vmc-perf-value" id="rmeVmcPerfStt">-- ms</span></div>',
+            '<div class="rme-vmc-perf-cell"><span class="rme-vmc-perf-label">GPU VRAM</span><span class="rme-vmc-perf-value" id="rmeVmcPerfGpu">-- MB</span></div>',
+            '<div class="rme-vmc-perf-cell"><span class="rme-vmc-perf-label">GPU Util</span><span class="rme-vmc-perf-value" id="rmeVmcPerfGpuUtil">--%</span></div>',
+            '<div class="rme-vmc-perf-cell"><span class="rme-vmc-perf-label">GPU Temp</span><span class="rme-vmc-perf-value" id="rmeVmcPerfGpuTemp">--°C</span></div>',
+            '<div class="rme-vmc-perf-cell"><span class="rme-vmc-perf-label">End-to-End Latency</span><span class="rme-vmc-perf-value" id="rmeVmcPerfE2e">-- ms</span></div>',
+            '<div class="rme-vmc-perf-cell"><span class="rme-vmc-perf-label">Avg Turn Latency</span><span class="rme-vmc-perf-value" id="rmeVmcPerfAvgLatency">-- ms</span></div>',
+            '<div class="rme-vmc-perf-cell"><span class="rme-vmc-perf-label">Turns</span><span class="rme-vmc-perf-value" id="rmeVmcPerfTurns">0</span></div>',
+            '<div class="rme-vmc-perf-cell"><span class="rme-vmc-perf-label">Wake Events</span><span class="rme-vmc-perf-value" id="rmeVmcPerfWakes">0</span></div>',
+            '<div class="rme-vmc-perf-cell"><span class="rme-vmc-perf-label">Uptime</span><span class="rme-vmc-perf-value" id="rmeVmcPerfUptime">--</span></div>',
+          '</div>',
+        '</section>',
+      '</div>',
+    ].join("");
+  }
+
+  function moveOrbIntoHero() {
+    const orbBtn = document.getElementById("rmeVoiceOrbBtn");
+    const orbArea = document.getElementById("rmeVmcOrbArea");
+    if (!orbBtn || !orbArea) return;
+    orbArea.appendChild(orbBtn);
+    const stack = document.getElementById("rmeVoiceOrbStack");
+    if (stack) stack.hidden = true;
+    const settingsToggle = document.getElementById("rmeVoiceSettingsToggle");
+    if (settingsToggle) settingsToggle.hidden = true;
+  }
+
+  function wireControls() {
+    const wakeBtn = document.getElementById("rmeVmcWakeBtn");
+    if (wakeBtn) {
+      wakeBtn.addEventListener("click", () => {
+        const api = window.voiceApi;
+        if (!api) return;
+        const bridge = window.__rmeVoiceOrbBridge;
+        const asleep = !bridge || bridge.state === "off" || bridge.state === "dormant";
+        if (asleep) {
+          if (typeof api.startWakeWordListening === "function") {
+            api.startWakeWordListening().catch(() => {});
+          }
+          if (bridge) {
+            const orb = document.getElementById("rmeVoiceOrbBtn");
+            if (orb) orb.click();
+          }
+          wakeBtn.textContent = "Sleep";
+          wakeBtn.classList.add("rme-vmc-btn--on");
+        } else {
+          if (typeof api.stopWakeWordListening === "function") {
+            api.stopWakeWordListening().catch(() => {});
+          }
+          wakeBtn.textContent = "Wake";
+          wakeBtn.classList.remove("rme-vmc-btn--on");
+        }
+      });
+    }
+
+    const stopSpeakingBtn = document.getElementById("rmeVmcStopSpeakingBtn");
+    if (stopSpeakingBtn) {
+      stopSpeakingBtn.addEventListener("click", () => {
+        if (typeof window.__rmeVoiceStopPlayback === "function") {
+          window.__rmeVoiceStopPlayback();
+        }
+      });
+    }
+
+    const bargeinBtn = document.getElementById("rmeVmcBargeinBtn");
+    if (bargeinBtn) {
+      bargeinBtn.addEventListener("click", () => {
+        const bridge = window.__rmeVoiceOrbBridge;
+        if (!bridge) return;
+        const curr = bridge.bargeinEnabled;
+        bridge.bargeinEnabled = !curr;
+        bargeinBtn.textContent = curr ? "Barge-in: Off" : "Barge-in: On";
+        bargeinBtn.classList.toggle("rme-vmc-btn--on", !curr);
+      });
+    }
+
+    const reconnectBtn = document.getElementById("rmeVmcReconnectBtn");
+    if (reconnectBtn) {
+      reconnectBtn.addEventListener("click", () => {
+        reconnectBtn.disabled = true;
+        reconnectBtn.textContent = "Checking...";
+        pollHealth().finally(() => {
+          reconnectBtn.disabled = false;
+          reconnectBtn.textContent = "Reconnect";
+        });
+      });
+    }
+
+    const testVoiceBtn = document.getElementById("rmeVmcTestVoiceBtn");
+    if (testVoiceBtn) {
+      testVoiceBtn.addEventListener("click", async () => {
+        testVoiceBtn.disabled = true;
+        testVoiceBtn.textContent = "Playing...";
+        try {
+          const api = window.voiceApi;
+          if (!api || typeof api.testVoice !== "function") {
+            alert("Voice API not available.");
+            return;
+          }
+          const result = await api.testVoice();
+          if (!result || !result.ok) {
+            alert("Voice test failed: " + (result?.error || "unknown error"));
+            return;
+          }
+          if (result.data && result.data.audioBase64) {
+            const binary = atob(result.data.audioBase64);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            const blob = new Blob([bytes.buffer], { type: result.data.mimeType || "audio/wav" });
+            const url = URL.createObjectURL(blob);
+            const audio = new Audio(url);
+            audio.play();
+            audio.addEventListener("ended", () => URL.revokeObjectURL(url));
+          }
+        } catch (e) {
+          alert("Test voice error: " + (e instanceof Error ? e.message : String(e)));
+        } finally {
+          testVoiceBtn.disabled = false;
+          testVoiceBtn.textContent = "Test Voice";
+        }
+      });
+    }
+
+    const clearTranscriptBtn = document.getElementById("rmeVmcClearTranscriptBtn");
+    if (clearTranscriptBtn) {
+      clearTranscriptBtn.addEventListener("click", () => {
+        const feed = document.getElementById("rmeVmcTranscriptFeed");
+        if (feed) {
+          feed.innerHTML = '<div class="rme-vmc-transcript-empty">Transcript cleared.</div>';
+        }
+        _assistantBuf = "";
+        _assistantDom = null;
+      });
+    }
+
+    setInterval(() => {
+      const wakeBtn = document.getElementById("rmeVmcWakeBtn");
+      if (!wakeBtn) return;
+      const bridge = window.__rmeVoiceOrbBridge;
+      const asleep = !bridge || bridge.state === "off" || bridge.state === "dormant";
+      wakeBtn.textContent = asleep ? "Wake" : "Sleep";
+      wakeBtn.classList.toggle("rme-vmc-btn--on", !asleep);
+    }, 800);
+  }
+
+  function wireChatInput() {
+    const input = document.getElementById("rmeVmcChatInput");
+    const sendBtn = document.getElementById("rmeVmcChatSend");
+    if (!input || !sendBtn) return;
+
+    function resizeInput() {
+      input.style.height = "auto";
+      input.style.height = Math.min(input.scrollHeight, 88) + "px";
+    }
+
+    input.addEventListener("input", resizeInput);
+
+    async function submitChat() {
+      const text = String(input.value || "").trim();
+      if (!text || chatTurnInFlight) return;
+      const bridge = window.__rmeVoiceOrbBridge;
+      if (!bridge || typeof bridge.runAssistantText !== "function") return;
+      chatTurnInFlight = true;
+      input.value = "";
+      resizeInput();
+      input.disabled = true;
+      sendBtn.disabled = true;
+      finalizeAssistantBubble();
+      addTranscriptEntry("You", text);
+      try {
+        await bridge.runAssistantText(text);
+      } catch (e) {
+        console.warn("[vmc] chat send error:", e);
+        finalizeAssistantBubble();
+        addTranscriptEntry("Retron", "Error: " + (e instanceof Error ? e.message : String(e)));
+      } finally {
+        chatTurnInFlight = false;
+        input.disabled = false;
+        sendBtn.disabled = false;
+        input.focus();
+      }
+    }
+
+    sendBtn.addEventListener("click", () => void submitChat());
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" && !ev.shiftKey) {
+        ev.preventDefault();
+        void submitChat();
+      }
+    });
+  }
+
+  function wireTranscript() {
+    const api = window.voiceApi;
+    if (!api) return;
+    if (typeof api.onTtsChunk === "function") {
+      api.onTtsChunk((detail) => {
+        if (detail && detail.text && detail.text.trim()) {
+          onAssistantChunk(detail.text.trim());
+        }
+      });
+    }
+    if (typeof api.onClaudeDelta === "function") {
+      api.onClaudeDelta((detail) => {
+        if (detail && detail.text && detail.text.trim()) {
+          onAssistantChunk(detail.text.trim());
+        }
+      });
+    }
+    window.addEventListener("rme-voice-user-speech", (e) => {
+      if (e.detail && e.detail.text) {
+        finalizeAssistantBubble();
+        addTranscriptEntry("You", e.detail.text);
+        const api = window.voiceApi;
+        if (api && typeof api.recordWake === "function") {
+          api.recordWake().catch(() => {});
+        }
+      }
+    });
+  }
+
+  function onAssistantChunk(text) {
+    _assistantBuf += (text || "");
+    const feed = document.getElementById("rmeVmcTranscriptFeed");
+    if (!feed) return;
+    if (!_assistantDom) {
+      _assistantDom = createTranscriptDom("Retron", "");
+      feed.appendChild(_assistantDom);
+      if (feed.firstChild && feed.firstChild.classList.contains("rme-vmc-transcript-empty")) {
+        feed.firstChild.remove();
+      }
+      while (feed.children.length > 40) feed.firstChild.remove();
+    }
+    _assistantDom.querySelector(".rme-vmc-transcript-text").textContent = _assistantBuf;
+    scrollTranscript();
+  }
+
+  function finalizeAssistantBubble() {
+    if (_assistantBuf) {
+      _assistantBuf = "";
+      _assistantDom = null;
+    }
+  }
+
+  function addTranscriptEntry(speaker, text) {
+    if (!text || !text.trim()) return;
+    const t = text.trim();
+    const feed = document.getElementById("rmeVmcTranscriptFeed");
+    if (!feed) return;
+    const el = createTranscriptDom(speaker, t);
+    feed.appendChild(el);
+    if (feed.firstChild && feed.firstChild.classList.contains("rme-vmc-transcript-empty")) {
+      feed.firstChild.remove();
+    }
+    while (feed.children.length > 40) feed.firstChild.remove();
+    scrollTranscript();
+  }
+
+  function createTranscriptDom(speaker, text) {
+    const div = document.createElement("div");
+    div.className = "rme-vmc-transcript-entry " + (speaker === "Retron" ? "rme-vmc-transcript-entry--assistant" : "rme-vmc-transcript-entry--user");
+    const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    div.innerHTML = '<span class="rme-vmc-transcript-speaker">' + speaker + '</span><span class="rme-vmc-transcript-time">' + time + '</span><span class="rme-vmc-transcript-text">' + escapeHtml(text) + '</span>';
+    return div;
+  }
+
+  function scrollTranscript() {
+    const feed = document.getElementById("rmeVmcTranscriptFeed");
+    if (!feed) return;
+    feed.scrollTop = feed.scrollHeight;
+  }
+
+  function escapeHtml(s) {
+    const d = document.createElement("div");
+    d.appendChild(document.createTextNode(s));
+    return d.innerHTML;
+  }
+
+  async function pollHealth() {
+    const api = window.voiceApi;
+    if (!api || typeof api.getHealthSnapshot !== "function") return;
+    try {
+      const snap = await api.getHealthSnapshot();
+      lastSnapshot = snap;
+      renderHealth(snap);
+    } catch {}
+  }
+
+  function renderHealth(snap) {
+    updateMasterBadge(snap.master);
+    updateDotsGrid(snap.services, snap);
+    updateSummaryLines(snap);
+    updatePerf(snap.perf);
+  }
+
+  function updateMasterBadge(status) {
+    const el = document.getElementById("rmeVmcMasterBadge");
+    if (!el) return;
+    el.className = "rme-vmc-master-badge rme-vmc-master-badge--" + (status || "offline");
+    el.textContent = "Voice System: " + (status === "healthy" ? "Healthy" : status === "degraded" ? "Degraded" : "Offline");
+  }
+
+  function updateDotsGrid(services, snap) {
+    const grid = document.getElementById("rmeVmcDotsGrid");
+    if (!grid || !services) return;
+
+    function makeDot(label, up, active) {
+      const color = !active ? "grey" : (up ? "green" : "red");
+      return (
+        '<div class="rme-vmc-dot-card rme-vmc-dot-card--' + color + '">' +
+          '<span class="rme-vmc-dot rme-vmc-dot--' + color + '"></span>' +
+          '<span class="rme-vmc-dot-label">' + label + '</span>' +
+        '</div>'
+      );
+    }
+
+    const tts = services.tts;
+    const parakeet = services.parakeet;
+    const whisper = services.whisper;
+    const vad = services.vad;
+    const gpu = services.gpu;
+    const supabase = services.supabase;
+
+    const sttOverride = snap.stt?.override || "auto";
+    const primaryStt = snap.listeningWith?.startsWith("Parakeet") ? "parakeet" : "whisper";
+    const parakeetActive = sttOverride === "parakeet" || (sttOverride === "auto" && primaryStt === "parakeet");
+    const whisperActive = sttOverride === "whisper" || sttOverride === "auto";
+
+    grid.innerHTML = [
+      makeDot("TTS", tts && tts.up, true),
+      makeDot("Parakeet", parakeet && parakeet.up, parakeetActive),
+      makeDot("Whisper", whisper && whisper.up, whisperActive),
+      makeDot("VAD", vad && vad.up, true),
+      makeDot("GPU", gpu && gpu.detected, true),
+      makeDot("Supabase", supabase && supabase.up, true),
+    ].join("");
+  }
+
+  function updateSummaryLines(snap) {
+    const el = document.getElementById("rmeVmcSummaryLines");
+    if (!el) return;
+    el.innerHTML = [
+      "<span>Speaking with: " + (snap.speakingWith || "--") + "</span>",
+      "<span>Listening with: " + (snap.listeningWith || "--") + "</span>",
+    ].join("");
+  }
+
+  function updatePerf(perf) {
+    if (!perf) return;
+    const ttsEl = document.getElementById("rmeVmcPerfTts");
+    const sttEl = document.getElementById("rmeVmcPerfStt");
+    const gpuEl = document.getElementById("rmeVmcPerfGpu");
+    const gpuUtilEl = document.getElementById("rmeVmcPerfGpuUtil");
+    const gpuTempEl = document.getElementById("rmeVmcPerfGpuTemp");
+    const e2eEl = document.getElementById("rmeVmcPerfE2e");
+    const avgLatEl = document.getElementById("rmeVmcPerfAvgLatency");
+    const turnsEl = document.getElementById("rmeVmcPerfTurns");
+    const wakesEl = document.getElementById("rmeVmcPerfWakes");
+    const uptimeEl = document.getElementById("rmeVmcPerfUptime");
+
+    if (ttsEl && perf.lastTtsLatencyMs > 0) ttsEl.textContent = perf.lastTtsLatencyMs + " ms";
+    if (sttEl) {
+      if (perf.lastSttDurationMs > 0) {
+        const sec = perf.lastSttAudioSec || 1;
+        const rt = (perf.lastSttDurationMs / (sec * 1000)).toFixed(2);
+        sttEl.textContent = perf.lastSttDurationMs + " ms · " + rt + "× realtime";
+      } else {
+        sttEl.textContent = "-- ms";
+      }
+    }
+    if (gpuEl) {
+      if (perf.gpuVramTotalMb > 0) gpuEl.textContent = perf.gpuVramUsedMb + " / " + perf.gpuVramTotalMb + " MB";
+      else gpuEl.textContent = "-- MB";
+    }
+    if (gpuUtilEl) gpuUtilEl.textContent = (perf.gpuUtilPct > 0 ? perf.gpuUtilPct + "%" : "--%");
+    if (gpuTempEl) gpuTempEl.textContent = (perf.gpuTempC > 0 ? perf.gpuTempC + "°C" : "--°C");
+    if (e2eEl) e2eEl.textContent = (perf.lastTurnTtsTotalMs > 0 ? perf.lastTurnTtsTotalMs + " ms" : "-- ms");
+    if (avgLatEl) avgLatEl.textContent = (perf.sessionAvgTurnLatencyMs > 0 ? perf.sessionAvgTurnLatencyMs + " ms" : "-- ms");
+    if (turnsEl) turnsEl.textContent = String(perf.sessionTurnCount || 0);
+    if (wakesEl) wakesEl.textContent = String(perf.sessionWakeCount || 0);
+    if (uptimeEl) {
+      const s = Math.round((perf.sessionUptimeMs || 0) / 1000);
+      const m = Math.floor(s / 60);
+      uptimeEl.textContent = m > 0 ? m + "m " + (s % 60) + "s" : s + "s";
+    }
+  }
+
+  function hideFloatingChat() {
+    const chat = document.getElementById("rmeVoiceTextChat");
+    if (chat instanceof HTMLElement) {
+      chat.style.display = "none";
+      chat.dataset.vmcHidden = "1";
+    }
+  }
+
+  function startPolling() {
+    pollHealth();
+    pollTimer = setInterval(pollHealth, POLL_MS);
+    setTimeout(hideFloatingChat, 1000);
+  }
+
+  function stopPolling() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  }
+
+  function onVisibilityChange() {
+    if (isPageVisible()) {
+      ensureMounted();
+      if (!pollTimer) startPolling();
+      setTimeout(hideFloatingChat, 500);
+    } else {
+      stopPolling();
+      const chat = document.getElementById("rmeVoiceTextChat");
+      if (chat instanceof HTMLElement && chat.dataset.vmcHidden === "1") {
+        chat.style.display = "";
+        delete chat.dataset.vmcHidden;
+      }
+      const settingsToggle = document.getElementById("rmeVoiceSettingsToggle");
+      if (settingsToggle) settingsToggle.hidden = false;
+      const stack = document.getElementById("rmeVoiceOrbStack");
+      if (stack) {
+        stack.hidden = false;
+        const orb = document.getElementById("rmeVoiceOrbBtn");
+        if (orb && orb.parentElement !== stack) stack.appendChild(orb);
+      }
+    }
+  }
+
+  function init() {
+    const pane = document.getElementById("notionWsPaneVoice");
+    if (pane instanceof HTMLElement) {
+      const obs = new MutationObserver(onVisibilityChange);
+      obs.observe(pane, { attributes: true, attributeFilter: ["class"] });
+    }
+    onVisibilityChange();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init, { once: true });
+  } else {
+    init();
+  }
 })();
 
 function toggleTheme() {
@@ -34129,6 +34677,7 @@ logoutBtn?.addEventListener("click", () => {
 });
 
 async function boot() {
+  const tBoot = performance.now();
   /** Preload exposes this only in Electron; HTTP preview / file open in Chrome has no IPC. */
   const authBridgeReady =
     typeof window.authApi?.hasAdmin === "function";
@@ -35290,5 +35839,6 @@ try {
 })();
 
 boot();
+console.log("[perf] renderer:boot called");
 
 

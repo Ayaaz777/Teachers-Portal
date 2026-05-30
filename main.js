@@ -2989,6 +2989,47 @@ if (!gotTheLock) {
        const whisperOk = results[1]?.status === "fulfilled";
        return { ok: ttsOk, whisperOk };
      });
+
+     ipcMain.handle("voice:health-snapshot", async () => {
+       const voiceAgent = getVoiceAgent();
+       if (typeof voiceAgent.getHealthSnapshot !== "function") {
+         return { master: "offline", services: {}, perf: {} };
+       }
+       try {
+         return await voiceAgent.getHealthSnapshot();
+       } catch (e) {
+         console.warn("[voice] health snapshot failed:", e);
+         return { master: "offline", error: e instanceof Error ? e.message : String(e) };
+       }
+     });
+
+     ipcMain.handle("voice:set-stt-engine", (_evt, payload) => {
+       const engine = payload && typeof payload === "object" && payload.engine ? String(payload.engine).trim().toLowerCase() : "auto";
+       const voiceAgent = getVoiceAgent();
+       if (typeof voiceAgent.setSttEngine === "function") {
+         voiceAgent.setSttEngine(engine);
+       }
+       return { ok: true, engine };
+     });
+
+     ipcMain.handle("voice:test-voice", async () => {
+       const voiceAgent = getVoiceAgent();
+       if (typeof voiceAgent.speak !== "function") {
+         return { ok: false, error: "Voice agent not available." };
+       }
+       try {
+         const result = await voiceAgent.speak("Voice system check complete.");
+         return result;
+       } catch (e) {
+         return { ok: false, error: e instanceof Error ? e.message : String(e) };
+       }
+     });
+
+     ipcMain.handle("voice:record-wake", () => {
+       const va = getVoiceAgent();
+       if (va && typeof va.recordWakeEvent === "function") va.recordWakeEvent();
+       return { ok: true };
+     });
      
      ipcMain.handle("voice:start-wake-word-listening", async () => {
        const voiceAgent = getVoiceAgent();
@@ -3226,6 +3267,7 @@ ipcMain.handle('dream:reset', async () => {
       return getVoiceAgent().speak(text);
     });
     ipcMain.handle("voice:assistant-turn", async (evt, payload) => {
+      const turnStartedAt = Date.now();
       const p = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
       const sender = evt.sender;
       const cid = crypto.randomUUID();
@@ -3791,6 +3833,14 @@ ipcMain.handle('dream:reset', async () => {
         /* Phase 2 stub: fact extraction runs after turn, doesn't block */
         extractFacts({ userMessage: lastUserMsg, assistantReply: turnResult.text, userEmail: ALLOWED_ADMIN_EMAIL, cid }).catch(e => console.warn("[planner] embed hook failed:", e instanceof Error ? e.message : String(e)));
         distillation.maybeDistill({ userEmail: ALLOWED_ADMIN_EMAIL, interval: 50 }).catch(e => console.warn("[planner] embed hook failed:", e instanceof Error ? e.message : String(e)));
+      }
+
+      const va = getVoiceAgent();
+      if (va && typeof va.recordTurnStart === "function") {
+        va.recordTurnStart();
+      }
+      if (va && typeof va.recordTurnLatencyMs === "function") {
+        va.recordTurnLatencyMs(Date.now() - turnStartedAt);
       }
 
       return turnResult;

@@ -225,6 +225,10 @@ contextBridge.exposeInMainWorld("voiceApi", {
   },
   setVoice: (name) => ipcRenderer.invoke("voice:set-voice", { name }),
   getVoice: () => ipcRenderer.invoke("voice:get-voice"),
+  getHealthSnapshot: () => ipcRenderer.invoke("voice:health-snapshot"),
+  setSttEngine: (engine) => ipcRenderer.invoke("voice:set-stt-engine", { engine }),
+  testVoice: () => ipcRenderer.invoke("voice:test-voice"),
+  recordWake: () => ipcRenderer.invoke("voice:record-wake"),
 });
 
 contextBridge.exposeInMainWorld("memoryApi", {
