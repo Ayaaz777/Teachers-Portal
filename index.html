@@ -590,7 +590,7 @@
       #notionWsPaneVoice .rme-vmc-bento {
         display: grid;
         grid-template-columns: 1fr auto 1fr;
-        grid-template-rows: auto 1fr;
+        grid-template-rows: auto auto 1fr;
         align-items: start;
         gap: 2rem;
         max-width: 64rem;
@@ -680,10 +680,10 @@
       #notionWsPaneVoice .rme-vmc-card--controls {
         display: none;
       }
-      /* Transcript — left column */
+      /* Transcript — below the hero, full width */
       #notionWsPaneVoice .rme-vmc-card--transcript {
-        grid-column: 1;
-        grid-row: 2;
+        grid-column: 1 / -1;
+        grid-row: 3;
         min-height: 0;
         display: flex;
         flex-direction: column;
